@@ -7,6 +7,7 @@ python-multipart==0.0.6
 # Image/video processing
 pillow==10.1.0
 imageio==2.33.0
+numpy>=1.22.0  # Updated to support newer Python versions
 
 # Hardware interfaces (Pi specific)
 spidev==3.6; platform_machine == 'armv7l' or platform_machine == 'aarch64'
@@ -26,6 +27,5 @@ netifaces==0.11.0
 
 # Additional dependencies
 RPi.GPIO==0.7.1; platform_machine == 'armv7l' or platform_machine == 'aarch64'
-numpy==1.21.6  # Last version with pre-built wheels for Python 3.7+
 opencv-python-headless==4.8.1.78  # Headless version to avoid GUI dependencies
 aiofiles==23.2.1 
