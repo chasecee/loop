@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple, Union
 from PIL import Image
 import io
+import numpy as np
 
 from utils.logger import get_logger
 
@@ -99,15 +100,19 @@ class FrameDecoder:
                 if img.mode != 'RGB':
                     img = img.convert('RGB')
                 
-                # Convert to RGB565
-                rgb565_data = bytearray()
-                for y in range(self.height):
-                    for x in range(self.width):
-                        r, g, b = img.getpixel((x, y))
-                        rgb565 = FrameBuffer.rgb888_to_rgb565(r, g, b)
-                        rgb565_data.extend(struct.pack(">H", rgb565))
+                # Convert to RGB565 using fast NumPy operations
+                img_array = np.array(img, dtype=np.uint8)
                 
-                return bytes(rgb565_data)
+                # Extract R, G, B channels
+                r = img_array[:, :, 0].astype(np.uint16)
+                g = img_array[:, :, 1].astype(np.uint16)
+                b = img_array[:, :, 2].astype(np.uint16)
+                
+                # Convert to RGB565 using vectorized operations
+                rgb565 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
+                
+                # Convert to big-endian bytes
+                return rgb565.astype('>u2').tobytes()
         
         except Exception as e:
             self.logger.error(f"Failed to decode JPEG file {file_path}: {e}")
@@ -124,15 +129,19 @@ class FrameDecoder:
                 if img.mode != 'RGB':
                     img = img.convert('RGB')
                 
-                # Convert to RGB565
-                rgb565_data = bytearray()
-                for y in range(self.height):
-                    for x in range(self.width):
-                        r, g, b = img.getpixel((x, y))
-                        rgb565 = FrameBuffer.rgb888_to_rgb565(r, g, b)
-                        rgb565_data.extend(struct.pack(">H", rgb565))
+                # Convert to RGB565 using fast NumPy operations
+                img_array = np.array(img, dtype=np.uint8)
                 
-                return bytes(rgb565_data)
+                # Extract R, G, B channels
+                r = img_array[:, :, 0].astype(np.uint16)
+                g = img_array[:, :, 1].astype(np.uint16)
+                b = img_array[:, :, 2].astype(np.uint16)
+                
+                # Convert to RGB565 using vectorized operations
+                rgb565 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
+                
+                # Convert to big-endian bytes
+                return rgb565.astype('>u2').tobytes()
         
         except Exception as e:
             self.logger.error(f"Failed to decode image bytes: {e}")

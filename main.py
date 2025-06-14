@@ -259,13 +259,18 @@ class LOOPApplication:
             if self.display_player:
                 self.display_player.show_message("LOOP Ready!", duration=3.0)
             
-            # Main loop
+            # Create shutdown event for clean thread management
+            self.shutdown_event = threading.Event()
+            
+            # Main loop - wait for shutdown signal instead of busy polling
             try:
                 while self.running:
-                    time.sleep(1)  # Keep main thread alive
-                    
-                    # Periodic tasks could go here
-                    # e.g., check for updates, health monitoring, etc.
+                    # Wait for shutdown signal with timeout for responsiveness
+                    if self.shutdown_event.wait(timeout=1.0):
+                        break
+                        
+                    # Optional: Add periodic maintenance tasks here
+                    # self._periodic_maintenance()
                     
             except KeyboardInterrupt:
                 self.logger.info("Received keyboard interrupt")
@@ -280,6 +285,8 @@ class LOOPApplication:
         """Shutdown the application."""
         self.logger.info("Shutting down LOOP...")
         self.running = False
+        if hasattr(self, 'shutdown_event'):
+            self.shutdown_event.set()
     
     def cleanup(self):
         """Clean up resources."""

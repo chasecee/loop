@@ -142,7 +142,7 @@ fi
 if ! check_venv; then
     echo "🐍 Setting up Python virtual environment..."
     cd "$PROJECT_DIR"
-    python3 -m venv venv
+    python3 -m venv venv --system-site-packages
 fi
 
 # Always update Python dependencies
@@ -151,14 +151,13 @@ cd "$PROJECT_DIR"
 source venv/bin/activate
 pip install --upgrade pip
 
-# First install system-level OpenCV to avoid building from source
-echo "🔧 Installing OpenCV from system packages..."
-sudo apt-get install -y python3-opencv
+# Install system OpenCV (already installed as system package, venv can access via --system-site-packages)
+echo "🔧 Using system OpenCV package (python3-opencv)..."
 
 # Use binary packages where possible and avoid building from source
 echo "📦 Installing remaining Python packages..."
 export PIP_PREFER_BINARY=1
-export PIP_ONLY_BINARY=numpy,opencv-python
+export PIP_ONLY_BINARY=numpy
 pip install --no-cache-dir -r requirements.txt
 
 # Create necessary directories if they don't exist

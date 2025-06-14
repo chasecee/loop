@@ -1,348 +1,91 @@
-{% extends "base.html" %} {% block title %}LOOP - Home{% endblock %} {% block
-content %}
-
-<!-- Status Card -->
-<div class="card">
-  <h2>📊 System Status</h2>
-  <div style="display: grid; gap: 10px">
-    {% if wifi_status %}
-    <div
-      class="wifi-status {% if wifi_status.connected %}connected {% elif wifi_status.hotspot_active %}hotspot {% else %}disconnected{% endif %}"
-    >
-      {% if wifi_status.connected %} 📶 Connected: {{ wifi_status.current_ssid
-      }} ({{ wifi_status.ip_address }}) {% elif wifi_status.hotspot_active %} 📡
-      Hotspot: {{ wifi_status.hotspot_ssid }} ({{ wifi_status.ip_address }}) {%
-      else %} ❌ WiFi Disconnected {% endif %}
-    </div>
-    {% endif %} {% if player_status %}
-    <div class="player-status">
-      {% if current_media %} 🎬 Playing: {{ current_media.original_filename }}
-      {% if player_status.paused %} (Paused){% endif %}
-      <br />
-      <small
-        >Frame {{ player_status.current_frame }}/{{ player_status.frame_count
-        }}</small
-      >
-      {% else %} 🎬 No media loaded {% endif %}
-    </div>
-    {% endif %}
-  </div>
-</div>
-
-<!-- Playback Controls -->
-{% if media_list %}
-<div class="card">
-  <h2>🎮 Playback Controls</h2>
-  <div style="display: flex; gap: 10px; flex-wrap: wrap">
-    <button class="btn" onclick="previousMedia()">⏮️ Previous</button>
-    <button class="btn" onclick="togglePause()" id="pauseBtn">
-      {% if player_status.paused %}▶️ Resume{% else %}⏸️ Pause{% endif %}
-    </button>
-    <button class="btn" onclick="nextMedia()">⏭️ Next</button>
-  </div>
-</div>
-{% endif %}
-
-<!-- Upload Card -->
-<div class="card">
-  <h2>📁 Upload Media</h2>
-  <div
-    class="upload-area"
-    id="uploadArea"
-    onclick="document.getElementById('fileInput').click()"
-  >
-    <p style="font-size: 1.2rem; margin-bottom: 10px">
-      🎬 Drop files here or click to browse
-    </p>
-    <p style="color: #718096">Supported: GIF, MP4, PNG, JPG (max 10MB)</p>
-    <input
-      type="file"
-      id="fileInput"
-      style="display: none"
-      accept=".gif,.mp4,.avi,.mov,.png,.jpg,.jpeg"
-      multiple
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LOOP - Little Optical Output Pal</title>
+    <link rel="stylesheet" href="/static/css/style.css" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg'><text y='32' font-size='32'>🎬</text></svg>"
     />
-  </div>
-
-  <div id="uploadProgress" class="hidden" style="margin-top: 15px">
-    <div style="display: flex; align-items: center; gap: 10px">
-      <div class="loader"></div>
-      <span id="uploadStatus">Uploading...</span>
-    </div>
-    <div
-      style="
-        background: #e2e8f0;
-        height: 8px;
-        border-radius: 4px;
-        margin-top: 10px;
-      "
-    >
-      <div
-        id="progressBar"
-        style="
-          background: #4299e1;
-          height: 100%;
-          border-radius: 4px;
-          width: 0%;
-          transition: width 0.3s ease;
-        "
-      ></div>
-    </div>
-  </div>
-</div>
-
-<!-- Media Library -->
-<div class="card">
-  <h2>🎞️ Media Library ({{ media_list|length }} items)</h2>
-
-  {% if media_list %}
-  <div class="media-grid">
-    {% for media in media_list %}
-    <div
-      class="media-item {% if current_media and current_media.slug == media.slug %}active{% endif %}"
-      data-slug="{{ media.slug }}"
-    >
-      <h3>{{ media.original_filename }}</h3>
-      <div class="meta">
-        <div>📐 {{ media.width }}×{{ media.height }}</div>
-        <div>🎞️ {{ media.frame_count }} frames</div>
-        <div>📄 {{ media.type|upper }}</div>
-        {% if media.type == 'gif' %}
-        <div>
-          🔄 {{ 'Infinite' if media.loop_count == 0 else media.loop_count }}
-          loops
+  </head>
+  <body>
+    <header class="header">
+      <div class="header-content">
+        <div class="logo">LOOP</div>
+        <div id="status-indicator" class="status-indicator offline">
+          ● Connecting...
         </div>
-        {% endif %}
       </div>
-      <div class="media-controls">
-        {% if not (current_media and current_media.slug == media.slug) %}
-        <button
-          class="btn btn-success"
-          onclick="activateMedia('{{ media.slug }}')"
-        >
-          ▶️ Play
-        </button>
-        {% endif %}
-        <button
-          class="btn btn-danger"
-          onclick="deleteMedia('{{ media.slug }}', '{{ media.original_filename }}')"
-        >
-          🗑️ Delete
-        </button>
+    </header>
+
+    <div class="container">
+      <!-- Upload Section -->
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title">Upload Media</h2>
+          <p class="card-subtitle">
+            Drop your GIFs, videos, and images here to get started
+          </p>
+        </div>
+        <div class="card-body">
+          <div id="upload-area" class="upload-area">
+            <div class="upload-icon">📁</div>
+            <div class="upload-text">Drop files here or click to browse</div>
+            <div class="upload-hint">Supports GIF, MP4, AVI, MOV, PNG, JPG</div>
+          </div>
+          <input
+            type="file"
+            id="file-input"
+            multiple
+            accept=".gif,.mp4,.avi,.mov,.png,.jpg,.jpeg"
+            style="display: none"
+          />
+        </div>
+      </div>
+
+      <!-- Controls Section -->
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title">Playback Controls</h2>
+          <p class="card-subtitle">
+            Control what's playing on your LOOP display
+          </p>
+        </div>
+        <div class="card-body">
+          <div class="controls">
+            <button id="prev-btn" class="control-btn" title="Previous (← key)">
+              ⏮️
+            </button>
+            <button
+              id="play-pause-btn"
+              class="control-btn play-pause"
+              title="Play/Pause (Space)"
+            >
+              ▶️
+            </button>
+            <button id="next-btn" class="control-btn" title="Next (→ key)">
+              ⏭️
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Media Library Section -->
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title">Media Library</h2>
+          <p class="card-subtitle">Click any item to play it on your display</p>
+        </div>
+        <div class="card-body">
+          <div id="media-grid" class="media-grid">
+            <div class="no-media">Loading media library...</div>
+          </div>
+        </div>
       </div>
     </div>
-    {% endfor %}
-  </div>
-  {% else %}
-  <div style="text-align: center; padding: 40px; color: #718096">
-    <p style="font-size: 1.2rem; margin-bottom: 10px">
-      📭 No media uploaded yet
-    </p>
-    <p>Upload your first GIF, video, or image to get started!</p>
-  </div>
-  {% endif %}
-</div>
 
-{% endblock %} {% block scripts %}
-
-<!-- Media processing libraries -->
-<script src="/static/js/lib/gif.js"></script>
-<script src="/static/js/media-processor.js"></script>
-<script src="/static/js/upload.js"></script>
-
-<script>
-  // File upload handling
-  const uploadArea = document.getElementById("uploadArea");
-  const fileInput = document.getElementById("fileInput");
-  const uploadProgress = document.getElementById("uploadProgress");
-  const uploadStatus = document.getElementById("uploadStatus");
-  const progressBar = document.getElementById("progressBar");
-
-  // Drag and drop
-  uploadArea.addEventListener("dragover", (e) => {
-    e.preventDefault();
-    uploadArea.classList.add("dragover");
-  });
-
-  uploadArea.addEventListener("dragleave", () => {
-    uploadArea.classList.remove("dragover");
-  });
-
-  uploadArea.addEventListener("drop", (e) => {
-    e.preventDefault();
-    uploadArea.classList.remove("dragover");
-    handleFiles(e.dataTransfer.files);
-  });
-
-  fileInput.addEventListener("change", (e) => {
-    handleFiles(e.target.files);
-  });
-
-  async function handleFiles(files) {
-    for (let file of files) {
-      await uploadFile(file);
-    }
-  }
-
-  async function uploadFile(file) {
-    const formData = new FormData();
-    formData.append("file", file);
-
-    uploadProgress.classList.remove("hidden");
-    uploadStatus.textContent = `Uploading ${file.name}...`;
-    progressBar.style.width = "0%";
-
-    try {
-      const xhr = new XMLHttpRequest();
-
-      xhr.upload.addEventListener("progress", (e) => {
-        if (e.lengthComputable) {
-          const percentComplete = (e.loaded / e.total) * 100;
-          progressBar.style.width = percentComplete + "%";
-        }
-      });
-
-      xhr.addEventListener("load", () => {
-        if (xhr.status === 200) {
-          const response = JSON.parse(xhr.responseText);
-          showAlert(response.message, "success");
-          setTimeout(() => {
-            location.reload(); // Refresh to show new media
-          }, 1000);
-        } else {
-          const error = JSON.parse(xhr.responseText);
-          showAlert(error.detail || "Upload failed", "error");
-        }
-        uploadProgress.classList.add("hidden");
-      });
-
-      xhr.addEventListener("error", () => {
-        showAlert("Upload failed - network error", "error");
-        uploadProgress.classList.add("hidden");
-      });
-
-      xhr.open("POST", "/api/upload");
-      xhr.send(formData);
-    } catch (error) {
-      showAlert(`Upload failed: ${error.message}`, "error");
-      uploadProgress.classList.add("hidden");
-    }
-  }
-
-  // Playback controls
-  async function togglePause() {
-    try {
-      const response = await apiCall("/api/player/pause", { method: "POST" });
-      const pauseBtn = document.getElementById("pauseBtn");
-      pauseBtn.innerHTML = response.paused ? "▶️ Resume" : "⏸️ Pause";
-      showAlert(
-        response.paused ? "Playback paused" : "Playback resumed",
-        "info"
-      );
-    } catch (error) {
-      // Error already shown by apiCall
-    }
-  }
-
-  async function nextMedia() {
-    try {
-      await apiCall("/api/player/next", { method: "POST" });
-      showAlert("Switched to next media", "success");
-      setTimeout(() => location.reload(), 500);
-    } catch (error) {
-      // Error already shown by apiCall
-    }
-  }
-
-  async function previousMedia() {
-    try {
-      await apiCall("/api/player/previous", { method: "POST" });
-      showAlert("Switched to previous media", "success");
-      setTimeout(() => location.reload(), 500);
-    } catch (error) {
-      // Error already shown by apiCall
-    }
-  }
-
-  // Media management
-  async function activateMedia(slug) {
-    try {
-      const response = await apiCall(`/api/media/${slug}/activate`, {
-        method: "POST",
-      });
-      showAlert(response.message, "success");
-      setTimeout(() => location.reload(), 500);
-    } catch (error) {
-      // Error already shown by apiCall
-    }
-  }
-
-  async function deleteMedia(slug, filename) {
-    if (!confirm(`Are you sure you want to delete "${filename}"?`)) {
-      return;
-    }
-
-    try {
-      const response = await apiCall(`/api/media/${slug}`, {
-        method: "DELETE",
-      });
-      showAlert(response.message, "success");
-
-      // Remove the media item from the DOM
-      const mediaItem = document.querySelector(`[data-slug="${slug}"]`);
-      if (mediaItem) {
-        mediaItem.style.transition = "all 0.3s ease";
-        mediaItem.style.opacity = "0";
-        mediaItem.style.transform = "scale(0.8)";
-        setTimeout(() => {
-          mediaItem.remove();
-          // Update the count
-          const header = document.querySelector(".card h2");
-          if (header && header.textContent.includes("Media Library")) {
-            const currentCount =
-              document.querySelectorAll(".media-item").length;
-            header.textContent = `🎞️ Media Library (${currentCount} items)`;
-          }
-
-          // Show empty state if no media left
-          if (currentCount === 0) {
-            location.reload();
-          }
-        }, 300);
-      }
-    } catch (error) {
-      // Error already shown by apiCall
-    }
-  }
-
-  // Keyboard shortcuts
-  document.addEventListener("keydown", (e) => {
-    // Ignore if user is typing in an input
-    if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") {
-      return;
-    }
-
-    switch (e.key) {
-      case " ":
-        e.preventDefault();
-        togglePause();
-        break;
-      case "ArrowLeft":
-        e.preventDefault();
-        previousMedia();
-        break;
-      case "ArrowRight":
-        e.preventDefault();
-        nextMedia();
-        break;
-    }
-  });
-
-  // Show keyboard shortcuts hint
-  setTimeout(() => {
-    if (document.querySelectorAll(".media-item").length > 0) {
-      showAlert("💡 Tip: Use Space to pause, Arrow keys to navigate", "info");
-    }
-  }, 2000);
-</script>
-{% endblock %}
+    <script src="/static/js/app.js"></script>
+  </body>
+</html>

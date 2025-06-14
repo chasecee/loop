@@ -8,38 +8,37 @@ Your pocket-sized animation companion! LOOP is a Wi-Fi enabled display that brin
 
 ### 🎬 Show Your Media
 
-- Plays GIFs, videos (MP4, AVI, MOV), images (PNG, JPG)
-- Optimized for crisp display on 240×320 ILI9341 screen
-- Smooth playback with hardware acceleration
-- Physical controls via optional rotary encoder
+- Plays GIFs, videos (MP4, AVI, MOV), and images (PNG, JPG)
+- Optimized for 240×320 ILI9341 SPI displays
+- Smooth playback with efficient frame conversion
+- Web-based controls from any device
 
 ### 🌐 Easy Control
 
 - Modern web interface with drag & drop uploads
-- Control playback from any device
+- Control playback from any device on your network
 - Browse your media library with thumbnails
-- Monitor system status in real-time
+- Real-time status monitoring
 
 ### 📡 Smart Connection
 
 - Auto-connects to your WiFi
 - Sets up its own "LOOP-Setup" network when needed
-- Visual WiFi network browser
-- Never gets stuck - always accessible!
+- Web-based WiFi configuration
+- Accessible via web browser
 
 ## 🔌 Hardware Setup
 
 ### What You'll Need
 
-- **Raspberry Pi Zero 2 W** (LOOP's brain!)
-- **Waveshare 2.4" LCD** (LOOP's face!)
+- **Raspberry Pi Zero 2 W** or **Raspberry Pi 4** (LOOP's brain!)
+- **Waveshare 2.4" ILI9341 LCD** (LOOP's face!)
 - **MicroSD card** (8GB+, Class 10)
 - **5V USB power** (LOOP gets hungry!)
-- **Optional**: Rotary encoder (for physical controls)
 
 ### Wiring Guide
 
-Connect your display:
+Connect your display to your Raspberry Pi:
 
 ```
 LCD Pin  → Pi Pin (BCM)  → Pi Pin (Physical)
@@ -51,15 +50,6 @@ CS       → GPIO 8        → Pin 24 (CE0)
 DC       → GPIO 25       → Pin 22
 RST      → GPIO 27       → Pin 13
 BL       → GPIO 18       → Pin 12
-```
-
-Optional rotary encoder:
-
-```
-Encoder   → Pi Pin (BCM)
-Pin A     → GPIO 2
-Pin B     → GPIO 3
-Button    → GPIO 4
 ```
 
 ## 🚀 Installation
@@ -76,23 +66,23 @@ cd loop
 ./deployment/scripts/install.sh
 ```
 
-That's it! LOOP will show you its IP address when ready (e.g., http://192.168.1.100:8080)
+The installer will set up everything needed and show you the IP address when ready.
 
 ### 3. First Time Setup
 
 1. **Connect to WiFi**:
 
    - Look for "LOOP-Setup" network (password: loop123)
-   - Open any website to configure WiFi
+   - Open any website and configure WiFi via the web interface
 
 2. **Upload Media**:
    - Visit LOOP's web interface
-   - Drop your favorite GIFs and videos
+   - Drag and drop your GIFs, videos, and images
    - Watch LOOP bring them to life!
 
 ### 4. Updates
 
-Keeping LOOP fresh is super simple:
+Keep LOOP up to date:
 
 ```bash
 cd /home/pi/loop
@@ -104,16 +94,10 @@ sudo systemctl restart loop
 
 ### Web Interface
 
-- **Upload**: Drag & drop anywhere
-- **Play/Pause**: Space bar
-- **Next/Previous**: Arrow keys
-- **Settings**: Configure everything!
-
-### Physical Controls (if encoder connected)
-
-- **Turn Right**: Next animation
-- **Turn Left**: Previous animation
-- **Press**: Play/Pause
+- **Upload**: Drag & drop files anywhere on the page
+- **Play/Pause**: Space bar or click the play button
+- **Next/Previous**: Arrow keys or navigation buttons
+- **Activate Media**: Click on any media item to play it
 
 ## 🔧 Troubleshooting
 
@@ -128,40 +112,57 @@ python -c "from display.spiout import ILI9341Driver; from config.schema import g
 ### Service Problems?
 
 ```bash
-sudo systemctl status loop     # Check on LOOP
-sudo journalctl -u loop -f     # See what's up
-sudo systemctl restart loop    # Give LOOP a restart
+sudo systemctl status loop     # Check LOOP status
+sudo journalctl -u loop -f     # View logs
+sudo systemctl restart loop    # Restart LOOP
 ```
 
 ### WiFi Troubles?
 
 ```bash
 sudo systemctl restart wpa_supplicant  # Reset WiFi
-loop-hotspot start                     # Start hotspot
+loop-hotspot start                     # Start hotspot mode
 ```
+
+## 🛠️ Current Limitations
+
+- Physical controls (rotary encoder) are not yet implemented
+- Only supports basic media formats (expanding over time)
+- Performance depends on Pi model and media complexity
+- No advanced video effects or filters
+
+## 🔮 Planned Features
+
+- Physical rotary encoder controls
+- More media format support
+- Playlist management
+- Scheduling and automation
+- Mobile app companion
 
 ## 🤝 Want to Help?
 
-LOOP loves new friends! Here's how to contribute:
+LOOP loves new contributors! Here's how to get involved:
 
-1. **Fork** LOOP's home
+1. **Fork** the repository
 2. **Create** a feature branch
 3. **Make** your changes
-4. **Test** everything works
-5. **Send** a Pull Request
+4. **Test** thoroughly
+5. **Submit** a Pull Request
+
+Check the issues page for tasks that need attention!
 
 ## 📄 License
 
-LOOP is free to share! See [LICENSE](LICENSE) for details.
+LOOP is open source! See [LICENSE](LICENSE) for details.
 
 ## 🙏 Thanks
 
-- **Waveshare** for the amazing display
-- **FastAPI** for the speedy web server
-- **Raspberry Pi** for the perfect brain
+- **Waveshare** for the excellent displays
+- **FastAPI** for the speedy web framework
+- **Raspberry Pi Foundation** for amazing hardware
 - **Contributors** for making LOOP better
 
 ---
 
-Made with 💝 by your friends at LOOP  
+Made with 💝 by the LOOP community  
 _"Your pocket-sized animation companion!"_

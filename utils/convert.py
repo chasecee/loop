@@ -9,6 +9,7 @@ from typing import Dict, List, Optional, Tuple, Union
 from PIL import Image, ImageSequence
 import tempfile
 import hashlib
+import numpy as np
 
 from utils.logger import get_logger
 from display.framebuf import FrameBuffer
@@ -237,18 +238,26 @@ class MediaConverter:
         """Save a frame in the specified format."""
         try:
             if format_type == "rgb565":
-                # Convert to RGB565 binary
+                # Convert to RGB565 binary using fast NumPy operations
                 frame_path = frames_dir / f"frame_{frame_index:06d}.rgb565"
-                rgb565_data = bytearray()
                 
-                for y in range(frame.height):
-                    for x in range(frame.width):
-                        r, g, b = frame.getpixel((x, y))
-                        rgb565 = FrameBuffer.rgb888_to_rgb565(r, g, b)
-                        rgb565_data.extend(struct.pack(">H", rgb565))
+                # Convert PIL image to NumPy array (much faster than getpixel loops)
+                img_array = np.array(frame, dtype=np.uint8)
+                
+                # Extract R, G, B channels
+                r = img_array[:, :, 0].astype(np.uint16)
+                g = img_array[:, :, 1].astype(np.uint16) 
+                b = img_array[:, :, 2].astype(np.uint16)
+                
+                # Convert to RGB565 using vectorized operations
+                # RGB565: RRRRR GGGGGG BBBBB (5-6-5 bits)
+                rgb565 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
+                
+                # Convert to big-endian bytes and save
+                rgb565_bytes = rgb565.astype('>u2').tobytes()
                 
                 with open(frame_path, 'wb') as f:
-                    f.write(rgb565_data)
+                    f.write(rgb565_bytes)
                 
                 return frame_path
                 
