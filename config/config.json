@@ -1,6 +1,6 @@
 {
   "device": {
-    "name": "VidBox",
+    "name": "LOOP",
     "version": "1.0.0"
   },
   "display": {
@@ -18,8 +18,8 @@
   "wifi": {
     "ssid": "",
     "password": "",
-    "hotspot_ssid": "VidBox-Setup",
-    "hotspot_password": "vidbox123",
+    "hotspot_ssid": "LOOP-Setup",
+    "hotspot_password": "loop123",
     "timeout": 10
   },
   "encoder": {

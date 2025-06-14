@@ -1,15 +1,15 @@
 #!/bin/bash
 set -e
 
-# VidBox Installation Script
-# This script sets up VidBox on a Raspberry Pi
+# LOOP Installation Script
+# This script sets up LOOP on a Raspberry Pi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
-SERVICE_NAME="vidbox"
+SERVICE_NAME="loop"
 USER="${USER:-pi}"
 VENV_DIR="${PROJECT_DIR}/venv"
-CONFIG_FLAG="${HOME}/.vidbox/setup_complete"
+CONFIG_FLAG="${HOME}/.loop/setup_complete"
 
 # Function to check if a package is installed
 check_package() {
@@ -64,7 +64,7 @@ check_service() {
     return 1
 }
 
-echo "🎬 VidBox Installation Script"
+echo "🤖 LOOP Installation Script"
 echo "================================"
 
 # Check if this is a reinstall
@@ -87,7 +87,7 @@ if [ -f "$CONFIG_FLAG" ]; then
         # Show IP and exit
         IP_ADDR=$(hostname -I | awk '{print $1}')
         echo ""
-        echo "🌐 VidBox is accessible at:"
+        echo "🌐 LOOP is accessible at:"
         echo "   http://${IP_ADDR}:8080"
     fi
     
@@ -154,7 +154,7 @@ pip install -r requirements.txt
 echo "📁 Checking directories..."
 mkdir -p media/raw media/processed
 mkdir -p logs
-mkdir -p ~/.vidbox/logs
+mkdir -p ~/.loop/logs
 
 # Set up configuration
 echo "⚙️  Setting up configuration..."
@@ -168,9 +168,8 @@ if ! check_service; then
     echo "🔄 Creating systemd service..."
     sudo tee /etc/systemd/system/${SERVICE_NAME}.service > /dev/null << EOF
 [Unit]
-Description=VidBox GIF Player & Uploader
+Description=LOOP - Little Optical Output Pal
 After=network.target
-Wants=network.target
 
 [Service]
 Type=simple
@@ -179,8 +178,8 @@ Group=${USER}
 WorkingDirectory=${PROJECT_DIR}
 Environment=PYTHONPATH=${PROJECT_DIR}
 ExecStart=${VENV_DIR}/bin/python ${PROJECT_DIR}/main.py
-Restart=on-failure
-RestartSec=10
+Restart=always
+RestartSec=3
 
 [Install]
 WantedBy=multi-user.target
@@ -188,8 +187,8 @@ EOF
 
     # Set up log rotation
     echo "📋 Setting up log rotation..."
-    sudo tee /etc/logrotate.d/vidbox > /dev/null << EOF
-/home/${USER}/.vidbox/logs/*.log {
+    sudo tee /etc/logrotate.d/loop > /dev/null << EOF
+/home/${USER}/.loop/logs/*.log {
     daily
     rotate 7
     compress
@@ -208,7 +207,7 @@ chmod +x "${PROJECT_DIR}/main.py" 2>/dev/null || true
 chmod +x "${PROJECT_DIR}/deployment/scripts/"*.sh 2>/dev/null || true
 
 # Enable and start service
-echo "🚀 Managing VidBox service..."
+echo "🚀 Managing LOOP service..."
 sudo systemctl daemon-reload
 sudo systemctl enable ${SERVICE_NAME}
 sudo systemctl restart ${SERVICE_NAME}
@@ -220,20 +219,20 @@ touch "$CONFIG_FLAG"
 # Wait a moment and check status
 sleep 2
 if sudo systemctl is-active --quiet ${SERVICE_NAME}; then
-    echo "✅ VidBox service is running!"
+    echo "✅ LOOP service is running!"
     
     # Get the local IP address
     IP_ADDR=$(hostname -I | awk '{print $1}')
     echo ""
-    echo "🌐 VidBox is accessible at:"
+    echo "🌐 LOOP is accessible at:"
     echo "   http://${IP_ADDR}:8080"
     echo ""
     echo "📱 If WiFi setup is needed, connect to:"
-    echo "   SSID: VidBox-Setup"
-    echo "   Password: vidbox123"
+    echo "   SSID: LOOP-Setup"
+    echo "   Password: loop123"
     echo ""
 else
-    echo "❌ Failed to start VidBox service"
+    echo "❌ Failed to start LOOP service"
     echo "Check the logs with: sudo journalctl -u ${SERVICE_NAME} -f"
     exit 1
 fi
@@ -241,11 +240,11 @@ fi
 echo "🎉 Installation complete!"
 echo ""
 echo "Useful commands:"
-echo "  sudo systemctl status vidbox    # Check service status"
-echo "  sudo systemctl restart vidbox   # Restart service"
-echo "  sudo journalctl -u vidbox -f    # View logs"
-echo "  vidbox-hotspot start           # Start WiFi hotspot"
-echo "  vidbox-hotspot stop            # Stop WiFi hotspot"
+echo "  sudo systemctl status loop    # Check service status"
+echo "  sudo systemctl restart loop   # Restart service"
+echo "  sudo journalctl -u loop -f    # View logs"
+echo "  loop-hotspot start           # Start WiFi hotspot"
+echo "  loop-hotspot stop            # Stop WiFi hotspot"
 
 # Set up WiFi hotspot configuration (optional)
 echo "📡 Setting up hotspot configuration..."
@@ -253,10 +252,10 @@ if [ ! -f /etc/hostapd/hostapd.conf.backup ]; then
     sudo cp /etc/hostapd/hostapd.conf /etc/hostapd/hostapd.conf.backup 2>/dev/null || true
 fi
 
-sudo tee /etc/hostapd/hostapd.conf.vidbox > /dev/null << EOF
+sudo tee /etc/hostapd/hostapd.conf.loop > /dev/null << EOF
 interface=wlan0
 driver=nl80211
-ssid=VidBox-Setup
+ssid=LOOP-Setup
 hw_mode=g
 channel=7
 wmm_enabled=0
@@ -264,7 +263,7 @@ macaddr_acl=0
 auth_algs=1
 ignore_broadcast_ssid=0
 wpa=2
-wpa_passphrase=vidbox123
+wpa_passphrase=loop123
 wpa_key_mgmt=WPA-PSK
 wpa_pairwise=TKIP
 rsn_pairwise=CCMP
@@ -272,19 +271,19 @@ EOF
 
 # Create hotspot script
 echo "🔧 Creating hotspot management script..."
-sudo tee /usr/local/bin/vidbox-hotspot > /dev/null << 'EOF'
+sudo tee /usr/local/bin/loop-hotspot > /dev/null << 'EOF'
 #!/bin/bash
-# VidBox Hotspot Management Script
+# LOOP Hotspot Management Script
 
 case "$1" in
     start)
-        echo "Starting VidBox hotspot..."
-        sudo cp /etc/hostapd/hostapd.conf.vidbox /etc/hostapd/hostapd.conf
+        echo "Starting LOOP hotspot..."
+        sudo cp /etc/hostapd/hostapd.conf.loop /etc/hostapd/hostapd.conf
         sudo systemctl start hostapd
         sudo systemctl start dnsmasq
         ;;
     stop)
-        echo "Stopping VidBox hotspot..."
+        echo "Stopping LOOP hotspot..."
         sudo systemctl stop hostapd
         sudo systemctl stop dnsmasq
         sudo cp /etc/hostapd/hostapd.conf.backup /etc/hostapd/hostapd.conf 2>/dev/null || true
@@ -296,4 +295,4 @@ case "$1" in
 esac
 EOF
 
-sudo chmod +x /usr/local/bin/vidbox-hotspot 
+sudo chmod +x /usr/local/bin/loop-hotspot 

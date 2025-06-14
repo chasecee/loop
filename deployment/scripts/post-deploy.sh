@@ -1,14 +1,14 @@
 #!/bin/bash
 set -e
 
-# VidBox Post-Deployment Script
-# This script runs after each deployment/update
+# LOOP Post-Deployment Script
+# This script runs after deployment to handle any necessary cleanup or updates
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 SERVICE_NAME="vidbox"
 
-echo "🔧 VidBox Post-Deployment Script"
+echo "🔧 LOOP Post-Deployment Script"
 echo "================================"
 
 cd "$PROJECT_DIR"

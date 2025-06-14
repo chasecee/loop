@@ -1,4 +1,4 @@
-"""FastAPI web server for VidBox."""
+"""FastAPI web server for LOOP."""
 
 import json
 import os
@@ -28,8 +28,8 @@ def create_app(display_player: DisplayPlayer = None,
     """Create and configure the FastAPI application."""
     
     app = FastAPI(
-        title="VidBox",
-        description="GIF Player & Uploader Appliance",
+        title="LOOP",
+        description="Little Optical Output Pal - Your pocket-sized animation companion!",
         version="1.0.0"
     )
     
@@ -85,8 +85,9 @@ def create_app(display_player: DisplayPlayer = None,
     @app.get("/api/status")
     async def get_status():
         """Get system status."""
-        status = {
-            "system": "VidBox v1.0.0",
+        return {
+            "system": "LOOP v1.0.0",
+            "status": "running",
             "timestamp": int(time.time())
         }
         

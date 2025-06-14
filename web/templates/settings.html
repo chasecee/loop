@@ -1,4 +1,4 @@
-{% extends "base.html" %} {% block title %}VidBox - Settings{% endblock %} {%
+{% extends "base.html" %} {% block title %}LOOP - Settings{% endblock %} {%
 block content %}
 
 <!-- WiFi Settings -->
@@ -83,7 +83,7 @@ block content %}
 <div class="card">
   <h2>ℹ️ Device Information</h2>
   <div style="display: grid; gap: 10px">
-    <div><strong>Device:</strong> VidBox GIF Player</div>
+    <div><strong>Device:</strong> LOOP - Little Optical Output Pal</div>
     <div><strong>Version:</strong> 1.0.0</div>
     <div><strong>Platform:</strong> Raspberry Pi</div>
     <div><strong>Display:</strong> 240×320 ILI9341</div>
@@ -226,7 +226,7 @@ block content %}
 
       if (response.success) {
         const message = response.hotspot_active
-          ? 'Hotspot started - Connect to "VidBox-Setup" to continue'
+          ? 'Hotspot started - Connect to "LOOP-Setup" to continue'
           : "Hotspot stopped";
         showAlert(message, "success");
         setTimeout(() => location.reload(), 2000);
@@ -318,7 +318,7 @@ block content %}
   }
 
   async function restartService() {
-    if (!confirm("This will restart the VidBox service. Continue?")) {
+    if (!confirm("This will restart the LOOP service. Continue?")) {
       return;
     }
 

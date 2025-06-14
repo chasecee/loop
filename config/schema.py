@@ -27,8 +27,8 @@ class WiFiConfig:
     """WiFi configuration."""
     ssid: str = ""
     password: str = ""
-    hotspot_ssid: str = "VidBox-Setup"
-    hotspot_password: str = "vidbox123"
+    hotspot_ssid: str = "LOOP-Setup"
+    hotspot_password: str = "loop123"
     timeout: int = 10
 
 
@@ -69,7 +69,7 @@ class WebConfig:
 @dataclass
 class DeviceConfig:
     """Device identification."""
-    name: str = "VidBox"
+    name: str = "LOOP"
     version: str = "1.0.0"
 
 

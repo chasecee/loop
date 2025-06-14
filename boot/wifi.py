@@ -1,4 +1,4 @@
-"""WiFi management for VidBox."""
+"""WiFi management for LOOP."""
 
 import os
 import subprocess

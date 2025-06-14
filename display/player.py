@@ -1,4 +1,4 @@
-"""Display playback engine for VidBox."""
+"""Display playback engine for LOOP."""
 
 import json
 import threading

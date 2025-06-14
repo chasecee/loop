@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-VidBox - GIF Player & Uploader Appliance
+LOOP - Little Optical Output Pal
 Main entry point that orchestrates all components.
 """
 
@@ -26,14 +26,14 @@ from deployment.updater import SystemUpdater
 import uvicorn
 
 
-class VidBoxApplication:
-    """Main VidBox application coordinator."""
+class LOOPApplication:
+    """Main LOOP application coordinator."""
     
     def __init__(self):
         """Initialize the application."""
         self.config = get_config()
-        self.logger = get_logger("main")
-        self.logger.info(f"Starting VidBox v{self.config.device.version}")
+        self.logger = get_logger("app")
+        self.logger.info(f"Starting LOOP v{self.config.device.version}")
         
         # Component instances
         self.display_driver = None
@@ -242,28 +242,22 @@ class VidBoxApplication:
             self.display_player.toggle_pause()
             self.logger.debug("Encoder: Toggle pause")
     
-    def run(self):
-        """Run the main application loop."""
+    def start(self):
+        """Start the application."""
         try:
-            self.logger.info("🎬 Starting VidBox application...")
+            self.logger.info("🎬 Starting LOOP application...")
             
-            # Initialize all components
-            self.initialize_display()
-            self.initialize_input()
-            self.initialize_wifi()
-            self.initialize_updater()
+            # Initialize components
+            self._init_components()
             
-            # Start all services
-            self.start_web_server()
-            self.start_display_player()
-            self.start_input_handler()
+            # Start web server
+            self._start_web_server()
             
-            self.running = True
-            self.logger.info("✅ VidBox started successfully!")
+            self.logger.info("✅ LOOP started successfully!")
             
-            # Show startup message on display
+            # Show welcome message
             if self.display_player:
-                self.display_player.show_message("VidBox Ready!", duration=3.0)
+                self.display_player.show_message("LOOP Ready!", duration=3.0)
             
             # Main loop
             try:
@@ -283,8 +277,8 @@ class VidBoxApplication:
             self.cleanup()
     
     def shutdown(self):
-        """Shutdown the application gracefully."""
-        self.logger.info("Shutting down VidBox...")
+        """Shutdown the application."""
+        self.logger.info("Shutting down LOOP...")
         self.running = False
     
     def cleanup(self):
@@ -325,8 +319,8 @@ class VidBoxApplication:
 def main():
     """Main entry point."""
     try:
-        app = VidBoxApplication()
-        app.run()
+        app = LOOPApplication()
+        app.start()
     except KeyboardInterrupt:
         print("\nShutdown requested by user")
         sys.exit(0)

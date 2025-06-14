@@ -1,20 +1,20 @@
 #!/bin/bash
 
-# VidBox WiFi Hotspot Management Script
+# LOOP WiFi Hotspot Management Script
 # This script manages the WiFi hotspot functionality
 
 set -e
 
 HOSTAPD_CONF="/etc/hostapd/hostapd.conf"
-HOSTAPD_CONF_VIDBOX="/etc/hostapd/hostapd.conf.vidbox"
+HOSTAPD_CONF_LOOP="/etc/hostapd/hostapd.conf.loop"
 HOSTAPD_CONF_BACKUP="/etc/hostapd/hostapd.conf.backup"
 DNSMASQ_CONF="/etc/dnsmasq.conf"
-DNSMASQ_CONF_VIDBOX="/etc/dnsmasq.conf.vidbox"
+DNSMASQ_CONF_LOOP="/etc/dnsmasq.conf.loop"
 DNSMASQ_CONF_BACKUP="/etc/dnsmasq.conf.backup"
 
 # Default hotspot configuration
-DEFAULT_SSID="VidBox-Setup"
-DEFAULT_PASSWORD="vidbox123"
+DEFAULT_SSID="LOOP-Setup"
+DEFAULT_PASSWORD="loop123"
 DEFAULT_CHANNEL="7"
 HOTSPOT_IP="192.168.4.1"
 DHCP_RANGE="192.168.4.2,192.168.4.20"
@@ -30,7 +30,7 @@ create_hostapd_config() {
     
     log "Creating hostapd configuration for $ssid"
     
-    cat > "$HOSTAPD_CONF_VIDBOX" << EOF
+    cat > "$HOSTAPD_CONF_LOOP" << EOF
 interface=wlan0
 driver=nl80211
 ssid=$ssid
@@ -51,11 +51,11 @@ EOF
 create_dnsmasq_config() {
     log "Creating dnsmasq configuration"
     
-    cat > "$DNSMASQ_CONF_VIDBOX" << EOF
-# VidBox hotspot configuration
+    cat > "$DNSMASQ_CONF_LOOP" << EOF
+# LOOP hotspot configuration
 interface=wlan0
 dhcp-range=$DHCP_RANGE,255.255.255.0,24h
-domain=vidbox.local
+domain=loop.local
 address=/#/$HOTSPOT_IP
 EOF
 }
@@ -88,7 +88,7 @@ start_hotspot() {
     local ssid="${1:-$DEFAULT_SSID}"
     local password="${2:-$DEFAULT_PASSWORD}"
     
-    log "Starting VidBox WiFi hotspot: $ssid"
+    log "Starting LOOP WiFi hotspot: $ssid"
     
     # Stop any existing WiFi connections
     systemctl stop wpa_supplicant 2>/dev/null || true
@@ -96,13 +96,13 @@ start_hotspot() {
     # Backup original configurations
     backup_configs
     
-    # Create VidBox configurations
+    # Create LOOP configurations
     create_hostapd_config "$ssid" "$password"
     create_dnsmasq_config
     
     # Apply configurations
-    cp "$HOSTAPD_CONF_VIDBOX" "$HOSTAPD_CONF"
-    cp "$DNSMASQ_CONF_VIDBOX" "$DNSMASQ_CONF"
+    cp "$HOSTAPD_CONF_LOOP" "$HOSTAPD_CONF"
+    cp "$DNSMASQ_CONF_LOOP" "$DNSMASQ_CONF"
     
     # Configure network interface
     ip addr flush dev wlan0 2>/dev/null || true
@@ -138,7 +138,7 @@ start_hotspot() {
 }
 
 stop_hotspot() {
-    log "Stopping VidBox WiFi hotspot"
+    log "Stopping LOOP WiFi hotspot"
     
     # Stop services
     systemctl stop hostapd 2>/dev/null || true
@@ -162,7 +162,7 @@ stop_hotspot() {
 }
 
 status() {
-    echo "=== VidBox Hotspot Status ==="
+    echo "=== LOOP Hotspot Status ==="
     
     # Check service status
     if systemctl is-active --quiet hostapd; then
@@ -206,7 +206,7 @@ usage() {
     echo ""
     echo "Examples:"
     echo "  $0 start                          # Start with default settings"
-    echo "  $0 start MyVidBox mypass123       # Start with custom SSID/password"
+    echo "  $0 start MyLOOP mypass123         # Start with custom SSID/password"
     echo "  $0 stop                           # Stop hotspot"
     echo "  $0 status                         # Check status"
 }

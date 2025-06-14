@@ -1,9 +1,10 @@
-name: Deploy to Raspberry Pi
+name: Deploy LOOP
 
 on:
   push:
     branches: [main]
-    tags: ["v*"]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
     inputs:
       environment:
@@ -201,23 +202,22 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: |
-            dist/vidbox-${{ needs.build.outputs.version }}.tar.gz
-            dist/manifest.json
+          tag_name: v${{ needs.build.outputs.version }}
+          name: LOOP Release ${{ needs.build.outputs.version }}
           body: |
-            ## VidBox Release ${{ needs.build.outputs.version }}
+            ## 🤖 LOOP Release ${{ needs.build.outputs.version }}
 
-            ### Changes
-            - Automated release from commit ${{ github.sha }}
+            ### 📦 Installation
+            ```bash
+            wget https://github.com/${{ github.repository }}/releases/download/v${{ needs.build.outputs.version }}/loop-${{ needs.build.outputs.version }}.tar.gz
+            tar xzf loop-${{ needs.build.outputs.version }}.tar.gz
+            cd loop-${{ needs.build.outputs.version }}
+            ./deployment/scripts/install.sh
+            ```
 
-            ### Installation
-            1. Download the tar.gz file
-            2. Extract to your Pi: `tar -xzf vidbox-${{ needs.build.outputs.version }}.tar.gz`
-            3. Run the installation script: `./deployment/scripts/install.sh`
+            You can also update directly through the LOOP web interface if you have remote updates enabled.
 
-            ### Update via Web Interface
-            You can also update directly through the VidBox web interface if you have remote updates enabled.
-          draft: false
-          prerelease: ${{ contains(github.ref, 'beta') || contains(github.ref, 'alpha') }}
+            ### 🔄 Changes
+            ${{ needs.build.outputs.changelog }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

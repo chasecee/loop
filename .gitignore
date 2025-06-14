@@ -102,4 +102,13 @@ Thumbs.db
 # Development
 .coverage
 .pytest_cache/
-test_output/ 
+test_output/
+
+# LOOP specific
+.loop/
+logs/
+media/
+dist/
+*.rgb565
+*.jpg.tmp
+*.mp4.tmp 
