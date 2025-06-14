@@ -314,11 +314,11 @@ class LoopApp {
 
   getMediaTypeIcon(type) {
     const icons = {
-      gif: "🎞️",
-      video: "🎬",
-      image: "🖼️",
+      gif: "GIF",
+      video: "VIDEO",
+      image: "IMG",
     };
-    return icons[type] || "📄";
+    return icons[type] || "DOC";
   }
 
   showAlert(message, type = "info") {

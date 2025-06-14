@@ -1,33 +1,33 @@
-# LOOP - Little Optical Output Pal 🤖
+# LOOP - Little Optical Output Pal
 
 Your pocket-sized animation companion! LOOP is a Wi-Fi enabled display that brings your GIFs and videos to life on a tiny screen. Perfect for desk companions, status displays, or just sharing moments of joy!
 
 ![LOOP](https://img.shields.io/badge/Platform-Raspberry%20Pi-red) ![Python](https://img.shields.io/badge/Python-3.9+-blue) ![License](https://img.shields.io/badge/License-MIT-green)
 
-## ✨ What Can LOOP Do?
+## What Can LOOP Do?
 
-### 🎬 Show Your Media
+### Show Your Media
 
 - Plays GIFs, videos (MP4, AVI, MOV), and images (PNG, JPG)
 - Optimized for 240×320 ILI9341 SPI displays
 - Smooth playback with efficient frame conversion
 - Web-based controls from any device
 
-### 🌐 Easy Control
+### Easy Control
 
 - Modern web interface with drag & drop uploads
 - Control playback from any device on your network
 - Browse your media library with thumbnails
 - Real-time status monitoring
 
-### 📡 Smart Connection
+### Smart Connection
 
 - Auto-connects to your WiFi
 - Sets up its own "LOOP-Setup" network when needed
 - Web-based WiFi configuration
 - Accessible via web browser
 
-## 🔌 Hardware Setup
+## Hardware Setup
 
 ### What You'll Need
 
@@ -52,7 +52,7 @@ RST      → GPIO 27       → Pin 13
 BL       → GPIO 18       → Pin 12
 ```
 
-## 🚀 Installation
+## Installation
 
 ### 1. Prepare Pi
 
@@ -90,7 +90,7 @@ git pull
 sudo systemctl restart loop
 ```
 
-## 🎮 Controls
+## Controls
 
 ### Web Interface
 
@@ -99,7 +99,7 @@ sudo systemctl restart loop
 - **Next/Previous**: Arrow keys or navigation buttons
 - **Activate Media**: Click on any media item to play it
 
-## 🔧 Troubleshooting
+## Troubleshooting
 
 ### Display Issues?
 
@@ -124,14 +124,14 @@ sudo systemctl restart wpa_supplicant  # Reset WiFi
 loop-hotspot start                     # Start hotspot mode
 ```
 
-## 🛠️ Current Limitations
+## Current Limitations
 
 - Physical controls (rotary encoder) are not yet implemented
 - Only supports basic media formats (expanding over time)
 - Performance depends on Pi model and media complexity
 - No advanced video effects or filters
 
-## 🔮 Planned Features
+## Planned Features
 
 - Physical rotary encoder controls
 - More media format support
@@ -139,7 +139,7 @@ loop-hotspot start                     # Start hotspot mode
 - Scheduling and automation
 - Mobile app companion
 
-## 🤝 Want to Help?
+## Want to Help?
 
 LOOP loves new contributors! Here's how to get involved:
 
@@ -151,11 +151,11 @@ LOOP loves new contributors! Here's how to get involved:
 
 Check the issues page for tasks that need attention!
 
-## 📄 License
+## License
 
 LOOP is open source! See [LICENSE](LICENSE) for details.
 
-## 🙏 Thanks
+## Thanks
 
 - **Waveshare** for the excellent displays
 - **FastAPI** for the speedy web framework
@@ -164,5 +164,5 @@ LOOP is open source! See [LICENSE](LICENSE) for details.
 
 ---
 
-Made with 💝 by the LOOP community  
+Made with love by the LOOP community  
 _"Your pocket-sized animation companion!"_

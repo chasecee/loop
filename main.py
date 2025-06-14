@@ -255,7 +255,7 @@ class LOOPApplication:
     def start(self):
         """Start the application."""
         try:
-            self.logger.info("🎬 Starting LOOP application...")
+            self.logger.info("Starting LOOP application...")
             
             # Initialize components
             self._init_components()
@@ -263,7 +263,7 @@ class LOOPApplication:
             # Start web server
             self.start_web_server()
             
-            self.logger.info("✅ LOOP started successfully!")
+            self.logger.info("LOOP started successfully!")
             
             # Show welcome message
             if self.display_player:
