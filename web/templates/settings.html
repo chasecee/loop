@@ -6,11 +6,10 @@ block content %}
   <h2>📡 WiFi Configuration</h2>
 
   {% if wifi_status %}
-  <div style="margin-bottom: 20px">
+  <div class="form-group">
     <strong>Current Status:</strong>
     <div
       class="wifi-status {% if wifi_status.connected %}connected {% elif wifi_status.hotspot_active %}hotspot {% else %}disconnected{% endif %}"
-      style="margin-top: 5px"
     >
       {% if wifi_status.connected %} 📶 Connected: {{ wifi_status.current_ssid
       }} ({{ wifi_status.ip_address }}) {% elif wifi_status.hotspot_active %} 📡
@@ -20,7 +19,7 @@ block content %}
   </div>
   {% endif %}
 
-  <div style="display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap">
+  <div class="form-group" style="display: flex; gap: 10px; flex-wrap: wrap">
     <button class="btn" onclick="scanNetworks()">🔍 Scan Networks</button>
     <button class="btn" onclick="toggleHotspot()">
       {% if wifi_status and wifi_status.hotspot_active %}🛑 Stop Hotspot{% else
@@ -40,11 +39,16 @@ block content %}
     <form onsubmit="connectToWifi(event)">
       <div class="form-group">
         <label for="ssid">Network Name (SSID):</label>
-        <input type="text" id="ssid" name="ssid" required />
+        <input type="text" id="ssid" name="ssid" required class="form-input" />
       </div>
       <div class="form-group">
         <label for="password">Password:</label>
-        <input type="password" id="password" name="password" />
+        <input
+          type="password"
+          id="password"
+          name="password"
+          class="form-input"
+        />
       </div>
       <button type="submit" class="btn btn-success">🔗 Connect</button>
       <button type="button" class="btn" onclick="cancelConnect()">
@@ -59,7 +63,7 @@ block content %}
   <h2>🔄 System Updates</h2>
 
   {% if update_status %}
-  <div style="margin-bottom: 20px">
+  <div class="form-group">
     <strong>Current Version:</strong> {{ update_status.current_version }}<br />
     {% if update_status.git_available %}
     <strong>Git Available:</strong> ✅ Yes<br />
@@ -69,7 +73,7 @@ block content %}
   </div>
   {% endif %}
 
-  <div style="display: flex; gap: 10px; flex-wrap: wrap">
+  <div class="form-group" style="display: flex; gap: 10px; flex-wrap: wrap">
     <button class="btn" onclick="checkUpdates()">🔍 Check for Updates</button>
     <button class="btn btn-success" onclick="installUpdates()" id="updateBtn">
       ⬇️ Install Updates
@@ -82,7 +86,7 @@ block content %}
 <!-- Device Information -->
 <div class="card">
   <h2>ℹ️ Device Information</h2>
-  <div style="display: grid; gap: 10px">
+  <div class="form-group">
     <div><strong>Device:</strong> LOOP - Little Optical Output Pal</div>
     <div><strong>Version:</strong> 1.0.0</div>
     <div><strong>Platform:</strong> Raspberry Pi</div>
@@ -94,7 +98,7 @@ block content %}
 <!-- Advanced Settings -->
 <div class="card">
   <h2>⚙️ Advanced Settings</h2>
-  <div style="display: flex; gap: 10px; flex-wrap: wrap">
+  <div class="form-group" style="display: flex; gap: 10px; flex-wrap: wrap">
     <button class="btn" onclick="restartService()">🔄 Restart Service</button>
     <button class="btn btn-danger" onclick="factoryReset()">
       🏭 Factory Reset

@@ -1,91 +1,64 @@
-<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>LOOP - Little Optical Output Pal</title>
-    <link rel="stylesheet" href="/static/css/style.css" />
-    <link
-      rel="icon"
-      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg'><text y='32' font-size='32'>🎬</text></svg>"
-    />
-  </head>
-  <body>
-    <header class="header">
-      <div class="header-content">
-        <div class="logo">LOOP</div>
-        <div id="status-indicator" class="status-indicator offline">
-          ● Connecting...
-        </div>
-      </div>
-    </header>
-
-    <div class="container">
-      <!-- Upload Section -->
-      <div class="card">
-        <div class="card-header">
-          <h2 class="card-title">Upload Media</h2>
-          <p class="card-subtitle">
-            Drop your GIFs, videos, and images here to get started
-          </p>
-        </div>
-        <div class="card-body">
-          <div id="upload-area" class="upload-area">
-            <div class="upload-icon">📁</div>
-            <div class="upload-text">Drop files here or click to browse</div>
-            <div class="upload-hint">Supports GIF, MP4, AVI, MOV, PNG, JPG</div>
-          </div>
-          <input
-            type="file"
-            id="file-input"
-            multiple
-            accept=".gif,.mp4,.avi,.mov,.png,.jpg,.jpeg"
-            style="display: none"
-          />
-        </div>
-      </div>
-
-      <!-- Controls Section -->
-      <div class="card">
-        <div class="card-header">
-          <h2 class="card-title">Playback Controls</h2>
-          <p class="card-subtitle">
-            Control what's playing on your LOOP display
-          </p>
-        </div>
-        <div class="card-body">
-          <div class="controls">
-            <button id="prev-btn" class="control-btn" title="Previous (← key)">
-              ⏮️
-            </button>
-            <button
-              id="play-pause-btn"
-              class="control-btn play-pause"
-              title="Play/Pause (Space)"
-            >
-              ▶️
-            </button>
-            <button id="next-btn" class="control-btn" title="Next (→ key)">
-              ⏭️
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <!-- Media Library Section -->
-      <div class="card">
-        <div class="card-header">
-          <h2 class="card-title">Media Library</h2>
-          <p class="card-subtitle">Click any item to play it on your display</p>
-        </div>
-        <div class="card-body">
-          <div id="media-grid" class="media-grid">
-            <div class="no-media">Loading media library...</div>
-          </div>
-        </div>
-      </div>
+{% extends "base.html" %} {% block title %}LOOP - Little Optical Output Pal{%
+endblock %} {% block content %}
+<!-- Upload Section -->
+<div class="card">
+  <div class="card-header">
+    <h2 class="card-title">Upload Media</h2>
+    <p class="card-subtitle">
+      Drop your GIFs, videos, and images here to get started
+    </p>
+  </div>
+  <div class="card-body">
+    <div id="upload-area" class="upload-area">
+      <div class="upload-icon">📁</div>
+      <div class="upload-text">Drop files here or click to browse</div>
+      <div class="upload-hint">Supports GIF, MP4, AVI, MOV, PNG, JPG</div>
     </div>
+    <input
+      type="file"
+      id="file-input"
+      multiple
+      accept=".gif,.mp4,.avi,.mov,.png,.jpg,.jpeg"
+      style="display: none"
+    />
+  </div>
+</div>
 
-    <script src="/static/js/app.js"></script>
-  </body>
-</html>
+<!-- Controls Section -->
+<div class="card">
+  <div class="card-header">
+    <h2 class="card-title">Playback Controls</h2>
+    <p class="card-subtitle">Control what's playing on your LOOP display</p>
+  </div>
+  <div class="card-body">
+    <div class="controls">
+      <button id="prev-btn" class="control-btn" title="Previous (← key)">
+        ⏮️
+      </button>
+      <button
+        id="play-pause-btn"
+        class="control-btn play-pause"
+        title="Play/Pause (Space)"
+      >
+        ▶️
+      </button>
+      <button id="next-btn" class="control-btn" title="Next (→ key)">⏭️</button>
+    </div>
+  </div>
+</div>
+
+<!-- Media Library Section -->
+<div class="card">
+  <div class="card-header">
+    <h2 class="card-title">Media Library</h2>
+    <p class="card-subtitle">Click any item to play it on your display</p>
+  </div>
+  <div class="card-body">
+    <div id="media-grid" class="media-grid">
+      <div class="no-media">Loading media library...</div>
+    </div>
+  </div>
+</div>
+{% endblock %} {% block scripts %}
+<script src="/static/js/app.js"></script>
+{% endblock %}

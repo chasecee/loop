@@ -434,6 +434,34 @@ def create_app(display_player: DisplayPlayer = None,
             "config": config.__dict__ if config else {}
         })
     
+    @app.get("/api/media")
+    async def get_media():
+        """Return the media library and active item."""
+        media_index_file = Path("media/index.json")
+        if media_index_file.exists():
+            with open(media_index_file, "r") as f:
+                data = json.load(f)
+            return {
+                "media": data.get("media", []),
+                "active": data.get("active"),
+                "last_updated": data.get("last_updated"),
+            }
+        else:
+            return {"media": [], "active": None, "last_updated": None}
+    
+    # Aliases for playback controls to match frontend expectations
+    @app.post("/api/playback/toggle")
+    async def playback_toggle():
+        return await toggle_pause()
+
+    @app.post("/api/playback/next")
+    async def playback_next():
+        return await next_media()
+
+    @app.post("/api/playback/previous")
+    async def playback_previous():
+        return await previous_media()
+    
     logger.info("FastAPI application created successfully")
     return app
 
