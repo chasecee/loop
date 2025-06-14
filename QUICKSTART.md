@@ -1,13 +1,13 @@
-# VidBox Quick Start Guide 🚀
+# LOOP Quick Start Guide 🤖
 
-Get your VidBox up and running in 5 minutes! (Well, maybe 15 if you're wiring things up...)
+Get your Little Optical Output Pal up and running in 5 minutes! (Well, maybe 15 if you're wiring things up...)
 
 ## 🎯 TL;DR
 
 ```bash
 # Clone and install
-git clone https://github.com/yourusername/vidbox.git
-cd vidbox
+git clone https://github.com/yourusername/loop.git
+cd loop
 ./deployment/scripts/install.sh
 
 # Access the web interface
@@ -16,7 +16,7 @@ cd vidbox
 
 ## 🔌 Hardware Setup (5 minutes)
 
-Connect your Waveshare 2.4" LCD to your Pi Zero 2W:
+Connect LOOP's display (Waveshare 2.4" LCD) to your Pi Zero 2W:
 
 | LCD Pin | Pi Pin (BCM) | Pi Pin (Physical) |
 | ------- | ------------ | ----------------- |
@@ -29,7 +29,7 @@ Connect your Waveshare 2.4" LCD to your Pi Zero 2W:
 | RST     | GPIO 27      | Pin 13            |
 | BL      | GPIO 18      | Pin 12            |
 
-**Optional**: Connect a rotary encoder for physical controls:
+**Optional**: Give LOOP some physical controls with a rotary encoder:
 
 - Pin A → GPIO 2
 - Pin B → GPIO 3
@@ -43,9 +43,9 @@ Connect your Waveshare 2.4" LCD to your Pi Zero 2W:
 # SSH into your Pi
 ssh pi@your-pi-ip
 
-# Clone the repo
-git clone https://github.com/yourusername/vidbox.git
-cd vidbox
+# Clone LOOP
+git clone https://github.com/yourusername/loop.git
+cd loop
 
 # Run the magic installer
 chmod +x deployment/scripts/install.sh
@@ -64,13 +64,13 @@ sudo apt install -y python3 python3-pip python3-venv git ffmpeg
 # Enable SPI
 sudo raspi-config nonint do_spi 0
 
-# Set up the project
-cd vidbox
+# Set up LOOP
+cd loop
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 
-# Start it up
+# Start LOOP
 python main.py
 ```
 
@@ -78,7 +78,7 @@ python main.py
 
 1. **Connect to WiFi**:
 
-   - If no WiFi configured, it creates hotspot "VidBox-Setup" (password: vidbox123)
+   - If no WiFi configured, LOOP creates its own network "LOOP-Setup" (password: loop123)
    - Connect and go to any website to configure WiFi
 
 2. **Access Web Interface**:
@@ -90,7 +90,7 @@ python main.py
 3. **Upload Your First GIF**:
    - Click "Upload Media"
    - Drop a GIF file
-   - Watch it process and display!
+   - Watch LOOP bring it to life!
 
 ## 🎮 Controls
 
@@ -103,11 +103,11 @@ python main.py
 
 ### Physical Controls (if encoder connected):
 
-- **Rotate CW**: Next media
-- **Rotate CCW**: Previous media
+- **Rotate Right**: Next animation
+- **Rotate Left**: Previous animation
 - **Press**: Pause/resume
 
-## 🔧 Common Issues
+## 🔧 Need Help?
 
 ### Display Not Working?
 
@@ -115,8 +115,8 @@ python main.py
 # Check SPI is enabled
 lsmod | grep spi
 
-# Test display
-cd /home/pi/vidbox
+# Test LOOP's display
+cd /home/pi/loop
 source venv/bin/activate
 python -c "from display.spiout import ILI9341Driver; from config.schema import get_config; d = ILI9341Driver(get_config().display); d.init(); d.fill_screen(0xF800)"
 ```
@@ -125,13 +125,13 @@ python -c "from display.spiout import ILI9341Driver; from config.schema import g
 
 ```bash
 # Check status
-sudo systemctl status vidbox
+sudo systemctl status loop
 
 # View logs
-sudo journalctl -u vidbox -f
+sudo journalctl -u loop -f
 
 # Restart
-sudo systemctl restart vidbox
+sudo systemctl restart loop
 ```
 
 ### WiFi Issues?
@@ -143,27 +143,27 @@ iwconfig
 # Restart WiFi
 sudo systemctl restart wpa_supplicant
 
-# Force hotspot mode
-vidbox-hotspot start
+# Start LOOP's hotspot
+loop-hotspot start
 ```
 
 ## 🚀 Next Steps
 
 1. **Set up automatic updates** (see DEPLOYMENT.md)
-2. **Upload more media** via web interface
-3. **Configure custom settings** in config.json
-4. **Set up remote sync** for multiple devices
+2. **Upload your favorite GIFs** via web interface
+3. **Make LOOP your own** by tweaking config.json
+4. **Set up remote sync** if you have multiple LOOPs
 
-## 📱 Default Access Points
+## 📱 Quick Reference
 
 - **Web Interface**: http://your-pi-ip:8080
 - **SSH**: ssh pi@your-pi-ip
-- **Hotspot**: VidBox-Setup / vidbox123
+- **WiFi Setup**: LOOP-Setup / loop123
 
-## 🆘 Need Help?
+## 🆘 Still Stuck?
 
-- Check the logs: `sudo journalctl -u vidbox -f`
+- Check LOOP's logs: `sudo journalctl -u loop -f`
 - Read DEPLOYMENT.md for advanced setup
 - File an issue on GitHub
 
-**Enjoy your new GIF display! 🎉**
+**Enjoy your new animation companion! 🤖✨**

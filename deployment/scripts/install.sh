@@ -117,6 +117,8 @@ install_missing_packages \
     python3-pip \
     python3-venv \
     python3-dev \
+    python3-opencv \
+    python3-rpi.gpio \
     git \
     ffmpeg \
     hostapd \
@@ -148,7 +150,11 @@ echo "📚 Installing Python dependencies..."
 cd "$PROJECT_DIR"
 source venv/bin/activate
 pip install --upgrade pip
-pip install -r requirements.txt
+# Use binary packages where possible and disable pip's dependency resolver for speed
+export PIP_ONLY_BINARY=:all:
+export PIP_USE_PEP517=0
+pip install --no-deps -r requirements.txt
+pip install --no-binary :none: -r requirements.txt --no-deps
 
 # Create necessary directories if they don't exist
 echo "📁 Checking directories..."

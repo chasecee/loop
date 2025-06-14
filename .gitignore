@@ -70,16 +70,16 @@ dmypy.json
 *.swo
 *~
 
-# VidBox specific
+# LOOP specific
 media/raw/*
 !media/raw/.gitkeep
 media/processed/*
 !media/processed/.gitkeep
 
 # Logs
-logs/
+logs/*
 *.log
-~/.vidbox/logs/
+~/.loop/logs/
 
 # Config backups
 config/config.json.backup

@@ -8,7 +8,7 @@ from typing import Optional
 
 
 def setup_logger(
-    name: str = "vidbox",
+    name: str = "loop",
     level: str = "INFO",
     log_file: Optional[Path] = None,
     max_bytes: int = 10 * 1024 * 1024,  # 10MB
@@ -52,12 +52,12 @@ def setup_logger(
 _logger: Optional[logging.Logger] = None
 
 
-def get_logger(name: str = "vidbox") -> logging.Logger:
-    """Get the global logger instance."""
+def get_logger(name: str = "loop") -> logging.Logger:
+    """Get a configured logger instance."""
     global _logger
     if _logger is None:
-        log_dir = Path.home() / ".vidbox" / "logs"
-        log_file = log_dir / "vidbox.log"
+        log_dir = Path.home() / ".loop" / "logs"
+        log_file = log_dir / "loop.log"
         _logger = setup_logger(name, log_file=log_file)
     return _logger
 

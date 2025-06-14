@@ -29,10 +29,9 @@ Your pocket-sized animation companion! LOOP is a Wi-Fi enabled display that brin
 
 ### 🔄 Stay Fresh
 
-- Multiple update methods (GitHub Actions, git, web)
-- Automatic deployment from git
+- Simple updates via git pull
 - Safe updates with automatic backups
-- Update through web interface
+- Local control for maximum security
 
 ## 🔌 What You'll Need
 
@@ -101,6 +100,16 @@ cd loop
    - Visit LOOP's web interface
    - Drop your favorite GIFs and videos
    - Watch LOOP bring them to life!
+
+### 4. Updates
+
+Keep LOOP fresh with:
+
+```bash
+cd /home/pi/loop
+git pull
+sudo systemctl restart loop
+```
 
 ## 🎮 Controls
 

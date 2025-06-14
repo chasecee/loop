@@ -37,44 +37,17 @@ cd loop
 
 LOOP will handle the rest! 🎨
 
-## 🔄 Update Methods
+## 🔄 Updates
 
-### 1. Quick Update (Recommended)
-
-Already have LOOP? Just run:
-
-```bash
-./deployment/scripts/install.sh
-```
-
-The script is smart - it'll only update what's needed! ⚡
-
-### 2. GitHub Actions (Automated)
-
-Let LOOP update itself! Add these secrets:
-
-- `PI_HOST`: Your Pi's IP
-- `PI_USER`: Username
-- `PI_SSH_KEY`: SSH key
-- `PI_PATH`: Install path
-
-Push to main or tag a release:
-
-```bash
-git push origin main
-# or
-git tag v1.0.0 && git push --tags
-```
-
-### 3. Manual Update
-
-Old school but reliable:
+Keep LOOP fresh with a simple git pull:
 
 ```bash
 cd /home/pi/loop
 git pull
 sudo systemctl restart loop
 ```
+
+That's it! Simple and secure. 🔒
 
 ## 🔧 Troubleshooting
 
