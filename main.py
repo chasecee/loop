@@ -242,6 +242,16 @@ class LOOPApplication:
             self.display_player.toggle_pause()
             self.logger.debug("Encoder: Toggle pause")
     
+    def _init_components(self):
+        """Initialize all core components in the correct order."""
+        self.running = True
+        self.initialize_display()
+        self.initialize_input()
+        self.initialize_wifi()
+        self.initialize_updater()
+        self.start_display_player()
+        self.start_input_handler()
+    
     def start(self):
         """Start the application."""
         try:
@@ -251,7 +261,7 @@ class LOOPApplication:
             self._init_components()
             
             # Start web server
-            self._start_web_server()
+            self.start_web_server()
             
             self.logger.info("✅ LOOP started successfully!")
             
