@@ -45,7 +45,7 @@ sudo apt install -y \
     libfreetype6-dev \
     liblcms2-dev \
     libopenjp2-7 \
-    libtiff5
+    libtiff-dev
 
 # Enable SPI interface
 echo "🔌 Enabling SPI interface..."

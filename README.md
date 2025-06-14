@@ -98,6 +98,11 @@ git clone https://github.com/yourusername/vidbox.git
 cd vidbox
 chmod +x deployment/scripts/install.sh
 sudo ./deployment/scripts/install.sh
+
+# The installer will show you the actual IP address to access VidBox
+# Example output:
+#   🌐 VidBox is accessible at:
+#      http://192.168.1.100:8080
 ```
 
 The installer will:
@@ -124,6 +129,67 @@ The installer will:
 3. **Upload Media**:
    - Drag & drop GIFs, videos, or images
    - Watch them appear on your display!
+
+## 🔒 Security Setup (Important!)
+
+### 1. Local Network Only
+
+By default, VidBox's web interface is accessible ONLY on your local network. DO NOT expose port 8080 to the internet without proper security measures.
+
+### 2. Change Default Credentials
+
+First thing after installation:
+
+```bash
+# SSH into your Pi
+ssh pi@your-pi-ip
+
+# Edit config.json
+nano /home/pi/vidbox/config/config.json
+
+# Change these values:
+{
+  "wifi": {
+    "hotspot_ssid": "YOUR-CUSTOM-SSID",
+    "hotspot_password": "YOUR-STRONG-PASSWORD"
+  }
+}
+```
+
+### 3. Remote Access Options
+
+For secure remote access, consider:
+
+1. **VPN Solution (Recommended)**:
+
+   - Set up WireGuard or OpenVPN
+   - Access through your VPN network
+
+2. **Reverse Proxy with HTTPS**:
+
+   - Use nginx with Let's Encrypt
+   - Enable basic authentication
+
+3. **SSH Tunnel**:
+   ```bash
+   # On your local machine:
+   ssh -L 8080:localhost:8080 pi@your-pi-ip
+   # Then access: http://localhost:8080
+   ```
+
+### 4. GitHub Actions Setup
+
+For automated deployments:
+
+1. **Local Network**:
+
+   - Set up a self-hosted GitHub runner
+   - No external access needed
+
+2. **Remote Access**:
+   - Use a VPN connection
+   - Or set up secure SSH tunneling
+   - Never expose SSH directly to the internet
 
 ## 🖥️ Web Interface Guide
 
