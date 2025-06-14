@@ -27,29 +27,19 @@ Your pocket-sized animation companion! LOOP is a Wi-Fi enabled display that brin
 - Visual WiFi network browser
 - Never gets stuck - always accessible!
 
-### 🔄 Stay Fresh
+## 🔌 Hardware Setup
 
-- Simple updates via git pull
-- Safe updates with automatic backups
-- Local control for maximum security
-
-## 🔌 What You'll Need
-
-### The Essentials
+### What You'll Need
 
 - **Raspberry Pi Zero 2 W** (LOOP's brain!)
 - **Waveshare 2.4" LCD** (LOOP's face!)
 - **MicroSD card** (8GB+, Class 10)
 - **5V USB power** (LOOP gets hungry!)
-
-### Optional Friends
-
-- **Rotary encoder** (LOOP loves to be turned!)
-- **3D printed case** (LOOP likes to dress up!)
+- **Optional**: Rotary encoder (for physical controls)
 
 ### Wiring Guide
 
-Connect LOOP's display like this:
+Connect your display:
 
 ```
 LCD Pin  → Pi Pin (BCM)  → Pi Pin (Physical)
@@ -63,7 +53,7 @@ RST      → GPIO 27       → Pin 13
 BL       → GPIO 18       → Pin 12
 ```
 
-Add the optional rotary encoder:
+Optional rotary encoder:
 
 ```
 Encoder   → Pi Pin (BCM)
@@ -72,7 +62,7 @@ Pin B     → GPIO 3
 Button    → GPIO 4
 ```
 
-## 🚀 Quick Start
+## 🚀 Installation
 
 ### 1. Prepare Pi
 
@@ -84,10 +74,9 @@ Flash Raspberry Pi OS Lite (32-bit) and enable SSH.
 git clone https://github.com/yourusername/loop.git
 cd loop
 ./deployment/scripts/install.sh
-
-# LOOP will show you its IP address when ready!
-# Example: http://192.168.1.100:8080
 ```
+
+That's it! LOOP will show you its IP address when ready (e.g., http://192.168.1.100:8080)
 
 ### 3. First Time Setup
 
@@ -103,7 +92,7 @@ cd loop
 
 ### 4. Updates
 
-Keep LOOP fresh with:
+Keeping LOOP fresh is super simple:
 
 ```bash
 cd /home/pi/loop
@@ -120,38 +109,13 @@ sudo systemctl restart loop
 - **Next/Previous**: Arrow keys
 - **Settings**: Configure everything!
 
-### Physical Controls
+### Physical Controls (if encoder connected)
 
 - **Turn Right**: Next animation
 - **Turn Left**: Previous animation
 - **Press**: Play/Pause
 
-## 🏗️ How LOOP Works
-
-```
-loop/
-├── 📁 boot/                 # Network & startup
-│   ├── wifi.py             # WiFi magic
-│   └── hotspot.sh          # Network friend
-├── 📁 web/                  # Web interface
-│   ├── server.py           # Web server
-│   └── templates/          # Pretty pages
-├── 📁 display/             # Display engine
-│   ├── player.py           # Animation brain
-│   ├── spiout.py          # Screen talker
-│   └── framebuf.py        # Frame manager
-├── 📁 utils/               # Helper tools
-│   ├── convert.py         # Media converter
-│   └── logger.py          # Note taker
-├── 📁 config/              # Settings
-│   ├── schema.py          # Config rules
-│   └── config.json        # Your choices
-└── 📁 media/               # Your stuff!
-    ├── raw/               # Original files
-    └── processed/         # Ready to show
-```
-
-## 🔧 Need Help?
+## 🔧 Troubleshooting
 
 ### Display Issues?
 
@@ -175,20 +139,6 @@ sudo systemctl restart loop    # Give LOOP a restart
 sudo systemctl restart wpa_supplicant  # Reset WiFi
 loop-hotspot start                     # Start hotspot
 ```
-
-## 📋 System Needs
-
-### Operating System
-
-- **Raspberry Pi OS Lite** (32-bit, Bookworm)
-- **Python 3.9+** (LOOP's language)
-- **SPI enabled** (for talking to screen)
-
-### Packages
-
-- **System**: ffmpeg, hostapd, dnsmasq
-- **Python**: FastAPI, Pillow, OpenCV
-- **Optional**: pytest, black (for development)
 
 ## 🤝 Want to Help?
 
