@@ -1,0 +1,47 @@
+{
+  "device": {
+    "name": "VidBox",
+    "version": "1.0.0"
+  },
+  "display": {
+    "type": "ILI9341",
+    "width": 240,
+    "height": 320,
+    "spi_bus": 0,
+    "spi_device": 0,
+    "dc_pin": 25,
+    "rst_pin": 27,
+    "bl_pin": 18,
+    "rotation": 0,
+    "framerate": 30
+  },
+  "wifi": {
+    "ssid": "",
+    "password": "",
+    "hotspot_ssid": "VidBox-Setup",
+    "hotspot_password": "vidbox123",
+    "timeout": 10
+  },
+  "encoder": {
+    "pin_a": 2,
+    "pin_b": 3,
+    "button_pin": 4,
+    "debounce_ms": 20
+  },
+  "media": {
+    "max_file_size_mb": 10,
+    "active_media": null,
+    "loop_count": -1
+  },
+  "sync": {
+    "enabled": false,
+    "server_url": "",
+    "interval_minutes": 60,
+    "last_sync": null
+  },
+  "web": {
+    "host": "0.0.0.0",
+    "port": 8080,
+    "debug": false
+  }
+}

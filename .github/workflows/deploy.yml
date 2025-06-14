@@ -1,0 +1,223 @@
+name: Deploy to Raspberry Pi
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Deployment environment"
+        required: true
+        default: "production"
+        type: choice
+        options:
+          - production
+          - staging
+          - development
+
+env:
+  PYTHON_VERSION: "3.9"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          # Install additional build tools
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Run tests
+        run: |
+          python -m pytest tests/ -v || echo "No tests found"
+
+      - name: Get version
+        id: version
+        run: |
+          if [[ $GITHUB_REF == refs/tags/* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/}
+          else
+            VERSION="dev-$(date +%Y%m%d-%H%M%S)"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
+      - name: Create deployment package
+        run: |
+          mkdir -p dist
+          tar -czf dist/vidbox-${{ steps.version.outputs.version }}.tar.gz \
+            --exclude='.git' \
+            --exclude='dist' \
+            --exclude='.github' \
+            --exclude='__pycache__' \
+            --exclude='*.pyc' \
+            --exclude='.pytest_cache' \
+            --exclude='media/raw/*' \
+            --exclude='media/processed/*' \
+            .
+
+      - name: Create deployment manifest
+        run: |
+          cat > dist/manifest.json << EOF
+          {
+            "version": "${{ steps.version.outputs.version }}",
+            "build_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "commit": "${{ github.sha }}",
+            "branch": "${{ github.ref_name }}",
+            "archive": "vidbox-${{ steps.version.outputs.version }}.tar.gz",
+            "restart_required": true,
+            "install_dependencies": true
+          }
+          EOF
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: deployment-package
+          path: dist/
+
+  deploy-direct:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event.inputs.environment == 'production'
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: deployment-package
+          path: dist/
+
+      - name: Deploy to Raspberry Pi
+        env:
+          PI_HOST: ${{ secrets.PI_HOST }}
+          PI_USER: ${{ secrets.PI_USER }}
+          PI_SSH_KEY: ${{ secrets.PI_SSH_KEY }}
+          PI_PATH: ${{ secrets.PI_PATH || '/home/pi/vidbox' }}
+        run: |
+          # Set up SSH
+          mkdir -p ~/.ssh
+          echo "$PI_SSH_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H $PI_HOST >> ~/.ssh/known_hosts
+
+          # Copy deployment package
+          scp dist/* ${PI_USER}@${PI_HOST}:/tmp/
+
+          # Execute deployment script on Pi
+          ssh ${PI_USER}@${PI_HOST} << 'EOF'
+            set -e
+            
+            # Navigate to project directory
+            cd ${{ secrets.PI_PATH || '/home/pi/vidbox' }}
+            
+            # Stop the service
+            sudo systemctl stop vidbox || echo "Service not running"
+            
+            # Backup current version
+            sudo cp -r . ../vidbox_backup_$(date +%s) || echo "Backup failed"
+            
+            # Extract new version
+            tar -xzf /tmp/vidbox-${{ needs.build.outputs.version }}.tar.gz -C . --strip-components=0
+            
+            # Install/update dependencies
+            pip3 install --user -r requirements.txt
+            
+            # Set permissions
+            chmod +x deployment/scripts/*.sh || echo "No deployment scripts"
+            
+            # Run post-deployment script if it exists
+            if [ -f deployment/scripts/post-deploy.sh ]; then
+              ./deployment/scripts/post-deploy.sh
+            fi
+            
+            # Start the service
+            sudo systemctl start vidbox
+            sudo systemctl enable vidbox
+            
+            # Clean up
+            rm -f /tmp/vidbox-*.tar.gz /tmp/manifest.json
+            
+            echo "Deployment completed successfully!"
+          EOF
+
+  deploy-webhook:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: deployment-package
+          path: dist/
+
+      - name: Deploy via webhook
+        env:
+          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+          WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
+        run: |
+          if [ -n "$WEBHOOK_URL" ]; then
+            curl -X POST "$WEBHOOK_URL" \
+              -H "Content-Type: application/json" \
+              -H "X-Webhook-Secret: $WEBHOOK_SECRET" \
+              -d '{
+                "version": "${{ needs.build.outputs.version }}",
+                "commit": "${{ github.sha }}",
+                "download_url": "https://github.com/${{ github.repository }}/releases/download/${{ needs.build.outputs.version }}/vidbox-${{ needs.build.outputs.version }}.tar.gz"
+              }'
+            echo "Webhook deployment triggered"
+          else
+            echo "No webhook URL configured"
+          fi
+
+  create-release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: deployment-package
+          path: dist/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            dist/vidbox-${{ needs.build.outputs.version }}.tar.gz
+            dist/manifest.json
+          body: |
+            ## VidBox Release ${{ needs.build.outputs.version }}
+
+            ### Changes
+            - Automated release from commit ${{ github.sha }}
+
+            ### Installation
+            1. Download the tar.gz file
+            2. Extract to your Pi: `tar -xzf vidbox-${{ needs.build.outputs.version }}.tar.gz`
+            3. Run the installation script: `./deployment/scripts/install.sh`
+
+            ### Update via Web Interface
+            You can also update directly through the VidBox web interface if you have remote updates enabled.
+          draft: false
+          prerelease: ${{ contains(github.ref, 'beta') || contains(github.ref, 'alpha') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

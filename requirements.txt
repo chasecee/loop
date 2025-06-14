@@ -1,0 +1,27 @@
+# Core web framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+jinja2==3.1.2
+python-multipart==0.0.6
+
+# Image/video processing
+Pillow==10.1.0
+opencv-python==4.8.1.78
+imageio==2.33.0
+
+# Hardware interfaces (Pi specific)
+RPi.GPIO==0.7.1
+spidev==3.6
+
+# System utilities  
+psutil==5.9.6
+requests==2.31.0
+python-dotenv==1.0.0
+
+# Optional (for development)
+pytest==7.4.3
+black==23.11.0
+isort==5.12.0
+
+# Network management
+netifaces==0.11.0 

@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}VidBox{% endblock %}</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .header h1 {
+            color: #4a5568;
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+
+        .header .subtitle {
+            text-align: center;
+            color: #718096;
+            font-size: 1.1rem;
+        }
+
+        .nav {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            margin-top: 20px;
+        }
+
+        .nav a {
+            text-decoration: none;
+            padding: 10px 20px;
+            background: #4299e1;
+            color: white;
+            border-radius: 10px;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+
+        .nav a:hover {
+            background: #3182ce;
+            transform: translateY(-2px);
+        }
+
+        .nav a.active {
+            background: #2d3748;
+        }
+
+        .card {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 25px;
+            margin-bottom: 20px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .card h2 {
+            color: #2d3748;
+            margin-bottom: 15px;
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+
+        .btn {
+            background: #4299e1;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 10px;
+            font-size: 1rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn:hover {
+            background: #3182ce;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(66, 153, 225, 0.4);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .btn.btn-danger {
+            background: #e53e3e;
+        }
+
+        .btn.btn-danger:hover {
+            background: #c53030;
+            box-shadow: 0 4px 12px rgba(229, 62, 62, 0.4);
+        }
+
+        .btn.btn-success {
+            background: #38a169;
+        }
+
+        .btn.btn-success:hover {
+            background: #2f855a;
+            box-shadow: 0 4px 12px rgba(56, 161, 105, 0.4);
+        }
+
+        .status {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 12px;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            font-weight: 500;
+        }
+
+        .status.connected {
+            background: #c6f6d5;
+            color: #22543d;
+        }
+
+        .status.disconnected {
+            background: #fed7d7;
+            color: #742a2a;
+        }
+
+        .status.hotspot {
+            background: #feebc8;
+            color: #7b341e;
+        }
+
+        .upload-area {
+            border: 2px dashed #cbd5e0;
+            border-radius: 12px;
+            padding: 40px;
+            text-align: center;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+
+        .upload-area:hover {
+            border-color: #4299e1;
+            background: rgba(66, 153, 225, 0.05);
+        }
+
+        .upload-area.dragover {
+            border-color: #4299e1;
+            background: rgba(66, 153, 225, 0.1);
+        }
+
+        .media-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        .media-item {
+            background: white;
+            border-radius: 12px;
+            padding: 15px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            transition: all 0.3s ease;
+        }
+
+        .media-item:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+        }
+
+        .media-item.active {
+            border: 2px solid #4299e1;
+            background: rgba(66, 153, 225, 0.05);
+        }
+
+        .media-item h3 {
+            font-size: 1rem;
+            margin-bottom: 8px;
+            color: #2d3748;
+        }
+
+        .media-item .meta {
+            font-size: 0.8rem;
+            color: #718096;
+            margin-bottom: 10px;
+        }
+
+        .media-controls {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .media-controls .btn {
+            font-size: 0.8rem;
+            padding: 6px 12px;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+            color: #2d3748;
+        }
+
+        .form-group input, .form-group select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            font-size: 1rem;
+        }
+
+        .form-group input:focus, .form-group select:focus {
+            outline: none;
+            border-color: #4299e1;
+            box-shadow: 0 0 0 3px rgba(66, 153, 225, 0.1);
+        }
+
+        .alert {
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            border-left: 4px solid;
+        }
+
+        .alert.success {
+            background: #c6f6d5;
+            border-color: #38a169;
+            color: #22543d;
+        }
+
+        .alert.error {
+            background: #fed7d7;
+            border-color: #e53e3e;
+            color: #742a2a;
+        }
+
+        .alert.info {
+            background: #bee3f8;
+            border-color: #4299e1;
+            color: #2a4365;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 10px;
+            }
+
+            .header h1 {
+                font-size: 2rem;
+            }
+
+            .nav {
+                flex-direction: column;
+                align-items: center;
+            }
+
+            .media-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .loader {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255,255,255,.3);
+            border-radius: 50%;
+            border-top-color: #fff;
+            animation: spin 1s ease-in-out infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎬 VidBox</h1>
+            <p class="subtitle">GIF Player & Uploader Appliance</p>
+            <nav class="nav">
+                <a href="/" {% if request.url.path == "/" %}class="active"{% endif %}>Home</a>
+                <a href="/settings" {% if request.url.path == "/settings" %}class="active"{% endif %}>Settings</a>
+            </nav>
+        </div>
+
+        <main>
+            {% block content %}{% endblock %}
+        </main>
+    </div>
+
+    <script>
+        // Global JavaScript utilities
+        function showAlert(message, type = 'info') {
+            const alertDiv = document.createElement('div');
+            alertDiv.className = `alert ${type}`;
+            alertDiv.textContent = message;
+            
+            const container = document.querySelector('.container');
+            container.insertBefore(alertDiv, container.firstChild);
+            
+            setTimeout(() => {
+                alertDiv.remove();
+            }, 5000);
+        }
+
+        async function apiCall(url, options = {}) {
+            try {
+                const response = await fetch(url, {
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...options.headers
+                    },
+                    ...options
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                return await response.json();
+            } catch (error) {
+                console.error('API call failed:', error);
+                showAlert(`Error: ${error.message}`, 'error');
+                throw error;
+            }
+        }
+
+        // Auto-refresh status every 10 seconds
+        setInterval(async () => {
+            try {
+                const status = await apiCall('/api/status');
+                // Update status indicators if they exist
+                updateStatusIndicators(status);
+            } catch (error) {
+                // Silent fail for background updates
+            }
+        }, 10000);
+
+        function updateStatusIndicators(status) {
+            // Update WiFi status
+            const wifiStatus = document.querySelector('.wifi-status');
+            if (wifiStatus && status.wifi) {
+                if (status.wifi.connected) {
+                    wifiStatus.className = 'status connected';
+                    wifiStatus.textContent = `📶 Connected: ${status.wifi.current_ssid}`;
+                } else if (status.wifi.hotspot_active) {
+                    wifiStatus.className = 'status hotspot';
+                    wifiStatus.textContent = `📡 Hotspot: ${status.wifi.hotspot_ssid}`;
+                } else {
+                    wifiStatus.className = 'status disconnected';
+                    wifiStatus.textContent = '❌ Disconnected';
+                }
+            }
+
+            // Update player status
+            const playerStatus = document.querySelector('.player-status');
+            if (playerStatus && status.player) {
+                const paused = status.player.paused ? ' (Paused)' : '';
+                playerStatus.textContent = `🎬 Playing: ${status.player.current_media?.original_filename || 'None'}${paused}`;
+            }
+        }
+    </script>
+
+    {% block scripts %}{% endblock %}
+</body>
+</html> 
