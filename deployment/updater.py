@@ -228,74 +228,45 @@ class SystemUpdater:
         self.current_version = current_version
         self.update_config = update_config or {}
         self.logger = get_logger("system_updater")
-        
-        # Initialize updaters
         self.git_updater = GitUpdater(repo_path)
-        self.remote_updater = RemoteUpdater(current_version)
-        
+
     def check_all_sources(self) -> Dict[str, any]:
-        """Check all update sources."""
-        results = {
-            'git': False,
-            'remote': None,
+        """Check git update source only."""
+        return {
+            'git': self.git_updater.check_for_updates(),
             'timestamp': int(time.time())
         }
-        
-        # Check git updates
-        if self.update_config.get('git_enabled', True):
-            results['git'] = self.git_updater.check_for_updates()
-        
-        # Check remote updates
-        remote_url = self.update_config.get('remote_url')
-        if remote_url:
-            results['remote'] = self.remote_updater.check_for_updates(remote_url)
-        
-        return results
-    
+
     def update_from_git(self) -> bool:
-        """Update from git repository."""
+        """Update from git repository and restart service if successful."""
         if not self.update_config.get('git_enabled', True):
             raise UpdaterError("Git updates are disabled")
-        
-        return self.git_updater.update()
-    
-    def update_from_remote(self, manifest: Dict) -> bool:
-        """Update from remote archive."""
-        remote_url = self.update_config.get('remote_url')
-        if not remote_url:
-            raise UpdaterError("No remote update URL configured")
-        
-        return self.remote_updater.download_and_apply_update(
-            manifest, remote_url, self.repo_path
-        )
-    
+        updated = self.git_updater.update()
+        if updated:
+            # Restart the service after a successful update
+            try:
+                subprocess.run(['sudo', 'systemctl', 'restart', 'loop'], check=True)
+                self.logger.info("Service restarted successfully after git update")
+            except Exception as e:
+                self.logger.error(f"Failed to restart service: {e}")
+        return updated
+
     def auto_update(self) -> Tuple[bool, str]:
-        """Auto-update from the best available source."""
+        """Auto-update from git only."""
         try:
-            update_sources = self.check_all_sources()
-            
-            # Prefer remote updates if available
-            if update_sources['remote']:
-                if self.update_from_remote(update_sources['remote']):
-                    return True, "Updated from remote source"
-            
-            # Fall back to git updates
-            if update_sources['git']:
+            if self.check_all_sources()['git']:
                 if self.update_from_git():
-                    return True, "Updated from git repository"
-            
+                    return True, "Updated from git repository and service restarted"
             return False, "No updates available"
-            
         except Exception as e:
             self.logger.error(f"Auto-update failed: {e}")
             return False, f"Update failed: {str(e)}"
-    
+
     def get_update_status(self) -> Dict:
         """Get current update status."""
         return {
             'current_version': self.current_version,
             'git_available': self.git_updater.git_available,
-            'remote_url': self.update_config.get('remote_url'),
             'last_check': self.update_config.get('last_check'),
             'update_sources': self.check_all_sources()
         } 
