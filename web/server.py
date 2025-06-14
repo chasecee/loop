@@ -103,10 +103,88 @@ def create_app(display_player: DisplayPlayer = None,
         return status
     
     @app.post("/api/upload")
-    async def upload_media(file: UploadFile = File(...)):
+    async def upload_media(
+        file: UploadFile = File(None),
+        original_file: UploadFile = File(None),
+        frames: List[UploadFile] = File(None),
+        durations: List[float] = Form(None)
+    ):
         """Upload and process media file."""
         
-        if not file.filename:
+        # Handle pre-processed frames from browser
+        if original_file and frames and durations:
+            try:
+                # Generate slug from original filename
+                slug = converter._generate_slug(original_file.filename)
+                output_dir = media_processed_dir / slug
+                frames_dir = output_dir / "frames"
+                output_dir.mkdir(parents=True, exist_ok=True)
+                frames_dir.mkdir(exist_ok=True)
+                
+                # Save frames
+                frame_files = []
+                for i, frame in enumerate(frames):
+                    frame_path = frames_dir / f"frame_{i:06d}.jpg"
+                    content = await frame.read()
+                    with open(frame_path, 'wb') as f:
+                        f.write(content)
+                    frame_files.append(frame_path.name)
+                
+                # Generate metadata
+                metadata = {
+                    "type": "gif",
+                    "slug": slug,
+                    "original_filename": original_file.filename,
+                    "width": config.display.width if config else 240,
+                    "height": config.display.height if config else 320,
+                    "frame_count": len(frames),
+                    "frames": frame_files,
+                    "durations": durations,
+                    "format": "jpeg",
+                    "loop_count": 0  # Infinite loop by default
+                }
+                
+                # Save metadata
+                with open(output_dir / "metadata.json", 'w') as f:
+                    json.dump(metadata, f, indent=2)
+                
+                # Update media index
+                media_index_file = Path("media/index.json")
+                media_data = {"media": [], "active": None, "last_updated": None}
+                
+                if media_index_file.exists():
+                    with open(media_index_file, 'r') as f:
+                        media_data = json.load(f)
+                
+                media_data["media"].append(metadata)
+                media_data["last_updated"] = time.time()
+                
+                if len(media_data["media"]) == 1:
+                    media_data["active"] = slug
+                
+                with open(media_index_file, 'w') as f:
+                    json.dump(media_data, f, indent=2)
+                
+                # Refresh player media list
+                if display_player:
+                    display_player.refresh_media_list()
+                
+                logger.info(f"Successfully processed pre-processed frames for: {metadata['original_filename']}")
+                
+                return {
+                    "success": True,
+                    "message": f"Successfully uploaded and processed {original_file.filename}",
+                    "metadata": metadata
+                }
+                
+            except Exception as e:
+                logger.error(f"Failed to process pre-processed frames: {e}")
+                if 'output_dir' in locals() and output_dir.exists():
+                    shutil.rmtree(output_dir)
+                raise HTTPException(status_code=500, detail=str(e))
+        
+        # Handle regular file upload (fallback for videos or when browser processing fails)
+        if not file or not file.filename:
             raise HTTPException(status_code=400, detail="No file provided")
         
         # Validate file type

@@ -150,11 +150,16 @@ echo "📚 Installing Python dependencies..."
 cd "$PROJECT_DIR"
 source venv/bin/activate
 pip install --upgrade pip
-# Use binary packages where possible and disable pip's dependency resolver for speed
-export PIP_ONLY_BINARY=:all:
-export PIP_USE_PEP517=0
-pip install --no-deps -r requirements.txt
-pip install --no-binary :none: -r requirements.txt --no-deps
+
+# First install system-level OpenCV to avoid building from source
+echo "🔧 Installing OpenCV from system packages..."
+sudo apt-get install -y python3-opencv
+
+# Use binary packages where possible and avoid building from source
+echo "📦 Installing remaining Python packages..."
+export PIP_PREFER_BINARY=1
+export PIP_ONLY_BINARY=numpy,opencv-python
+pip install --no-cache-dir -r requirements.txt
 
 # Create necessary directories if they don't exist
 echo "📁 Checking directories..."
