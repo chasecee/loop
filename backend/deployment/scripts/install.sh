@@ -107,9 +107,10 @@ if ! grep -q "Raspberry Pi" /proc/cpuinfo 2>/dev/null; then
     fi
 fi
 
-# Update package list (but don't upgrade everything)
-echo "📦 Updating package list..."
+# Update and upgrade system, and install python3-opencv
 sudo apt update
+sudo apt upgrade -y
+sudo apt install -y python3-opencv
 
 # Install system dependencies only if missing
 echo "🔧 Checking system dependencies..."
@@ -118,7 +119,6 @@ install_missing_packages \
     python3-pip \
     python3-venv \
     python3-dev \
-    python3-opencv \
     python3-rpi.gpio \
     git \
     ffmpeg \

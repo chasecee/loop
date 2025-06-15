@@ -61,6 +61,9 @@ Flash Raspberry Pi OS Lite (32-bit) and enable SSH.
 ### 2. Install LOOP
 
 ```bash
+# Install git if not already installed
+sudo apt-get install -y git
+
 git clone https://github.com/yourusername/loop.git
 cd loop
 # Install system dependencies first
