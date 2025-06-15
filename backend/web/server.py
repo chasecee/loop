@@ -135,188 +135,99 @@ def create_app(display_player: DisplayPlayer = None,
         
         return status
     
-    @app.post("/api/upload")
-    async def upload_media(
-        file: UploadFile = File(None),
-        original_file: UploadFile = File(None),
-        frames: List[UploadFile] = File(None),
-        durations: List[float] = Form(None)
+    async def process_and_index_file(
+        file: UploadFile, converter: MediaConverter, config: Config
     ):
-        """Upload and process media file."""
-        
-        # Handle pre-processed frames from browser
-        if original_file and frames and durations:
-            try:
-                # Generate slug from original filename
-                slug = converter._generate_slug(original_file.filename)
-                output_dir = media_processed_dir / slug
-                frames_dir = output_dir / "frames"
-                output_dir.mkdir(parents=True, exist_ok=True)
-                frames_dir.mkdir(exist_ok=True)
-                
-                # Save frames
-                frame_files = []
-                for i, frame in enumerate(frames):
-                    frame_path = frames_dir / f"frame_{i:06d}.jpg"
-                    content = await frame.read()
-                    with open(frame_path, 'wb') as f:
-                        f.write(content)
-                    frame_files.append(frame_path.name)
-                
-                # Generate metadata
-                metadata = {
-                    "type": "gif",
-                    "slug": slug,
-                    "original_filename": original_file.filename,
-                    "width": config.display.width if config else 240,
-                    "height": config.display.height if config else 320,
-                    "frame_count": len(frames),
-                    "frames": frame_files,
-                    "durations": durations,
-                    "format": "jpeg",
-                    "loop_count": 0  # Infinite loop by default
-                }
-                
-                # Save metadata
-                with open(output_dir / "metadata.json", 'w') as f:
-                    json.dump(metadata, f, indent=2)
-                
-                # Update media index
-                media_index_file = Path("media/index.json")
-                media_data = {"media": [], "active": None, "last_updated": None}
-                
-                if media_index_file.exists():
-                    with open(media_index_file, 'r') as f:
-                        media_data = json.load(f)
-                
-                media_data["media"].append(metadata)
-                media_data["last_updated"] = time.time()
-                
-                if len(media_data["media"]) == 1:
-                    media_data["active"] = slug
-                
-                with open(media_index_file, 'w') as f:
-                    json.dump(media_data, f, indent=2)
-                
-                # Refresh player media list
-                if display_player:
-                    display_player.refresh_media_list()
-                
-                logger.info(f"Successfully processed pre-processed frames for: {metadata['original_filename']}")
-                
-                return {
-                    "success": True,
-                    "message": f"Successfully uploaded and processed {original_file.filename}",
-                    "metadata": metadata
-                }
-                
-            except Exception as e:
-                logger.error(f"Failed to process pre-processed frames: {e}")
-                if 'output_dir' in locals() and output_dir.exists():
-                    shutil.rmtree(output_dir)
-                raise HTTPException(status_code=500, detail=str(e))
-        
-        # Handle regular file upload (fallback for videos or when browser processing fails)
-        if not file or not file.filename:
-            raise HTTPException(status_code=400, detail="No file provided")
-        
-        # Validate file type
-        allowed_extensions = {'.gif', '.mp4', '.avi', '.mov', '.png', '.jpg', '.jpeg'}
+        """Helper to process a single uploaded file."""
+        # Validate file type and size
+        allowed_extensions = {
+            ".gif", ".mp4", ".avi", ".mov", ".png", ".jpg", ".jpeg"
+        }
         file_ext = Path(file.filename).suffix.lower()
-        
         if file_ext not in allowed_extensions:
             raise HTTPException(
-                status_code=400, 
-                detail=f"Unsupported file type: {file_ext}"
+                status_code=400,
+                detail=f"Unsupported file type: {file.filename}",
             )
+
+        max_size = (
+            config.media.max_file_size_mb if config else 10
+        ) * 1024 * 1024
         
-        # Check file size (10MB limit by default)
-        max_size = (config.media.max_file_size_mb if config else 10) * 1024 * 1024
-        
+        # Save to a temporary file to check size and pass to converter
         try:
-            # Save uploaded file
-            raw_file_path = media_raw_dir / file.filename
-            with open(raw_file_path, 'wb') as f:
+            with tempfile.NamedTemporaryFile(
+                delete=False, suffix=file.filename, dir=media_raw_dir
+            ) as tmp:
                 content = await file.read()
                 if len(content) > max_size:
                     raise HTTPException(
-                        status_code=413, 
-                        detail=f"File too large. Maximum size: {max_size // (1024*1024)}MB"
+                        status_code=413, detail=f"File too large: {file.filename}"
                     )
-                f.write(content)
-            
-            logger.info(f"Uploaded file: {file.filename} ({len(content)} bytes)")
-            
-            # Convert media
+                tmp.write(content)
+                tmp_path = Path(tmp.name)
+
+            # Generate slug and output directory
             slug = converter._generate_slug(file.filename)
             output_dir = media_processed_dir / slug
-            
-            metadata = converter.convert_media_file(raw_file_path, output_dir)
-            
+
+            # Convert media
+            metadata = converter.convert_media_file(tmp_path, output_dir)
             if not metadata:
-                # Clean up on failure
-                if raw_file_path.exists():
-                    raw_file_path.unlink()
-                if output_dir.exists():
-                    shutil.rmtree(output_dir)
-                raise HTTPException(status_code=500, detail="Failed to process media file")
+                raise HTTPException(
+                    status_code=500, detail=f"Failed to process {file.filename}"
+                )
             
             # Update media index
             media_index_file = Path("media/index.json")
-            media_data = {"media": [], "active": None, "last_updated": None}
-            
+            media_data = {"media": [], "active": None, "loop": [], "last_updated": None}
             if media_index_file.exists():
-                with open(media_index_file, 'r') as f:
+                with open(media_index_file, "r") as f:
                     media_data = json.load(f)
-            
-            # Add new media to list
+
+            # Add new media and set as active if it's the first one
             media_data["media"].append(metadata)
-            media_data["last_updated"] = time.time()
-            
-            # Set as active if it's the first media
             if len(media_data["media"]) == 1:
                 media_data["active"] = slug
-            
-            with open(media_index_file, 'w') as f:
+
+            media_data["last_updated"] = time.time()
+            with open(media_index_file, "w") as f:
                 json.dump(media_data, f, indent=2)
-            
-            # Refresh player media list
-            if display_player:
-                display_player.refresh_media_list()
-            
-            logger.info(f"Successfully processed media: {metadata['original_filename']}")
-            
-            return {
-                "success": True,
-                "message": f"Successfully uploaded and processed {file.filename}",
-                "metadata": metadata
-            }
-            
-        except Exception as e:
-            logger.error(f"Upload failed: {e}")
-            # Clean up on any error
-            if 'raw_file_path' in locals() and raw_file_path.exists():
-                raw_file_path.unlink()
-            if 'output_dir' in locals() and output_dir.exists():
-                shutil.rmtree(output_dir)
-            
-            if isinstance(e, HTTPException):
-                raise e
-            else:
-                raise HTTPException(status_code=500, detail=str(e))
+
+            return metadata
+
+        finally:
+            # Clean up the temporary file
+            if "tmp_path" in locals() and tmp_path.exists():
+                tmp_path.unlink()
     
     @app.post("/api/media")
-    async def create_media(files: List[UploadFile] = File(...)):
+    async def upload_media_files(files: List[UploadFile] = File(...)):
         """Handles multiple file uploads and processing."""
-        # This is a simplified placeholder. You might expand this 
-        # to handle the conversion and indexing logic from the `upload_media` endpoint.
         processed_files = []
-        for file in files:
-            # You would call your conversion logic here
-            # For now, just confirming receipt
-            processed_files.append({"filename": file.filename, "content_type": file.content_type})
+        errors = []
 
-        return {"status": "success", "processed_files": processed_files}
+        for file in files:
+            try:
+                metadata = await process_and_index_file(file, converter, config)
+                processed_files.append(metadata)
+            except Exception as e:
+                logger.error(f"Upload failed for {file.filename}: {e}")
+                error_detail = e.detail if isinstance(e, HTTPException) else str(e)
+                errors.append({"filename": file.filename, "error": error_detail})
+
+        # Refresh player only once after all files are processed
+        if display_player:
+            display_player.refresh_media_list()
+
+        if not processed_files and errors:
+             raise HTTPException(status_code=500, detail={"errors": errors})
+
+        return {
+            "success": True,
+            "processed_files": processed_files,
+            "errors": errors
+        }
     
     @app.post("/api/media/{slug}/activate")
     async def activate_media(slug: str):

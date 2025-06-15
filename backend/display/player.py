@@ -312,9 +312,9 @@ class DisplayPlayer:
                                 self.next_media()
                                 loop_count = 0
                     else:
-                        # Failed to get frame, try to reload
-                        self.logger.warning("Failed to get frame, reloading sequence")
-                        self.current_sequence = None
+                        # Failed to get frame, skip to the next media to avoid a loop
+                        self.logger.warning(f"Failed to get frame for {media_info.get('slug')}, skipping to next media")
+                        self.next_media()
                         time.sleep(0.1)
                 
                 # Small delay to prevent excessive CPU usage
