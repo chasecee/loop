@@ -306,4 +306,29 @@ case "$1" in
 esac
 EOF
 
-sudo chmod +x /usr/local/bin/loop-hotspot 
+sudo chmod +x /usr/local/bin/loop-hotspot
+
+# Import default media if present and no media exists yet
+if [ -d "$PROJECT_DIR/assets/default-media" ]; then
+    echo "📦 Importing default media from assets/default-media..."
+    cp -r "$PROJECT_DIR/assets/default-media"/* "$BACKEND_DIR/media/processed/"
+    
+    INDEX_FILE="$BACKEND_DIR/media/index.json"
+    if [ ! -f "$INDEX_FILE" ] || [ ! -s "$INDEX_FILE" ]; then
+        echo "📝 Generating media index from default media..."
+        MEDIA_JSON="{\"media\":[],\"active\":null,\"last_updated\":$(date +%s)}"
+        for slug in "$BACKEND_DIR/media/processed"/*; do
+            if [ -d "$slug" ]; then
+                SLUG_NAME=$(basename "$slug")
+                META_FILE="$slug/metadata.json"
+                if [ -f "$META_FILE" ]; then
+                    # Merge metadata into index
+                    MEDIA_JSON=$(echo "$MEDIA_JSON" | \
+                        python3 -c "import sys, json; d=json.load(sys.stdin); m=json.load(open('$META_FILE')); d['media'].append(m); d['active']=d['active'] or m.get('slug'); print(json.dumps(d))")
+                fi
+            fi
+        done
+        echo "$MEDIA_JSON" | python3 -c 'import sys, json; print(json.dumps(json.load(sys.stdin), indent=2))' > "$INDEX_FILE"
+        echo "✅ Default media index created."
+    fi
+fi 
