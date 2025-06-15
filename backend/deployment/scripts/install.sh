@@ -187,7 +187,7 @@ User=${USER}
 Group=${USER}
 WorkingDirectory=${PROJECT_DIR}
 Environment=PYTHONPATH=${PROJECT_DIR}
-ExecStart=${VENV_DIR}/bin/python ${PROJECT_DIR}/main.py
+ExecStart=${VENV_DIR}/bin/python ${PROJECT_DIR}/backend/main.py
 Restart=always
 RestartSec=3
 
@@ -213,7 +213,7 @@ fi
 # Set permissions
 echo "🔒 Setting file permissions..."
 chown -R ${USER}:${USER} "${PROJECT_DIR}"
-chmod +x "${PROJECT_DIR}/main.py" 2>/dev/null || true
+chmod +x "${PROJECT_DIR}/backend/main.py" 2>/dev/null || true
 chmod +x "${PROJECT_DIR}/deployment/scripts/"*.sh 2>/dev/null || true
 
 # Enable and start service

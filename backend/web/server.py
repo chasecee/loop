@@ -23,6 +23,17 @@ from utils.logger import get_logger
 # Define a Pydantic model for the WiFi connection request
 from pydantic import BaseModel
 
+def get_dir_size(path: Path) -> int:
+    """Recursively get the size of a directory."""
+    total = 0
+    if path.exists():
+        for entry in os.scandir(path):
+            if entry.is_file():
+                total += entry.stat().st_size
+            elif entry.is_dir():
+                total += get_dir_size(Path(entry.path))
+    return total
+
 class WiFiCredentials(BaseModel):
     ssid: str
     password: Optional[str] = ""
@@ -521,12 +532,28 @@ def create_app(display_player: DisplayPlayer = None,
 
     @app.get("/api/storage")
     async def get_storage_info():
-        """Get storage usage information."""
+        """Get detailed storage usage information."""
         total, used, free = shutil.disk_usage("/")
+        
+        project_root = Path(__file__).resolve().parents[2]
+        
+        media_path = project_root / "media"
+        media_size = get_dir_size(media_path)
+        
+        # App size is the total project size minus media
+        total_project_size = get_dir_size(project_root)
+        app_size = total_project_size - media_size
+        
+        # System size is what's left over
+        system_size = used - total_project_size
+        
         return {
             "total": total,
             "used": used,
             "free": free,
+            "system": system_size if system_size > 0 else 0,
+            "app": app_size,
+            "media": media_size,
             "units": "bytes"
         }
 
