@@ -74,10 +74,10 @@ if [ -f "$CONFIG_FLAG" ]; then
     echo "Performing quick update..."
     
     # Just update Python packages and restart service
-    if [ -f "${PROJECT_DIR}/requirements.txt" ]; then
+    if [ -f "${BACKEND_DIR}/requirements.txt" ]; then
         echo "📚 Updating Python dependencies..."
         source "${VENV_DIR}/bin/activate"
-        pip install -r "${PROJECT_DIR}/requirements.txt"
+        pip install -r "${BACKEND_DIR}/requirements.txt"
     fi
     
     # Restart service if it exists
