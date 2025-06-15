@@ -5,7 +5,7 @@ set -e
 # This script sets up LOOP on a Raspberry Pi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/../../" && pwd)"
 BACKEND_DIR="${PROJECT_DIR}/backend"
 SERVICE_NAME="loop"
 USER="${USER:-pi}"
