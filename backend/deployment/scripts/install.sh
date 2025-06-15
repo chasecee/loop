@@ -185,8 +185,8 @@ After=network.target
 Type=simple
 User=${USER}
 Group=${USER}
-WorkingDirectory=${PROJECT_DIR}
-Environment=PYTHONPATH=${PROJECT_DIR}
+WorkingDirectory=${PROJECT_DIR}/backend
+Environment=PYTHONPATH=${PROJECT_DIR}/backend
 ExecStart=${VENV_DIR}/bin/python ${PROJECT_DIR}/backend/main.py
 Restart=always
 RestartSec=3
