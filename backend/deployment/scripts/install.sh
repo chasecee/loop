@@ -12,6 +12,12 @@ USER="${USER:-pi}"
 VENV_DIR="${BACKEND_DIR}/venv"
 CONFIG_FLAG="${HOME}/.loop/setup_complete"
 
+# Ensure we are running from the project root and backend exists
+if [ ! -d "$BACKEND_DIR" ]; then
+    echo "❌ backend directory not found at $BACKEND_DIR. Please run this script from the project root (where the backend/ folder is)."
+    exit 1
+fi
+
 # Function to check if a package is installed
 check_package() {
     dpkg -l "$1" &> /dev/null
