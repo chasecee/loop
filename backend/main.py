@@ -11,6 +11,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+import traceback
 
 # Add project root to Python path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -343,6 +344,7 @@ def main():
         sys.exit(0)
     except Exception as e:
         print(f"Fatal error: {e}")
+        traceback.print_exc()
         sys.exit(1)
 
 

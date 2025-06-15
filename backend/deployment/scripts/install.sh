@@ -170,8 +170,14 @@ mkdir -p ~/.loop/logs
 # Set up configuration
 echo "⚙️  Setting up configuration..."
 if [ ! -f "${BACKEND_DIR}/config/config.json" ]; then
-    echo "Creating default configuration..."
-    cp "${BACKEND_DIR}/config/config.json.example" "${BACKEND_DIR}/config/config.json" 2>/dev/null || true
+    echo "❌ config.json missing! Aborting install."
+    exit 1
+fi
+
+MEDIA_COUNT=$(find "${BACKEND_DIR}/media/processed" -mindepth 1 -maxdepth 1 -type d | wc -l)
+if [ "$MEDIA_COUNT" -eq 0 ]; then
+    echo "❌ No media found in media/processed! Aborting install."
+    exit 1
 fi
 
 # Create systemd service if needed
