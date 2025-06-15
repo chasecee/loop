@@ -6,9 +6,10 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+BACKEND_DIR="${PROJECT_DIR}/backend"
 SERVICE_NAME="loop"
 USER="${USER:-pi}"
-VENV_DIR="${PROJECT_DIR}/venv"
+VENV_DIR="${BACKEND_DIR}/venv"
 CONFIG_FLAG="${HOME}/.loop/setup_complete"
 
 # Function to check if a package is installed
@@ -141,13 +142,13 @@ fi
 # Create virtual environment if needed
 if ! check_venv; then
     echo "🐍 Setting up Python virtual environment..."
-    cd "$PROJECT_DIR"
+    cd "$BACKEND_DIR"
     python3 -m venv venv --system-site-packages
 fi
 
 # Always update Python dependencies
 echo "📚 Installing Python dependencies..."
-cd "$PROJECT_DIR"
+cd "$BACKEND_DIR"
 source venv/bin/activate
 pip install --upgrade pip
 
@@ -162,15 +163,15 @@ pip install --no-cache-dir -r requirements.txt
 
 # Create necessary directories if they don't exist
 echo "📁 Checking directories..."
-mkdir -p media/raw media/processed
-mkdir -p logs
+mkdir -p "${BACKEND_DIR}/media/raw" "${BACKEND_DIR}/media/processed"
+mkdir -p "${BACKEND_DIR}/logs"
 mkdir -p ~/.loop/logs
 
 # Set up configuration
 echo "⚙️  Setting up configuration..."
-if [ ! -f config/config.json ]; then
+if [ ! -f "${BACKEND_DIR}/config/config.json" ]; then
     echo "Creating default configuration..."
-    cp config/config.json.example config/config.json 2>/dev/null || true
+    cp "${BACKEND_DIR}/config/config.json.example" "${BACKEND_DIR}/config/config.json" 2>/dev/null || true
 fi
 
 # Create systemd service if needed
@@ -185,9 +186,9 @@ After=network.target
 Type=simple
 User=${USER}
 Group=${USER}
-WorkingDirectory=${PROJECT_DIR}/backend
-Environment=PYTHONPATH=${PROJECT_DIR}/backend
-ExecStart=${VENV_DIR}/bin/python ${PROJECT_DIR}/backend/main.py
+WorkingDirectory=${BACKEND_DIR}
+Environment=PYTHONPATH=${BACKEND_DIR}
+ExecStart=${VENV_DIR}/bin/python ${BACKEND_DIR}/main.py
 Restart=always
 RestartSec=3
 
