@@ -119,9 +119,8 @@ class LOOPApplication:
             
         except Exception as e:
             self.logger.error(f"Failed to initialize display: {e}")
-            # Continue without display in development mode
-            if not self.config.web.debug:
-                raise
+            # Continue running headless – don't crash the whole service
+            self.logger.warning("Continuing without display (headless mode)")
     
     def initialize_input(self):
         """Initialize the input system."""
@@ -140,9 +139,8 @@ class LOOPApplication:
             
         except Exception as e:
             self.logger.error(f"Failed to initialize input: {e}")
-            # Continue without encoder in development mode
-            if not self.config.web.debug:
-                raise
+            # Continue without encoder – don't crash the whole service
+            self.logger.warning("Continuing without encoder (headless mode)")
     
     def initialize_wifi(self):
         """Initialize WiFi management."""
