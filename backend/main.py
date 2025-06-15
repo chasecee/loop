@@ -12,6 +12,7 @@ import threading
 import time
 from pathlib import Path
 import traceback
+import shutil
 
 # Add project root to Python path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -32,6 +33,7 @@ class LOOPApplication:
     
     def __init__(self):
         """Initialize the application."""
+        self._ensure_default_media()
         self.config = get_config()
         self.logger = get_logger("app")
         self.logger.info(f"Starting LOOP v{self.config.device.version}")
@@ -57,6 +59,44 @@ class LOOPApplication:
         """Handle system signals."""
         self.logger.info(f"Received signal {signum}, shutting down gracefully...")
         self.shutdown()
+    
+    def _ensure_default_media(self):
+        """If media/processed is empty, copy from assets/default-media and update index.json."""
+        backend_dir = Path(__file__).parent
+        project_root = backend_dir.parent
+        processed_dir = backend_dir / "media" / "processed"
+        default_media_dir = project_root / "assets" / "default-media"
+        index_file = backend_dir / "media" / "index.json"
+
+        # If processed_dir is empty and default-media exists, copy
+        if processed_dir.exists() and not any(processed_dir.iterdir()) and default_media_dir.exists():
+            self_logger = get_logger("default_media")
+            self_logger.info("Copying default media to media/processed...")
+            for item in default_media_dir.iterdir():
+                dest = processed_dir / item.name
+                if item.is_dir():
+                    shutil.copytree(item, dest)
+                else:
+                    shutil.copy2(item, dest)
+            # Build index.json from metadata.json files
+            media = []
+            active = None
+            for media_dir in processed_dir.iterdir():
+                meta = media_dir / "metadata.json"
+                if meta.exists():
+                    import json
+                    with open(meta) as f:
+                        m = json.load(f)
+                        media.append(m)
+                        if not active:
+                            active = m.get("slug")
+            if media:
+                with open(index_file, "w") as f:
+                    import json
+                    json.dump({"media": media, "active": active, "last_updated": int(time.time())}, f, indent=2)
+                self_logger.info("Default media index.json created.")
+            else:
+                self_logger.warning("No metadata.json found in default media.")
     
     def initialize_display(self):
         """Initialize the display system."""
