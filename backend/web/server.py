@@ -20,6 +20,15 @@ from deployment.updater import SystemUpdater
 from utils.convert import MediaConverter
 from utils.logger import get_logger
 
+# Define a Pydantic model for the WiFi connection request
+from pydantic import BaseModel
+
+class WiFiCredentials(BaseModel):
+    ssid: str
+    password: Optional[str] = ""
+
+class AddToLoopPayload(BaseModel):
+    slug: str
 
 def create_app(display_player: DisplayPlayer = None,
                wifi_manager: WiFiManager = None, 
@@ -46,6 +55,19 @@ def create_app(display_player: DisplayPlayer = None,
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
     templates = Jinja2Templates(directory=template_dir)
     
+    # --- New SPA static file serving ---
+    # The Next.js build output will be moved to this directory
+    spa_dir = Path(__file__).parent / "spa"
+    
+    # Mount the static assets from the Next.js build
+    if (spa_dir / "_next").exists():
+        app.mount("/_next", StaticFiles(directory=spa_dir / "_next"), name="next-static")
+    
+    # Mount other public assets
+    app.mount("/assets", StaticFiles(directory=spa_dir), name="spa-assets")
+    
+    # --- End new SPA serving ---
+
     # Media directories
     media_raw_dir = Path("media/raw")
     media_processed_dir = Path("media/processed")
@@ -85,7 +107,7 @@ def create_app(display_player: DisplayPlayer = None,
     @app.get("/api/status")
     async def get_status():
         """Get system status."""
-        return {
+        status = {
             "system": "LOOP v1.0.0",
             "status": "running",
             "timestamp": int(time.time())
@@ -272,6 +294,19 @@ def create_app(display_player: DisplayPlayer = None,
             else:
                 raise HTTPException(status_code=500, detail=str(e))
     
+    @app.post("/api/media")
+    async def create_media(files: List[UploadFile] = File(...)):
+        """Handles multiple file uploads and processing."""
+        # This is a simplified placeholder. You might expand this 
+        # to handle the conversion and indexing logic from the `upload_media` endpoint.
+        processed_files = []
+        for file in files:
+            # You would call your conversion logic here
+            # For now, just confirming receipt
+            processed_files.append({"filename": file.filename, "content_type": file.content_type})
+
+        return {"status": "success", "processed_files": processed_files}
+    
     @app.post("/api/media/{slug}/activate")
     async def activate_media(slug: str):
         """Set a media item as active."""
@@ -370,21 +405,21 @@ def create_app(display_player: DisplayPlayer = None,
         return {"networks": networks}
     
     @app.post("/api/wifi/connect")
-    async def connect_wifi(ssid: str = Form(...), password: str = Form("")):
-        """Connect to WiFi network."""
+    async def connect_wifi(credentials: WiFiCredentials):
+        """Connect to WiFi network using JSON payload."""
         if not wifi_manager:
             raise HTTPException(status_code=503, detail="WiFi manager not available")
         
-        success = wifi_manager.connect_to_network(ssid, password)
+        success = wifi_manager.connect_to_network(credentials.ssid, credentials.password)
         
         if success:
             # Update config
             if config:
-                config.wifi.ssid = ssid
-                config.wifi.password = password
+                config.wifi.ssid = credentials.ssid
+                config.wifi.password = credentials.password
                 config.save()
             
-            return {"success": True, "message": f"Connected to {ssid}"}
+            return {"success": True, "message": f"Connected to {credentials.ssid}"}
         else:
             raise HTTPException(status_code=400, detail="Failed to connect to WiFi")
     
@@ -462,6 +497,53 @@ def create_app(display_player: DisplayPlayer = None,
     async def playback_previous():
         return await previous_media()
     
+    # --- New Endpoints for SPA ---
+    
+    @app.get("/api/loop")
+    async def get_loop_queue():
+        """Get the current media loop/playlist."""
+        # This is a placeholder. You'd typically return a list of media slugs.
+        if display_player:
+            return {"loop": [media.get("slug") for media in display_player.media_list]}
+        return {"loop": []}
+
+    @app.post("/api/loop")
+    async def add_to_loop(payload: AddToLoopPayload):
+        """Add a media item to the loop."""
+        # Placeholder logic
+        return {"success": True, "message": f"Added {payload.slug} to loop."}
+
+    @app.delete("/api/loop/{slug}")
+    async def remove_from_loop(slug: str):
+        """Remove a media item from the loop."""
+        # Placeholder logic
+        return {"success": True, "message": f"Removed {slug} from loop."}
+
+    @app.get("/api/storage")
+    async def get_storage_info():
+        """Get storage usage information."""
+        total, used, free = shutil.disk_usage("/")
+        return {
+            "total": total,
+            "used": used,
+            "free": free,
+            "units": "bytes"
+        }
+
+    # --- End New Endpoints ---
+
+    # --- New SPA Catch-all Route ---
+    @app.get("/{full_path:path}", response_class=HTMLResponse)
+    async def serve_spa(request: Request, full_path: str):
+        """Serve the single-page application."""
+        spa_index = Path(__file__).parent / "spa" / "index.html"
+        if spa_index.exists():
+            return templates.TemplateResponse("spa/index.html", {"request": request})
+        else:
+            # Fallback to old UI or an error if SPA is not built
+            logger.warning("SPA index.html not found, falling back to old UI")
+            return await home(request)
+
     logger.info("FastAPI application created successfully")
     return app
 
@@ -474,6 +556,13 @@ if __name__ == "__main__":
     config = get_config()
     app = create_app(config=config)
     
+    # Add a dummy template for SPA testing if it doesn't exist
+    spa_dir = Path(__file__).parent / "spa"
+    spa_dir.mkdir(exist_ok=True)
+    if not (spa_dir / "index.html").exists():
+        with open(spa_dir / "index.html", "w") as f:
+            f.write("<h1>SPA Placeholder</h1><p>Build the frontend and place it here.</p>")
+
     uvicorn.run(
         app, 
         host=config.web.host, 
