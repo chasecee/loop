@@ -63,6 +63,10 @@ Flash Raspberry Pi OS Lite (32-bit) and enable SSH.
 ```bash
 git clone https://github.com/yourusername/loop.git
 cd loop
+# Install system dependencies first
+sudo apt-get update
+sudo apt-get install -y python3-opencv
+# Then run the installer
 ./deployment/scripts/install.sh
 ```
 
