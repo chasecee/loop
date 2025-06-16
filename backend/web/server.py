@@ -135,7 +135,7 @@ def create_app(display_player: DisplayPlayer = None,
                 tmp_path = Path(tmp.name)
 
             # Generate slug and output directory
-            slug = converter._generate_slug(file.filename)
+            slug = converter._generate_slug(tmp_path.name)
             output_dir = media_processed_dir / slug
 
             # Convert media
