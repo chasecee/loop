@@ -8,7 +8,7 @@ python-multipart==0.0.6
 pillow==10.1.0
 imageio==2.33.0
 numpy>=1.22.0  # Updated to support newer Python versions
-# Note: OpenCV is installed via system package: sudo apt-get install -y python3-opencv
+
 
 # Hardware interfaces (Pi specific)
 spidev==3.6; platform_machine == 'armv7l' or platform_machine == 'aarch64'

@@ -116,7 +116,8 @@ fi
 # Update and upgrade system, and install python3-opencv
 sudo apt update
 sudo apt upgrade -y
-sudo apt install -y python3-opencv
+## remove python3-opencv because it's not needed or used by the backend
+# sudo apt install -y python3-opencv
 
 # Install system dependencies only if missing
 echo "🔧 Checking system dependencies..."
