@@ -108,10 +108,19 @@ class DisplayPlayer:
             return False
         
         try:
+            # Get frames and durations from media info
+            frames = media_info.get('frames', [])
+            durations = media_info.get('durations', [])
+            
+            if not frames:
+                self.logger.error("No frames found in media info")
+                return False
+            
+            # Create frame sequence with frames and durations
             self.current_sequence = FrameSequence(
-                frames_dir, 
-                self.display_config.width, 
-                self.display_config.height
+                frames_dir,
+                frames,
+                durations
             )
             
             if self.current_sequence.get_frame_count() == 0:
