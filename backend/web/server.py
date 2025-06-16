@@ -74,8 +74,11 @@ def create_app(display_player: DisplayPlayer = None,
     if (spa_dir / "_next").exists():
         app.mount("/_next", StaticFiles(directory=spa_dir / "_next"), name="next-static")
     
-    # Mount other public assets
-    app.mount("/assets", StaticFiles(directory=spa_dir), name="spa-assets")
+    # Mount other public assets only if SPA folder exists to avoid runtime error
+    if spa_dir.exists():
+        app.mount("/assets", StaticFiles(directory=spa_dir), name="spa-assets")
+    else:
+        logger.warning("SPA directory %s not found, skipping static mount", spa_dir)
     
     # --- End new SPA serving ---
 
