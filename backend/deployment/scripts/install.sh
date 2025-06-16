@@ -76,30 +76,35 @@ echo "================================"
 
 # Check if this is a reinstall
 if [ -f "$CONFIG_FLAG" ]; then
-    echo "🔄 Detected previous installation"
-    echo "Performing quick update..."
-    
-    # Just update Python packages and restart service
-    if [ -f "${BACKEND_DIR}/requirements.txt" ]; then
-        echo "📚 Updating Python dependencies..."
-        source "${VENV_DIR}/bin/activate"
-        pip install -r "${BACKEND_DIR}/requirements.txt"
-    fi
-    
-    # Restart service if it exists
-    if check_service; then
-        echo "🔄 Restarting service..."
-        sudo systemctl restart ${SERVICE_NAME}
+    if check_venv; then
+        echo "🔄 Detected previous installation"
+        echo "Performing quick update..."
         
-        # Show IP and exit
-        IP_ADDR=$(hostname -I | awk '{print $1}')
-        echo ""
-        echo "🌐 LOOP is accessible at:"
-        echo "   http://${IP_ADDR}:8080"
+        # Just update Python packages and restart service
+        if [ -f "${BACKEND_DIR}/requirements.txt" ]; then
+            echo "📚 Updating Python dependencies..."
+            source "${VENV_DIR}/bin/activate"
+            pip install -r "${BACKEND_DIR}/requirements.txt"
+        fi
+        
+        # Restart service if it exists
+        if check_service; then
+            echo "🔄 Restarting service..."
+            sudo systemctl restart ${SERVICE_NAME}
+            
+            # Show IP and exit
+            IP_ADDR=$(hostname -I | awk '{print $1}')
+            echo ""
+            echo "🌐 LOOP is accessible at:"
+            echo "   http://${IP_ADDR}:8080"
+        fi
+        
+        echo "✨ Quick update complete!"
+        exit 0
+    else
+        echo "⚠️  Previous install flag found but virtualenv missing – performing fresh install..."
+        rm -f "$CONFIG_FLAG"
     fi
-    
-    echo "✨ Quick update complete!"
-    exit 0
 fi
 
 # For fresh install, continue with full setup...
