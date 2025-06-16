@@ -5,8 +5,8 @@
   },
   "display": {
     "type": "ILI9341",
-    "width": 320,
-    "height": 240,
+    "width": 240,
+    "height": 320,
     "spi_bus": 0,
     "spi_device": 0,
     "dc_pin": 25,
