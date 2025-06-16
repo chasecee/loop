@@ -170,8 +170,16 @@ def create_app(display_player: DisplayPlayer = None,
                 with open(media_index_file, "r") as f:
                     media_data = json.load(f)
 
-            # Add new media and set as active if it's the first one
+            # Add new media to library
             media_data["media"].append(metadata)
+
+            # Ensure it's active by default – append to loop list
+            loop_list = media_data.get("loop", [])
+            if slug not in loop_list:
+                loop_list.append(slug)
+                media_data["loop"] = loop_list
+
+            # Set first upload as active
             if len(media_data["media"]) == 1:
                 media_data["active"] = slug
 
