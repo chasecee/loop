@@ -32,7 +32,32 @@ def _read_raw() -> Dict:
     if MEDIA_INDEX_PATH.exists():
         try:
             with open(MEDIA_INDEX_PATH, "r") as f:
-                return json.load(f)
+                data = json.load(f)
+
+            # ------------------------------------------------------------------
+            # Backwards-compat: older schema stored "media" as a list [{..}, …]
+            # and "loop" possibly as list of objects.  Convert on the fly and
+            # persist so we never see the old shape again.
+            # ------------------------------------------------------------------
+
+            if isinstance(data.get("media"), list):
+                media_dict = {}
+                for item in data["media"]:
+                    slug = item.get("slug")
+                    if slug:
+                        media_dict[slug] = item
+                data["media"] = media_dict
+
+            # ensure loop is list of slugs
+            loop_raw = data.get("loop", [])
+            if loop_raw and isinstance(loop_raw[0], dict):
+                data["loop"] = [m.get("slug") for m in loop_raw if m.get("slug")]
+
+            # write back if we migrated
+            if not MEDIA_INDEX_PATH.exists() or isinstance(loop_raw[0] if loop_raw else None, dict) or isinstance(data.get("media"), dict) and any(isinstance(v, dict) for v in data["media"].values()):
+                _write_raw(data)
+
+            return data
         except Exception as exc:
             LOGGER.error("Failed to read media index: %s", exc)
     return _MEDIA_DEFAULT.copy()
@@ -41,9 +66,15 @@ def _read_raw() -> Dict:
 def _write_raw(data: Dict) -> None:
     try:
         MEDIA_INDEX_PATH.parent.mkdir(parents=True, exist_ok=True)
-        data["last_updated"] = int(time.time())
+        data_to_write = data.copy()
+        data_to_write["last_updated"] = int(time.time())
+
+        # Convert media dict back to list for backward-compat persistence
+        if isinstance(data_to_write.get("media"), dict):
+            data_to_write["media"] = list(data_to_write["media"].values())
+
         with open(MEDIA_INDEX_PATH, "w") as f:
-            json.dump(data, f, indent=2)
+            json.dump(data_to_write, f, indent=2)
     except Exception as exc:
         LOGGER.error("Failed to write media index: %s", exc)
 
@@ -52,8 +83,11 @@ def _write_raw(data: Dict) -> None:
 
 
 def list_media() -> List[Dict]:
-    """Return all media objects (order not guaranteed)."""
-    return list(_read_raw().get("media", {}).values())
+    """Return all media objects regardless of on-disk shape."""
+    media_raw = _read_raw().get("media", {})
+    if isinstance(media_raw, list):
+        return media_raw
+    return list(media_raw.values())
 
 
 def list_loop() -> List[str]:
