@@ -212,6 +212,7 @@ class DisplayPlayer:
             draw.text((x, y), message, fill='white', font=font)
             
             # Encode to PNG so FrameDecoder can reopen it, then decode to RGB565
+            decoder = FrameDecoder(self.display_config.width, self.display_config.height)
             img = img.convert('RGB')  # Ensure RGB mode
             buffer = io.BytesIO()
             img.save(buffer, format="PNG")

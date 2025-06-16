@@ -483,9 +483,8 @@ def create_app(display_player: DisplayPlayer = None,
             # Return the raw exported HTML file – no template rendering needed
             return FileResponse(spa_index)
 
-        # Fallback: try legacy template or at least respond gracefully
-        logger.warning("SPA index.html not found (expected at %s), using legacy home page", spa_index)
-        return await home(request)
+        logger.error("SPA index.html not found at %s", spa_index)
+        raise HTTPException(status_code=404, detail="SPA not built/deployed")
 
     logger.info("FastAPI application created successfully")
     return app
