@@ -306,10 +306,16 @@ class DisplayPlayer:
                         # Check for loop completion
                         if self.current_sequence.current_frame == 0:
                             loop_count += 1
-                            media_loop_count = media_info.get('loop_count', -1)
-                            
-                            # Check if we should stop looping
-                            if media_loop_count > 0 and loop_count >= media_loop_count:
+                            # Determine how many times to repeat this media before advancing
+                            media_loop_count = media_info.get('loop_count')
+
+                            # If the media doesn\'t specify a valid loop count (e.g. 0, -1, None)
+                            # default to 1 so the playlist always advances.
+                            if not isinstance(media_loop_count, int) or media_loop_count <= 0:
+                                media_loop_count = 1
+
+                            # Move to next media once we\'ve completed the desired loops
+                            if loop_count >= media_loop_count:
                                 self.logger.info(f"Completed {loop_count} loops, moving to next media")
                                 self.next_media()
                                 loop_count = 0
