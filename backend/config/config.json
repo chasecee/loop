@@ -13,7 +13,7 @@
     "rst_pin": 27,
     "bl_pin": 18,
     "rotation": 270,
-    "framerate": 30
+    "framerate": 60
   },
   "wifi": {
     "ssid": "",

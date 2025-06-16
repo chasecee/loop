@@ -242,6 +242,7 @@ class DisplayPlayer:
         
         last_frame_time = time.time()
         loop_count = 0
+        min_frame_time = 1.0 / self.frame_rate if self.frame_rate > 0 else 0.0
         
         try:
             while self.running:
@@ -273,29 +274,29 @@ class DisplayPlayer:
                     frame_data = self.current_sequence.next_frame()
                     
                     if frame_data:
-                        # Display frame
-                        self.display_driver.display_frame(frame_data)
+                        # Calculate frame timing before display
+                        current_time = time.time()
+                        elapsed = current_time - last_frame_time
                         
-                        # Calculate frame timing
+                        # Get duration for this frame
                         frame_index = self.current_sequence.current_frame - 1
                         if frame_index < 0:
                             frame_index = self.current_sequence.frame_count - 1
                         
-                        # Get duration for this frame
                         if frame_index < len(durations):
-                            frame_duration = durations[frame_index]
+                            frame_duration = max(durations[frame_index], min_frame_time)
                         else:
-                            frame_duration = durations[0] if durations else 0.1
+                            frame_duration = max(durations[0] if durations else 0.1, min_frame_time)
                         
                         # For static images, use a longer duration
                         if frame_duration == 0.0:
                             frame_duration = 5.0  # Show static images for 5 seconds
                         
-                        # Wait for next frame
-                        current_time = time.time()
-                        elapsed = current_time - last_frame_time
-                        sleep_time = max(0, frame_duration - elapsed)
+                        # Display frame
+                        self.display_driver.display_frame(frame_data)
                         
+                        # Precise timing control
+                        sleep_time = frame_duration - elapsed
                         if sleep_time > 0:
                             time.sleep(sleep_time)
                         
@@ -307,12 +308,12 @@ class DisplayPlayer:
                             # Determine how many times to repeat this media before advancing
                             media_loop_count = media_info.get('loop_count')
 
-                            # If the media doesn\'t specify a valid loop count (e.g. 0, -1, None)
+                            # If the media doesn't specify a valid loop count (e.g. 0, -1, None)
                             # default to 1 so the playlist always advances.
                             if not isinstance(media_loop_count, int) or media_loop_count <= 0:
                                 media_loop_count = 1
 
-                            # Move to next media once we\'ve completed the desired loops
+                            # Move to next media once we've completed the desired loops
                             if loop_count >= media_loop_count:
                                 self.logger.info(f"Completed {loop_count} loops, moving to next media")
                                 self.next_media()  # This now updates active media
@@ -322,9 +323,6 @@ class DisplayPlayer:
                         self.logger.warning(f"Failed to get frame for {media_info.get('slug')}, skipping to next media")
                         self.next_media()  # This now updates active media
                         time.sleep(0.1)
-                
-                # Small delay to prevent excessive CPU usage
-                time.sleep(0.001)
                 
         except Exception as e:
             self.logger.error(f"Playback loop error: {e}")

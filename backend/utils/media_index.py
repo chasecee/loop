@@ -17,6 +17,10 @@ from __future__ import annotations
 
 import json
 import time
+import fcntl
+import tempfile
+import os
+import shutil
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -32,7 +36,12 @@ def _read_raw() -> Dict:
     if MEDIA_INDEX_PATH.exists():
         try:
             with open(MEDIA_INDEX_PATH, "r") as f:
-                data = json.load(f)
+                # Get an exclusive lock for reading
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                try:
+                    data = json.load(f)
+                finally:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
             # ------------------------------------------------------------------
             # Backwards-compat: older schema stored "media" as a list [{..}, …]
@@ -73,10 +82,26 @@ def _write_raw(data: Dict) -> None:
         if isinstance(data_to_write.get("media"), dict):
             data_to_write["media"] = list(data_to_write["media"].values())
 
-        with open(MEDIA_INDEX_PATH, "w") as f:
-            json.dump(data_to_write, f, indent=2)
+        # Write to a temporary file first
+        temp_file = MEDIA_INDEX_PATH.with_suffix('.json.tmp')
+        with open(temp_file, "w") as f:
+            # Get an exclusive lock
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            try:
+                json.dump(data_to_write, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())  # Ensure data is written to disk
+            finally:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+        # Atomic rename
+        shutil.move(str(temp_file), str(MEDIA_INDEX_PATH))
+
     except Exception as exc:
         LOGGER.error("Failed to write media index: %s", exc)
+        # Clean up temp file if it exists
+        if temp_file.exists():
+            temp_file.unlink()
 
 
 # Public helpers -----------------------------------------------------------
