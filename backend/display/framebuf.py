@@ -149,76 +149,55 @@ class FrameDecoder:
 
 
 class FrameSequence:
-    """Manages a sequence of frames for animation."""
+    """Manages a sequence of frames for playback."""
     
-    def __init__(self, frames_dir: Path, width: int, height: int):
-        """Initialize frame sequence."""
+    def __init__(self, frames_dir: Path, frames: List[str], durations: List[float]):
         self.frames_dir = frames_dir
-        self.width = width
-        self.height = height
-        self.logger = get_logger("sequence")
-        self.decoder = FrameDecoder(width, height)
-        
-        # Load frame list
-        self.frame_files = self._load_frame_list()
-        self.frame_count = len(self.frame_files)
+        self.frame_paths = [frames_dir / f for f in frames]
+        self.durations = durations
+        self.frame_count = len(frames)
         self.current_frame = 0
         
-        self.logger.info(f"Loaded {self.frame_count} frames from {frames_dir}")
+        # Pre-load first frame
+        self._current_frame_data = self._load_frame(self.frame_paths[0])
+        
+        # Pre-load next frame
+        next_idx = (self.current_frame + 1) % self.frame_count
+        self._next_frame_data = self._load_frame(self.frame_paths[next_idx])
     
-    def _load_frame_list(self) -> List[Path]:
-        """Load sorted list of frame files."""
-        if not self.frames_dir.exists():
-            return []
-        
-        frame_files = []
-        
-        # Look for RGB565 files first
-        rgb_files = list(self.frames_dir.glob("frame_*.rgb565"))
-        if rgb_files:
-            frame_files = sorted(rgb_files, key=lambda x: int(x.stem.split('_')[1]))
-        else:
-            # Look for JPEG files
-            jpg_files = list(self.frames_dir.glob("frame_*.jpg"))
-            if jpg_files:
-                frame_files = sorted(jpg_files, key=lambda x: int(x.stem.split('_')[1]))
-        
-        return frame_files
-    
-    def get_frame(self, frame_index: int = None) -> Optional[bytes]:
-        """Get frame data by index."""
-        if not self.frame_files:
+    def get_frame(self) -> Optional[bytes]:
+        """Get the current frame and advance to next."""
+        if not self._current_frame_data:
             return None
+            
+        # Get current frame data
+        frame_data = self._current_frame_data
         
-        if frame_index is None:
-            frame_index = self.current_frame
-        
-        if not (0 <= frame_index < self.frame_count):
-            return None
-        
-        frame_file = self.frame_files[frame_index]
-        
-        # Decode based on file extension
-        if frame_file.suffix == '.rgb565':
-            return self.decoder.decode_rgb565_file(frame_file)
-        elif frame_file.suffix == '.jpg':
-            return self.decoder.decode_jpeg_file(frame_file)
-        
-        return None
-    
-    def next_frame(self) -> Optional[bytes]:
-        """Get next frame in sequence."""
-        if not self.frame_files:
-            return None
-        
-        frame_data = self.get_frame(self.current_frame)
+        # Advance to next frame
         self.current_frame = (self.current_frame + 1) % self.frame_count
+        
+        # Swap buffers
+        self._current_frame_data = self._next_frame_data
+        
+        # Pre-load next frame
+        next_idx = (self.current_frame + 1) % self.frame_count
+        self._next_frame_data = self._load_frame(self.frame_paths[next_idx])
+        
         return frame_data
     
-    def reset(self) -> None:
-        """Reset to first frame."""
-        self.current_frame = 0
+    def is_complete(self) -> bool:
+        """Check if we've completed a full loop."""
+        return self.current_frame == 0
     
     def get_frame_count(self) -> int:
-        """Get total frame count."""
-        return self.frame_count 
+        """Get total number of frames."""
+        return self.frame_count
+    
+    def _load_frame(self, frame_path: Path) -> Optional[bytes]:
+        """Load a frame from disk."""
+        try:
+            with open(frame_path, 'rb') as f:
+                return f.read()
+        except Exception as e:
+            LOGGER.error(f"Failed to load frame {frame_path}: {e}")
+            return None 

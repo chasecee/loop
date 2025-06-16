@@ -249,85 +249,64 @@ class DisplayPlayer:
                 # Check if we have media to play
                 if not self.media_list:
                     self.show_no_media_message()
-                    time.sleep(5)  # Check again in 5 seconds
-                    self.load_media_index()  # Reload in case new media was added
+                    time.sleep(1)  # Check less frequently when no media
+                    self.load_media_index()
                     continue
                 
-                # Load current sequence if needed
-                if not self.current_sequence:
-                    if not self.load_current_sequence():
-                        self.show_message("Error loading media", duration=3.0)
-                        time.sleep(1)
-                        continue
-                
-                # Skip frame if paused
+                # Handle pause state
                 if self.paused:
-                    time.sleep(0.1)
+                    time.sleep(0.1)  # Reduced sleep time in pause
                     continue
                 
-                # Get current media info
-                if 0 <= self.current_media_index < len(self.media_list):
-                    media_info = self.media_list[self.current_media_index]
-                    durations = media_info.get('durations', [0.1])
-                    
-                    # Get next frame
-                    frame_data = self.current_sequence.next_frame()
-                    
-                    if frame_data:
-                        # Calculate frame timing before display
+                # Get current frame if sequence loaded
+                if self.current_sequence:
+                    frame = self.current_sequence.get_frame()
+                    if frame:
+                        # Calculate timing before display
                         current_time = time.time()
                         elapsed = current_time - last_frame_time
                         
-                        # Get duration for this frame
-                        frame_index = self.current_sequence.current_frame - 1
-                        if frame_index < 0:
-                            frame_index = self.current_sequence.frame_count - 1
+                        # Get frame duration, respecting minimum frame time
+                        frame_index = self.current_sequence.current_frame
+                        durations = self.current_sequence.durations
+                        frame_duration = durations[frame_index] if durations else min_frame_time
+                        frame_duration = max(frame_duration, min_frame_time)
                         
-                        if frame_index < len(durations):
-                            frame_duration = max(durations[frame_index], min_frame_time)
-                        else:
-                            frame_duration = max(durations[0] if durations else 0.1, min_frame_time)
+                        # Only sleep if we need to slow down
+                        if elapsed < frame_duration:
+                            time.sleep(frame_duration - elapsed)
                         
-                        # For static images, use a longer duration
-                        if frame_duration == 0.0:
-                            frame_duration = 5.0  # Show static images for 5 seconds
-                        
-                        # Display frame
-                        self.display_driver.display_frame(frame_data)
-                        
-                        # Precise timing control
-                        sleep_time = frame_duration - elapsed
-                        if sleep_time > 0:
-                            time.sleep(sleep_time)
-                        
+                        # Display frame and update timing
+                        self.display_driver.display_frame(frame)
                         last_frame_time = time.time()
                         
-                        # Check for loop completion
-                        if self.current_sequence.current_frame == 0:
+                        # Check if we've completed a loop
+                        if self.current_sequence.is_complete():
                             loop_count += 1
-                            # Determine how many times to repeat this media before advancing
-                            media_loop_count = media_info.get('loop_count')
-
-                            # If the media doesn't specify a valid loop count (e.g. 0, -1, None)
-                            # default to 1 so the playlist always advances.
-                            if not isinstance(media_loop_count, int) or media_loop_count <= 0:
-                                media_loop_count = 1
-
+                            media_loop_count = self.loop_count if self.loop_count > 0 else 1
+                            
                             # Move to next media once we've completed the desired loops
                             if loop_count >= media_loop_count:
                                 self.logger.info(f"Completed {loop_count} loops, moving to next media")
                                 self.next_media()  # This now updates active media
                                 loop_count = 0
+                                last_frame_time = time.time()  # Reset timing for new media
                     else:
-                        # Failed to get frame, skip to the next media to avoid a loop
-                        self.logger.warning(f"Failed to get frame for {media_info.get('slug')}, skipping to next media")
-                        self.next_media()  # This now updates active media
-                        time.sleep(0.1)
-                
+                        # Failed to get frame, skip to the next media
+                        self.logger.warning(f"Failed to get frame, skipping to next media")
+                        self.next_media()
+                        last_frame_time = time.time()
+                else:
+                    # No sequence loaded, try to load current media
+                    if not self.load_current_sequence():
+                        self.logger.warning("Failed to load current sequence")
+                        time.sleep(0.1)  # Brief pause before retry
+                        
         except Exception as e:
-            self.logger.error(f"Playback loop error: {e}")
-        finally:
-            self.logger.info("Playback loop stopped")
+            self.logger.error(f"Playback loop error: {str(e)}")
+            self.running = False
+        
+        self.logger.info("Playback loop stopped")
     
     def start(self) -> None:
         """Start the playback thread."""
