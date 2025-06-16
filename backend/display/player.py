@@ -82,21 +82,6 @@ class DisplayPlayer:
             self.logger.error(f"Failed to load media index: {e}")
             self.media_list = []
     
-    def save_media_index(self) -> None:
-        """Save the media index to file."""
-        try:
-            data = {
-                'media': self.media_list,
-                'active': mi.get_active(),
-                'last_updated': time.time()
-            }
-            
-            with open(self.media_index_file, 'w') as f:
-                json.dump(data, f, indent=2)
-                
-        except Exception as e:
-            self.logger.error(f"Failed to save media index: {e}")
-    
     def get_current_media_slug(self) -> Optional[str]:
         """Get the slug of the currently selected media."""
         if 0 <= self.current_media_index < len(self.media_list):
@@ -148,7 +133,11 @@ class DisplayPlayer:
             
             self.current_media_index = (self.current_media_index + 1) % len(self.media_list)
             self.load_current_sequence()
-            self.save_media_index()
+            
+            # Update active media in index
+            current_slug = self.get_current_media_slug()
+            if current_slug:
+                mi.set_active(current_slug)
             
             media_name = self.media_list[self.current_media_index].get('original_filename', 'Unknown')
             self.logger.info(f"Switched to next media: {media_name}")
@@ -161,7 +150,11 @@ class DisplayPlayer:
             
             self.current_media_index = (self.current_media_index - 1) % len(self.media_list)
             self.load_current_sequence()
-            self.save_media_index()
+            
+            # Update active media in index
+            current_slug = self.get_current_media_slug()
+            if current_slug:
+                mi.set_active(current_slug)
             
             media_name = self.media_list[self.current_media_index].get('original_filename', 'Unknown')
             self.logger.info(f"Switched to previous media: {media_name}")
@@ -174,7 +167,6 @@ class DisplayPlayer:
                     self.current_media_index = i
                     success = self.load_current_sequence()
                     if success:
-                        self.save_media_index()
                         self.logger.info(f"Set active media: {media.get('original_filename', slug)}")
                     return success
             
@@ -323,12 +315,12 @@ class DisplayPlayer:
                             # Move to next media once we\'ve completed the desired loops
                             if loop_count >= media_loop_count:
                                 self.logger.info(f"Completed {loop_count} loops, moving to next media")
-                                self.next_media()
+                                self.next_media()  # This now updates active media
                                 loop_count = 0
                     else:
                         # Failed to get frame, skip to the next media to avoid a loop
                         self.logger.warning(f"Failed to get frame for {media_info.get('slug')}, skipping to next media")
-                        self.next_media()
+                        self.next_media()  # This now updates active media
                         time.sleep(0.1)
                 
                 # Small delay to prevent excessive CPU usage
