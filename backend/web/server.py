@@ -393,27 +393,78 @@ def create_app(display_player: DisplayPlayer = None,
     async def playback_previous():
         return await previous_media()
     
-    # --- New Endpoints for SPA ---
-    
+    # ------------------------------------------------------------------
+    # Loop queue management
+    # ------------------------------------------------------------------
+
+    MEDIA_INDEX_PATH = Path("media/index.json")
+
+    def _read_media_index() -> Dict:
+        """Read the media index JSON, returning default structure if missing."""
+        if MEDIA_INDEX_PATH.exists():
+            try:
+                with open(MEDIA_INDEX_PATH, "r") as f:
+                    return json.load(f)
+            except Exception as exc:
+                logger.error(f"Failed to read media index: {exc}")
+        # Default structure
+        return {"media": [], "active": None, "loop": [], "last_updated": None}
+
+    def _write_media_index(data: Dict) -> None:
+        """Persist the media index atomically."""
+        try:
+            MEDIA_INDEX_PATH.parent.mkdir(parents=True, exist_ok=True)
+            with open(MEDIA_INDEX_PATH, "w") as f:
+                json.dump(data, f, indent=2)
+        except Exception as exc:
+            logger.error(f"Failed to write media index: {exc}")
+
     @app.get("/api/loop")
     async def get_loop_queue():
-        """Get the current media loop/playlist."""
-        # This is a placeholder. You'd typically return a list of media slugs.
-        if display_player:
-            return {"loop": [media.get("slug") for media in display_player.media_list]}
-        return {"loop": []}
+        """Return the current loop queue as a list of slugs."""
+        data = _read_media_index()
+        return {"loop": data.get("loop", [])}
 
     @app.post("/api/loop")
     async def add_to_loop(payload: AddToLoopPayload):
-        """Add a media item to the loop."""
-        # Placeholder logic
-        return {"success": True, "message": f"Added {payload.slug} to loop."}
+        """Append a slug to the loop queue (if not already present)."""
+        data = _read_media_index()
+        loop_list = data.get("loop", [])
+
+        # Ensure the slug exists in media library
+        media_slugs = {item.get("slug") for item in data.get("media", [])}
+        if payload.slug not in media_slugs:
+            raise HTTPException(status_code=404, detail="Media not found")
+
+        if payload.slug not in loop_list:
+            loop_list.append(payload.slug)
+            data["loop"] = loop_list
+            data["last_updated"] = time.time()
+            _write_media_index(data)
+
+            # Refresh player list if available
+            if display_player:
+                display_player.refresh_media_list()
+
+        return {"success": True, "loop": loop_list}
 
     @app.delete("/api/loop/{slug}")
     async def remove_from_loop(slug: str):
-        """Remove a media item from the loop."""
-        # Placeholder logic
-        return {"success": True, "message": f"Removed {slug} from loop."}
+        """Remove slug from loop queue."""
+        data = _read_media_index()
+        loop_list = data.get("loop", [])
+
+        if slug in loop_list:
+            loop_list = [s for s in loop_list if s != slug]
+            data["loop"] = loop_list
+            data["last_updated"] = time.time()
+            _write_media_index(data)
+
+            # Refresh player list so DisplayPlayer uses new queue order
+            if display_player:
+                display_player.refresh_media_list()
+
+        return {"success": True, "loop": loop_list}
 
     @app.get("/api/storage")
     async def get_storage_info():
@@ -441,8 +492,6 @@ def create_app(display_player: DisplayPlayer = None,
             "media": media_size,
             "units": "bytes"
         }
-
-    # --- End New Endpoints ---
 
     logger.info("FastAPI application created successfully")
     return app
