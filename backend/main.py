@@ -68,35 +68,36 @@ class LOOPApplication:
         default_media_dir = project_root / "assets" / "default-media"
         index_file = backend_dir / "media" / "index.json"
 
-        # If processed_dir is empty and default-media exists, copy
         if processed_dir.exists() and not any(processed_dir.iterdir()) and default_media_dir.exists():
             self_logger = get_logger("default_media")
-            self_logger.info("Copying default media to media/processed...")
-            for item in default_media_dir.iterdir():
-                dest = processed_dir / item.name
-                if item.is_dir():
-                    shutil.copytree(item, dest)
-                else:
-                    shutil.copy2(item, dest)
-            # Build index.json from metadata.json files
-            media = []
-            active = None
-            for media_dir in processed_dir.iterdir():
-                meta = media_dir / "metadata.json"
-                if meta.exists():
-                    import json
-                    with open(meta) as f:
-                        m = json.load(f)
-                        media.append(m)
-                        if not active:
-                            active = m.get("slug")
-            if media:
-                with open(index_file, "w") as f:
-                    import json
-                    json.dump({"media": media, "active": active, "last_updated": int(time.time())}, f, indent=2)
-                self_logger.info("Default media index.json created.")
-            else:
-                self_logger.warning("No metadata.json found in default media.")
+            self_logger.info("Processing default media files...")
+
+            # Lazy import to avoid heavy deps if not needed
+            from utils.convert import MediaConverter
+
+            # Use fallback resolution (will be updated later when config loaded)
+            converter = MediaConverter(240, 320)
+
+            media_meta = []
+            for media_file in default_media_dir.iterdir():
+                if media_file.is_file():
+                    slug = converter._generate_slug(media_file.name)
+                    out_dir = processed_dir / slug
+                    try:
+                        meta = converter.convert_media_file(media_file, out_dir)
+                        if meta:
+                            media_meta.append(meta)
+                            self_logger.info("Converted default media %s", media_file.name)
+                    except Exception as e:
+                        self_logger.error("Failed to convert default media %s: %s", media_file.name, e)
+
+            # Build index.json
+            active = media_meta[0]["slug"] if media_meta else None
+            with open(index_file, "w") as f:
+                import json
+                json.dump({"media": media_meta, "active": active, "last_updated": int(time.time())}, f, indent=2)
+
+            self_logger.info("Default media processing complete: %d items", len(media_meta))
     
     def initialize_display(self):
         """Initialize the display system."""

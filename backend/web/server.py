@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from fastapi import FastAPI, UploadFile, File, Form, Request, HTTPException, Depends
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -476,14 +476,16 @@ def create_app(display_player: DisplayPlayer = None,
     # --- New SPA Catch-all Route ---
     @app.get("/{full_path:path}", response_class=HTMLResponse)
     async def serve_spa(request: Request, full_path: str):
-        """Serve the single-page application."""
+        """Serve the single-page application (compiled Next.js export)."""
         spa_index = Path(__file__).parent / "spa" / "index.html"
+
         if spa_index.exists():
-            return templates.TemplateResponse("spa/index.html", {"request": request})
-        else:
-            # Fallback to old UI or an error if SPA is not built
-            logger.warning("SPA index.html not found, falling back to old UI")
-            return await home(request)
+            # Return the raw exported HTML file – no template rendering needed
+            return FileResponse(spa_index)
+
+        # Fallback: try legacy template or at least respond gracefully
+        logger.warning("SPA index.html not found (expected at %s), using legacy home page", spa_index)
+        return await home(request)
 
     logger.info("FastAPI application created successfully")
     return app

@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional
 from PIL import Image, ImageDraw, ImageFont
+import io
 
 from config.schema import DisplayConfig, MediaConfig
 from display.framebuf import FrameSequence, FrameDecoder, FrameBuffer
@@ -210,12 +211,12 @@ class DisplayPlayer:
             # Draw text
             draw.text((x, y), message, fill='white', font=font)
             
-            # Convert to RGB565 and display
-            decoder = FrameDecoder(self.display_config.width, self.display_config.height)
-            
-            # Convert PIL image to RGB mode and get raw bytes
+            # Encode to PNG so FrameDecoder can reopen it, then decode to RGB565
             img = img.convert('RGB')  # Ensure RGB mode
-            frame_data = decoder.decode_image_bytes(img.tobytes('raw', 'RGB'))
+            buffer = io.BytesIO()
+            img.save(buffer, format="PNG")
+            frame_data = decoder.decode_image_bytes(buffer.getvalue())
+            buffer.close()
             
             if frame_data:
                 self.display_driver.display_frame(frame_data)
