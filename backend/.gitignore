@@ -71,10 +71,11 @@ dmypy.json
 *~
 
 # LOOP specific
-media/raw/*
-!media/raw/.gitkeep
-media/processed/*
-!media/processed/.gitkeep
+backend/media/index.json
+backend/media/raw/*
+!backend/media/raw/.gitkeep
+backend/media/processed/*
+!backend/media/processed/.gitkeep
 
 # Logs
 logs/*
@@ -107,7 +108,6 @@ test_output/
 # LOOP specific
 .loop/
 logs/
-media/
 dist/
 *.rgb565
 *.jpg.tmp

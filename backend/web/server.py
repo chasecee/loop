@@ -7,6 +7,7 @@ import tempfile
 import time
 from pathlib import Path
 from typing import Dict, List, Optional
+from datetime import datetime
 
 from fastapi import FastAPI, UploadFile, File, Form, Request, HTTPException, Depends
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, FileResponse
@@ -68,6 +69,9 @@ def create_app(display_player: DisplayPlayer = None,
     media_processed_dir = Path("media/processed")
     media_raw_dir.mkdir(parents=True, exist_ok=True)
     media_processed_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Serve raw media files so the frontend can display previews
+    app.mount("/media/raw", StaticFiles(directory=media_raw_dir), name="raw-media")
     
     # Media converter
     if config:
@@ -145,6 +149,20 @@ def create_app(display_player: DisplayPlayer = None,
                     status_code=500, detail=f"Failed to process {file.filename}"
                 )
             
+            # --- Augment metadata with extra fields expected by the frontend UI ---
+            file_size = len(content)  # Size in bytes from uploaded content
+            uploaded_at_iso = datetime.utcnow().isoformat() + "Z"
+
+            metadata.update(
+                {
+                    "filename": file.filename,
+                    "type": file.content_type or metadata.get("type", "unknown"),
+                    "size": file_size,
+                    "uploadedAt": uploaded_at_iso,
+                    "url": f"/media/raw/{slug}{Path(file.filename).suffix}",
+                }
+            )
+
             # Update media index
             media_index_file = Path("media/index.json")
             media_data = {"media": [], "active": None, "loop": [], "last_updated": None}
@@ -160,6 +178,10 @@ def create_app(display_player: DisplayPlayer = None,
             media_data["last_updated"] = time.time()
             with open(media_index_file, "w") as f:
                 json.dump(media_data, f, indent=2)
+
+            # Persist original upload for preview image (copy instead of move to retain tmp for cleanup)
+            dest_raw_path = media_raw_dir / f"{slug}{Path(file.filename).suffix}"
+            shutil.copy(tmp_path, dest_raw_path)
 
             return metadata
 
