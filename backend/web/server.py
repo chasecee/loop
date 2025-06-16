@@ -506,6 +506,33 @@ def create_app(display_player: DisplayPlayer = None,
 
         return {"success": True, "loop": loop_list}
 
+    # ------------------------------------------------------------
+    # Re-order loop list – replaces the entire array atomically
+    # ------------------------------------------------------------
+
+    class LoopOrderPayload(BaseModel):
+        loop: List[str]
+
+    @app.put("/api/loop")
+    async def reorder_loop(payload: LoopOrderPayload):
+        """Persist a new loop order supplied as a list of slugs."""
+
+        data = _read_media_index()
+
+        media_slugs = {item.get("slug") for item in data.get("media", [])}
+        # Filter out unknown slugs, keep only recognised ones and preserve order
+        new_loop = [s for s in payload.loop if s in media_slugs]
+
+        data["loop"] = new_loop
+        data["last_updated"] = time.time()
+        _write_media_index(data)
+
+        # Notify player so it uses new ordering
+        if display_player:
+            display_player.refresh_media_list()
+
+        return {"success": True, "loop": new_loop}
+
     @app.get("/api/storage")
     async def get_storage_info():
         """Get detailed storage usage information."""
