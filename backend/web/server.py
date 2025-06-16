@@ -506,10 +506,13 @@ def create_app(display_player: DisplayPlayer = None,
         media_data = await get_media()
         loop_data = await get_loop_queue()
 
+        # Ensure active media info is included at the top level
         return {
             "status": status_data,
-            "media": media_data,
-            "loop": loop_data,
+            "media": media_data["media"],  # Just the media list
+            "active": media_data["active"],  # Active media at top level
+            "loop": loop_data["loop"],  # Just the loop list
+            "last_updated": media_data["last_updated"]
         }
 
     logger.info("FastAPI application created successfully")
