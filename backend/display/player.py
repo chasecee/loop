@@ -12,6 +12,7 @@ from config.schema import DisplayConfig, MediaConfig
 from display.framebuf import FrameSequence, FrameDecoder, FrameBuffer
 from display.spiout import ILI9341Driver
 from utils.logger import get_logger
+import utils.media_index as mi
 
 
 class DisplayPlayer:
@@ -54,40 +55,29 @@ class DisplayPlayer:
     def load_media_index(self) -> None:
         """Load the media index from file."""
         try:
-            if self.media_index_file.exists():
-                with open(self.media_index_file, 'r') as f:
-                    data = json.load(f)
-                    self.media_list = data.get('media', [])
-                    
-                    # Reorder / filter based on optional loop queue
-                    loop_order = data.get('loop', [])
-                    if isinstance(loop_order, list) and loop_order:
-                        # Build mapping of slug -> media info for quick lookup
-                        slug_to_media = {m.get('slug'): m for m in self.media_list}
+            # Use central media index
+            self.media_list = mi.list_media()
+            loop_order = mi.list_loop()
 
-                        # First, take items that exist in loop_order in that order
-                        ordered = [slug_to_media[s] for s in loop_order if s in slug_to_media]
-
-                        # Only use the ordered list as playback list
-                        self.media_list = ordered
-
-                        # Ensure current_media_index is valid after reorder
-                        if self.current_media_index >= len(self.media_list):
-                            self.current_media_index = 0
-                    
-                    # Set active media if specified
-                    active_slug = data.get('active')
-                    if active_slug:
-                        for i, media in enumerate(self.media_list):
-                            if media.get('slug') == active_slug:
-                                self.current_media_index = i
-                                break
-                                
-                self.logger.info(f"Loaded {len(self.media_list)} media items from index")
+            if loop_order:
+                slug_to_media = {m.get('slug'): m for m in self.media_list}
+                self.media_list = [slug_to_media[s] for s in loop_order if s in slug_to_media]
             else:
-                self.logger.info("No media index found, creating empty list")
-                self.save_media_index()
-                
+                # If loop empty, play all media in arbitrary order
+                self.media_list = list(self.media_list)
+
+            if self.current_media_index >= len(self.media_list):
+                self.current_media_index = 0
+            
+            # Set active media if specified
+            active_slug = mi.get_active()
+            if active_slug:
+                for i, media in enumerate(self.media_list):
+                    if media.get('slug') == active_slug:
+                        self.current_media_index = i
+                        break
+            
+            self.logger.info(f"Loaded {len(self.media_list)} media items from index")
         except Exception as e:
             self.logger.error(f"Failed to load media index: {e}")
             self.media_list = []
@@ -97,7 +87,7 @@ class DisplayPlayer:
         try:
             data = {
                 'media': self.media_list,
-                'active': self.get_current_media_slug(),
+                'active': mi.get_active(),
                 'last_updated': time.time()
             }
             

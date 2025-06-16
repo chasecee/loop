@@ -18,6 +18,7 @@ from display.player import DisplayPlayer
 from boot.wifi import WiFiManager
 from deployment.updater import SystemUpdater
 from utils.convert import MediaConverter
+import utils.media_index as mindex
 from utils.logger import get_logger
 
 # Define a Pydantic model for the WiFi connection request
@@ -163,29 +164,8 @@ def create_app(display_player: DisplayPlayer = None,
                 }
             )
 
-            # Update media index
-            media_index_file = Path("media/index.json")
-            media_data = {"media": [], "active": None, "loop": [], "last_updated": None}
-            if media_index_file.exists():
-                with open(media_index_file, "r") as f:
-                    media_data = json.load(f)
-
-            # Add new media to library
-            media_data["media"].append(metadata)
-
-            # Ensure it's active by default – append to loop list
-            loop_list = media_data.get("loop", [])
-            if slug not in loop_list:
-                loop_list.append(slug)
-                media_data["loop"] = loop_list
-
-            # Set first upload as active
-            if len(media_data["media"]) == 1:
-                media_data["active"] = slug
-
-            media_data["last_updated"] = time.time()
-            with open(media_index_file, "w") as f:
-                json.dump(media_data, f, indent=2)
+            # Persist via media_index – automatically marks active & adds to loop
+            mindex.add_media(metadata, make_active=True)
 
             # Persist original upload for preview image (copy instead of move to retain tmp for cleanup)
             dest_raw_path = media_raw_dir / f"{slug}{Path(file.filename).suffix}"
@@ -273,11 +253,13 @@ def create_app(display_player: DisplayPlayer = None,
         if not display_player:
             raise HTTPException(status_code=503, detail="Display player not available")
         
-        success = display_player.set_active_media(slug)
-        
-        if success:
+        try:
+            mindex.add_to_loop(slug)  # ensure in loop
+            mindex.set_active(slug)
+            if display_player:
+                display_player.set_active_media(slug)
             return {"success": True, "message": f"Activated media: {slug}"}
-        else:
+        except KeyError:
             raise HTTPException(status_code=404, detail="Media not found")
     
     @app.delete("/api/media/{slug}")
@@ -296,22 +278,7 @@ def create_app(display_player: DisplayPlayer = None,
                 raw_file.unlink()
             
             # Update media index
-            media_index_file = Path("media/index.json")
-            if media_index_file.exists():
-                with open(media_index_file, 'r') as f:
-                    media_data = json.load(f)
-                
-                # Remove from media list
-                media_data["media"] = [m for m in media_data["media"] if m.get("slug") != slug]
-                
-                # Reset active if this was the active media
-                if media_data.get("active") == slug:
-                    media_data["active"] = media_data["media"][0]["slug"] if media_data["media"] else None
-                
-                media_data["last_updated"] = time.time()
-                
-                with open(media_index_file, 'w') as f:
-                    json.dump(media_data, f, indent=2)
+            mindex.remove_media(slug)
             
             # Refresh player media list
             if display_player:
@@ -416,17 +383,11 @@ def create_app(display_player: DisplayPlayer = None,
     @app.get("/api/media")
     async def get_media():
         """Return the media library and active item."""
-        media_index_file = Path("media/index.json")
-        if media_index_file.exists():
-            with open(media_index_file, "r") as f:
-                data = json.load(f)
-            return {
-                "media": data.get("media", []),
-                "active": data.get("active"),
-                "last_updated": data.get("last_updated"),
-            }
-        else:
-            return {"media": [], "active": None, "last_updated": None}
+        return {
+            "media": mindex.list_media(),
+            "active": mindex.get_active(),
+            "last_updated": int(time.time()),
+        }
     
     # Aliases for playback controls to match frontend expectations
     @app.post("/api/playback/toggle")
@@ -470,49 +431,26 @@ def create_app(display_player: DisplayPlayer = None,
     @app.get("/api/loop")
     async def get_loop_queue():
         """Return the current loop queue as a list of slugs."""
-        data = _read_media_index()
-        return {"loop": data.get("loop", [])}
+        return {"loop": mindex.list_loop()}
 
     @app.post("/api/loop")
     async def add_to_loop(payload: AddToLoopPayload):
         """Append a slug to the loop queue (if not already present)."""
-        data = _read_media_index()
-        loop_list = data.get("loop", [])
-
-        # Ensure the slug exists in media library
-        media_slugs = {item.get("slug") for item in data.get("media", [])}
-        if payload.slug not in media_slugs:
-            raise HTTPException(status_code=404, detail="Media not found")
-
-        if payload.slug not in loop_list:
-            loop_list.append(payload.slug)
-            data["loop"] = loop_list
-            data["last_updated"] = time.time()
-            _write_media_index(data)
-
-            # Refresh player list if available
+        try:
+            mindex.add_to_loop(payload.slug)
             if display_player:
                 display_player.refresh_media_list()
-
-        return {"success": True, "loop": loop_list}
+            return {"success": True, "loop": mindex.list_loop()}
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Media not found")
 
     @app.delete("/api/loop/{slug}")
     async def remove_from_loop(slug: str):
         """Remove slug from loop queue."""
-        data = _read_media_index()
-        loop_list = data.get("loop", [])
-
-        if slug in loop_list:
-            loop_list = [s for s in loop_list if s != slug]
-            data["loop"] = loop_list
-            data["last_updated"] = time.time()
-            _write_media_index(data)
-
-            # Refresh player list so DisplayPlayer uses new queue order
-            if display_player:
-                display_player.refresh_media_list()
-
-        return {"success": True, "loop": loop_list}
+        mindex.remove_from_loop(slug)
+        if display_player:
+            display_player.refresh_media_list()
+        return {"success": True, "loop": mindex.list_loop()}
 
     # ------------------------------------------------------------
     # Re-order loop list – replaces the entire array atomically
@@ -524,22 +462,10 @@ def create_app(display_player: DisplayPlayer = None,
     @app.put("/api/loop")
     async def reorder_loop(payload: LoopOrderPayload):
         """Persist a new loop order supplied as a list of slugs."""
-
-        data = _read_media_index()
-
-        media_slugs = {item.get("slug") for item in data.get("media", [])}
-        # Filter out unknown slugs, keep only recognised ones and preserve order
-        new_loop = [s for s in payload.loop if s in media_slugs]
-
-        data["loop"] = new_loop
-        data["last_updated"] = time.time()
-        _write_media_index(data)
-
-        # Notify player so it uses new ordering
+        mindex.reorder_loop(payload.loop)
         if display_player:
             display_player.refresh_media_list()
-
-        return {"success": True, "loop": new_loop}
+        return {"success": True, "loop": mindex.list_loop()}
 
     @app.get("/api/storage")
     async def get_storage_info():
