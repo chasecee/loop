@@ -6,7 +6,7 @@ import subprocess
 import shutil
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
-from PIL import Image, ImageSequence
+from PIL import Image, ImageSequence, ImageOps
 import tempfile
 import hashlib
 import numpy as np
@@ -55,12 +55,8 @@ class MediaConverter:
                 
                 frame_count = 0
                 for frame in ImageSequence.Iterator(img):
-                    # Resize frame
-                    frame = frame.resize((self.target_width, self.target_height), Image.Resampling.LANCZOS)
-                    
-                    # Convert to RGB if needed
-                    if frame.mode != 'RGB':
-                        frame = frame.convert('RGB')
+                    # Resize & crop frame to fill the display
+                    frame = self._resize_and_crop(frame)
                     
                     # Save frame
                     frame_path = self._save_frame(frame, frames_dir, frame_count, format_type)
@@ -145,6 +141,9 @@ class MediaConverter:
                 
                 for i, frame_file in enumerate(frame_files):
                     with Image.open(frame_file) as img:
+                        # Resize & crop frame to fill the display
+                        img = self._resize_and_crop(img)
+                        
                         # Convert to RGB if needed
                         if img.mode != 'RGB':
                             img = img.convert('RGB')
@@ -192,13 +191,10 @@ class MediaConverter:
             self.logger.info(f"Converting image: {image_path}")
             
             with Image.open(image_path) as img:
-                # Resize image
-                img = img.resize((self.target_width, self.target_height), Image.Resampling.LANCZOS)
+                # Resize & crop image
+                img = self._resize_and_crop(img)
                 
-                # Convert to RGB if needed
-                if img.mode != 'RGB':
-                    img = img.convert('RGB')
-                
+                # Ensure output directories exist
                 output_dir.mkdir(parents=True, exist_ok=True)
                 frames_dir = output_dir / "frames"
                 frames_dir.mkdir(exist_ok=True)
@@ -293,4 +289,26 @@ class MediaConverter:
             return self.convert_image(input_path, output_dir, format_type)
         else:
             self.logger.error(f"Unsupported file type: {ext}")
-            return None 
+            return None
+    
+    # ---------------------------------------------------------------------
+    # Image helpers
+    # ---------------------------------------------------------------------
+
+    def _resize_and_crop(self, img: Image.Image) -> Image.Image:
+        """Resize *and* crop an image to exactly fill the target area.
+
+        The image is first scaled preserving aspect-ratio so that *both* dimensions
+        are **at least** the requested size.  Any excess is then cropped from the
+        centre so the final result is exactly `(target_width, target_height)`.
+        This mimics a typical `object-fit: cover` behaviour found in CSS which is
+        ideal for making content completely fill the screen without letter-boxing
+        or distortion.
+        """
+
+        return ImageOps.fit(
+            img,
+            (self.target_width, self.target_height),
+            Image.Resampling.LANCZOS,
+            centering=(0.5, 0.5),
+        ) 
