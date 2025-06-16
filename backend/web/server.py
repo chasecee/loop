@@ -192,30 +192,70 @@ def create_app(display_player: DisplayPlayer = None,
     
     @app.post("/api/media")
     async def upload_media_files(files: List[UploadFile] = File(...)):
-        """Handles multiple file uploads and processing."""
-        processed_files = []
-        errors = []
+        """Handle multiple file uploads and processing.
 
-        for file in files:
+        While conversion is underway, pause the on-device playback and show a
+        *Processing…* message so the user isn't left wondering what's
+        happening. Playback automatically resumes (with a *Done!* toast) once
+        everything is finished – even if one of the uploads fails. This avoids
+        race-conditions by pausing *before* any heavy work begins so the
+        `DisplayPlayer` thread is idle during `display_driver.display_frame`
+        calls made from `show_message()`.
+        """
+
+        processed_files: List[Dict] = []
+        errors: List[Dict] = []
+
+        # ------------------------------------------------------------------
+        # Pause playback & show "Processing" splash
+        # ------------------------------------------------------------------
+        playback_was_running = False
+        if display_player and not display_player.is_paused():
+            playback_was_running = True
             try:
-                metadata = await process_and_index_file(file, converter, config)
-                processed_files.append(metadata)
-            except Exception as e:
-                logger.error(f"Upload failed for {file.filename}: {e}")
-                error_detail = e.detail if isinstance(e, HTTPException) else str(e)
-                errors.append({"filename": file.filename, "error": error_detail})
+                display_player.toggle_pause()
+                display_player.show_message("Processing media…", duration=0)
+            except Exception as exc:
+                logger.warning(f"Failed to display processing splash: {exc}")
 
-        # Refresh player only once after all files are processed
-        if display_player:
-            display_player.refresh_media_list()
+        try:
+            # --------------------------------------------------------------
+            # Process every uploaded file serially for now (keeps memory low)
+            # --------------------------------------------------------------
+            for file in files:
+                try:
+                    metadata = await process_and_index_file(file, converter, config)
+                    processed_files.append(metadata)
+                except Exception as e:
+                    logger.error(f"Upload failed for {file.filename}: {e}")
+                    error_detail = e.detail if isinstance(e, HTTPException) else str(e)
+                    errors.append({"filename": file.filename, "error": error_detail})
+        finally:
+            # ------------------------------------------------------------------
+            # Always refresh the player/media-list, then resume playback
+            # ------------------------------------------------------------------
+            if display_player:
+                try:
+                    display_player.refresh_media_list()
+                except Exception as exc:
+                    logger.error(f"Failed to refresh media list: {exc}")
 
+                if playback_was_running:
+                    # Show quick "done" banner, then resume playback
+                    try:
+                        display_player.show_message("Processing complete!", duration=2.0)
+                    except Exception:
+                        pass
+                    display_player.toggle_pause()  # Resume
+
+        # If *all* uploads failed, bubble an error back to the client
         if not processed_files and errors:
-             raise HTTPException(status_code=500, detail={"errors": errors})
+            raise HTTPException(status_code=500, detail={"errors": errors})
 
         return {
             "success": True,
             "processed_files": processed_files,
-            "errors": errors
+            "errors": errors,
         }
     
     @app.post("/api/media/{slug}/activate")
