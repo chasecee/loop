@@ -11,7 +11,6 @@ from typing import Dict, List, Optional
 from fastapi import FastAPI, UploadFile, File, Form, Request, HTTPException, Depends
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 
 from config.schema import Config
 from display.player import DisplayPlayer
@@ -55,33 +54,15 @@ def create_app(display_player: DisplayPlayer = None,
     
     logger = get_logger("web")
     
-    # Static files and templates
-    static_dir = Path(__file__).parent / "static"
-    template_dir = Path(__file__).parent / "templates"
+    # (Removed legacy /static mount; SPA bundle should contain all assets)
     
-    # Create directories if they don't exist
-    static_dir.mkdir(exist_ok=True)
-    template_dir.mkdir(exist_ok=True)
-    
-    app.mount("/static", StaticFiles(directory=static_dir), name="static")
-    templates = Jinja2Templates(directory=template_dir)
-    
-    # --- New SPA static file serving ---
-    # The Next.js build output will be moved to this directory
+    # SPA assets directory (Next.js export)
     spa_dir = Path(__file__).parent / "spa"
-    
-    # Mount the static assets from the Next.js build
     if (spa_dir / "_next").exists():
         app.mount("/_next", StaticFiles(directory=spa_dir / "_next"), name="next-static")
-    
-    # Mount other public assets only if SPA folder exists to avoid runtime error
     if spa_dir.exists():
         app.mount("/assets", StaticFiles(directory=spa_dir), name="spa-assets")
-    else:
-        logger.warning("SPA directory %s not found, skipping static mount", spa_dir)
     
-    # --- End new SPA serving ---
-
     # Media directories
     media_raw_dir = Path("media/raw")
     media_processed_dir = Path("media/processed")
@@ -95,28 +76,11 @@ def create_app(display_player: DisplayPlayer = None,
         converter = MediaConverter(240, 320)  # Default size
     
     @app.get("/", response_class=HTMLResponse)
-    async def home(request: Request):
-        """Home page with media list and controls."""
-        
-        # Get current status
-        player_status = display_player.get_status() if display_player else {}
-        wifi_status = wifi_manager.get_status() if wifi_manager else {}
-        
-        # Load media list
-        media_index_file = Path("media/index.json")
-        media_list = []
-        if media_index_file.exists():
-            with open(media_index_file, 'r') as f:
-                data = json.load(f)
-                media_list = data.get('media', [])
-        
-        return templates.TemplateResponse("index.html", {
-            "request": request,
-            "media_list": media_list,
-            "player_status": player_status,
-            "wifi_status": wifi_status,
-            "current_media": player_status.get('current_media', {}),
-        })
+    async def root_spa():
+        spa_index = Path(__file__).parent / "spa" / "index.html"
+        if spa_index.exists():
+            return FileResponse(spa_index)
+        raise HTTPException(status_code=404, detail="SPA not built/deployed")
     
     @app.get("/api/status")
     async def get_status():
@@ -379,21 +343,6 @@ def create_app(display_player: DisplayPlayer = None,
         success, message = updater.auto_update()
         return {"success": success, "message": message}
     
-    # Settings page
-    @app.get("/settings", response_class=HTMLResponse)
-    async def settings_page(request: Request):
-        """Settings and configuration page."""
-        
-        wifi_status = wifi_manager.get_status() if wifi_manager else {}
-        update_status = updater.get_update_status() if updater else {}
-        
-        return templates.TemplateResponse("settings.html", {
-            "request": request,
-            "wifi_status": wifi_status,
-            "update_status": update_status,
-            "config": config.__dict__ if config else {}
-        })
-    
     @app.get("/api/media")
     async def get_media():
         """Return the media library and active item."""
@@ -472,19 +421,6 @@ def create_app(display_player: DisplayPlayer = None,
         }
 
     # --- End New Endpoints ---
-
-    # --- New SPA Catch-all Route ---
-    @app.get("/{full_path:path}", response_class=HTMLResponse)
-    async def serve_spa(request: Request, full_path: str):
-        """Serve the single-page application (compiled Next.js export)."""
-        spa_index = Path(__file__).parent / "spa" / "index.html"
-
-        if spa_index.exists():
-            # Return the raw exported HTML file – no template rendering needed
-            return FileResponse(spa_index)
-
-        logger.error("SPA index.html not found at %s", spa_index)
-        raise HTTPException(status_code=404, detail="SPA not built/deployed")
 
     logger.info("FastAPI application created successfully")
     return app
