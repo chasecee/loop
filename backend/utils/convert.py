@@ -240,9 +240,13 @@ class MediaConverter:
                 # Convert PIL image to NumPy array (much faster than getpixel loops)
                 img_array = np.array(frame, dtype=np.uint8)
                 
+                # Ensure 3-channel RGB array (GIF frames can be single-channel)
+                if img_array.ndim == 2:
+                    img_array = np.stack([img_array] * 3, axis=-1)
+
                 # Extract R, G, B channels
                 r = img_array[:, :, 0].astype(np.uint16)
-                g = img_array[:, :, 1].astype(np.uint16) 
+                g = img_array[:, :, 1].astype(np.uint16)
                 b = img_array[:, :, 2].astype(np.uint16)
                 
                 # Convert to RGB565 using vectorized operations
