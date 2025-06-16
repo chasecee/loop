@@ -201,8 +201,10 @@ Group=${USER}
 WorkingDirectory=${BACKEND_DIR}
 Environment=PYTHONPATH=${BACKEND_DIR}
 ExecStart=${VENV_DIR}/bin/python ${BACKEND_DIR}/main.py
-Restart=always
-RestartSec=3
+Restart=on-failure
+RestartSec=10
+StartLimitIntervalSec=60
+StartLimitBurst=3
 
 [Install]
 WantedBy=multi-user.target
@@ -227,7 +229,7 @@ fi
 echo "🔒 Setting file permissions..."
 chown -R ${USER}:${USER} "${PROJECT_DIR}"
 chmod +x "${PROJECT_DIR}/backend/main.py" 2>/dev/null || true
-chmod +x "${PROJECT_DIR}/deployment/scripts/"*.sh 2>/dev/null || true
+chmod +x "${BACKEND_DIR}/deployment/scripts/"*.sh 2>/dev/null || true
 
 # Enable and start service
 echo "🚀 Managing LOOP service..."
