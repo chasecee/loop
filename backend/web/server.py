@@ -493,6 +493,24 @@ def create_app(display_player: DisplayPlayer = None,
             "units": "bytes"
         }
 
+    # --------------------------------------------------------------
+    # Dashboard endpoint – aggregate common polling data
+    # --------------------------------------------------------------
+
+    @app.get("/api/dashboard")
+    async def get_dashboard():
+        """Return status, media library and loop queue in one request."""
+        # Re-use existing helper handlers to avoid duplicating logic.
+        status_data = await get_status()
+        media_data = await get_media()
+        loop_data = await get_loop_queue()
+
+        return {
+            "status": status_data,
+            "media": media_data,
+            "loop": loop_data,
+        }
+
     logger.info("FastAPI application created successfully")
     return app
 
