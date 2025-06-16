@@ -12,7 +12,7 @@
     "dc_pin": 25,
     "rst_pin": 27,
     "bl_pin": 18,
-    "rotation": 90,
+    "rotation": 0,
     "framerate": 30
   },
   "wifi": {
