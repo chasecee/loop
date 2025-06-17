@@ -174,10 +174,15 @@ def remove_from_loop(slug: str) -> None:
     data = _read_raw()
     loop = data.setdefault("loop", [])
     if slug in loop:
+        # Remove from loop
         loop = [s for s in loop if s != slug]
         data["loop"] = loop
-        if data.get("active") == slug:
+        
+        # If this was the active item or if there are no more items in loop,
+        # update active to first item in loop (or None if loop empty)
+        if data.get("active") == slug or not loop:
             data["active"] = loop[0] if loop else None
+        
         _write_raw(data)
 
 

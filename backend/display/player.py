@@ -140,16 +140,34 @@ class DisplayPlayer:
             if len(self.media_list) <= 1:
                 return
             
-            self.current_media_index = (self.current_media_index + 1) % len(self.media_list)
-            self.load_current_sequence()
+            # Get current loop order
+            loop_slugs = mi.list_loop()
+            if not loop_slugs:
+                return  # No items in loop
             
-            # Update active media in index
+            # Find current position in loop
             current_slug = self.get_current_media_slug()
-            if current_slug:
-                mi.set_active(current_slug)
+            try:
+                current_loop_idx = loop_slugs.index(current_slug) if current_slug else -1
+            except ValueError:
+                current_loop_idx = -1
             
-            media_name = self.media_list[self.current_media_index].get('original_filename', 'Unknown')
-            self.logger.info(f"Switched to next media: {media_name}")
+            # Move to next item in loop
+            next_loop_idx = (current_loop_idx + 1) % len(loop_slugs)
+            next_slug = loop_slugs[next_loop_idx]
+            
+            # Find this item in media list
+            for i, media in enumerate(self.media_list):
+                if media.get('slug') == next_slug:
+                    self.current_media_index = i
+                    self.load_current_sequence()
+                    
+                    # Update active media in index
+                    mi.set_active(next_slug)
+                    
+                    media_name = self.media_list[i].get('original_filename', 'Unknown')
+                    self.logger.info(f"Switched to next media: {media_name}")
+                    break
     
     def previous_media(self) -> None:
         """Switch to previous media."""
@@ -157,16 +175,34 @@ class DisplayPlayer:
             if len(self.media_list) <= 1:
                 return
             
-            self.current_media_index = (self.current_media_index - 1) % len(self.media_list)
-            self.load_current_sequence()
+            # Get current loop order
+            loop_slugs = mi.list_loop()
+            if not loop_slugs:
+                return  # No items in loop
             
-            # Update active media in index
+            # Find current position in loop
             current_slug = self.get_current_media_slug()
-            if current_slug:
-                mi.set_active(current_slug)
+            try:
+                current_loop_idx = loop_slugs.index(current_slug) if current_slug else -1
+            except ValueError:
+                current_loop_idx = -1
             
-            media_name = self.media_list[self.current_media_index].get('original_filename', 'Unknown')
-            self.logger.info(f"Switched to previous media: {media_name}")
+            # Move to previous item in loop
+            prev_loop_idx = (current_loop_idx - 1) % len(loop_slugs)
+            prev_slug = loop_slugs[prev_loop_idx]
+            
+            # Find this item in media list
+            for i, media in enumerate(self.media_list):
+                if media.get('slug') == prev_slug:
+                    self.current_media_index = i
+                    self.load_current_sequence()
+                    
+                    # Update active media in index
+                    mi.set_active(prev_slug)
+                    
+                    media_name = self.media_list[i].get('original_filename', 'Unknown')
+                    self.logger.info(f"Switched to previous media: {media_name}")
+                    break
     
     def set_active_media(self, slug: str) -> bool:
         """Set active media by slug."""
