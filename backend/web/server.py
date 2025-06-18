@@ -218,6 +218,7 @@ def create_app(
     @app.post("/api/media", response_model=APIResponse)
     async def upload_media(files: List[UploadFile] = File(...)):
         """Upload and process media files synchronously with display progress."""
+        logger.info(f"🔥 UPLOAD ENDPOINT HIT! Received {len(files)} files: {[f.filename for f in files]}")
         if not files:
             raise HTTPException(status_code=400, detail="No files provided")
         
@@ -229,12 +230,15 @@ def create_app(
         # Pause playback during processing
         if display_player:
             was_paused = display_player.is_paused()
+            logger.info(f"🎮 Player state: paused={was_paused}, running={display_player.running}")
             if not was_paused:
                 try:
                     display_player.toggle_pause()
-                    logger.info("Paused playback for upload processing")
+                    logger.info("🛑 Paused playback for upload processing")
                 except Exception as exc:
                     logger.warning(f"Failed to pause playback: {exc}")
+            else:
+                logger.info("🎮 Player was already paused")
         
         try:
             # Create job IDs and start display progress BEFORE processing
@@ -246,10 +250,11 @@ def create_app(
             # Start display progress tracking
             if job_ids and display_player:
                 try:
+                    logger.info(f"📊 Starting progress display for {len(job_ids)} jobs: {job_ids}")
                     display_player.start_processing_display(job_ids)
-                    logger.info(f"Started progress display for {len(job_ids)} jobs")
+                    logger.info(f"✅ Successfully started progress display for {len(job_ids)} jobs")
                 except Exception as exc:
-                    logger.warning(f"Failed to start processing display: {exc}")
+                    logger.error(f"❌ Failed to start processing display: {exc}")
             
             # Process files synchronously
             last_successful_slug = None

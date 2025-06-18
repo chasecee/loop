@@ -536,10 +536,11 @@ class DisplayPlayer:
                     # Display static image for 3 seconds before moving to next
                     frame_data = self.current_sequence.get_frame_data(0)
                     if frame_data:
+                        self.logger.debug(f"Displaying static image for 3 seconds")
                         self.display_driver.display_frame(frame_data)
                         
                         # Wait 3 seconds for static images (or until interrupted)
-                        for _ in range(30):  # 30 * 0.1s = 3 seconds
+                        for i in range(30):  # 30 * 0.1s = 3 seconds
                             if not self.running or self.showing_progress:
                                 break
                             while self.paused and self.running and not self.showing_progress:
@@ -547,6 +548,7 @@ class DisplayPlayer:
                             if not self.running or self.showing_progress:
                                 break
                             time.sleep(0.1)
+                        self.logger.debug(f"Static image display completed")
                 else:
                     # Play all frames in animated sequence
                     for frame_idx in range(frame_count):
@@ -587,7 +589,7 @@ class DisplayPlayer:
                 # Handle loop mode behavior after playing sequence
                 current_loop_slugs = media_index.list_loop()  # Re-check in case it changed
                 if self.loop_mode == "one":
-                    # Loop one mode - keep playing same media
+                    # Loop one mode - keep playing same media (restart from beginning)
                     continue
                 elif len(current_loop_slugs) > 1:
                     # Loop all mode with multiple items - move to next
