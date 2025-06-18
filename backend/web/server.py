@@ -218,11 +218,19 @@ def create_app(
             if display_player:
                 try:
                     display_player.refresh_media_list()
+                    
+                    # If we successfully processed files, activate the last one uploaded
+                    if processed_files:
+                        last_uploaded_slug = processed_files[-1].get('slug')
+                        if last_uploaded_slug:
+                            display_player.set_active_media(last_uploaded_slug)
+                            logger.info(f"Activated newly uploaded media: {last_uploaded_slug}")
+                    
                     if playback_was_running:
                         display_player.show_message("Processing complete!", duration=2.0)
                         display_player.toggle_pause()  # Resume
                 except Exception as exc:
-                    logger.error(f"Failed to refresh player: {exc}")
+                    logger.error(f"Failed to refresh/activate player: {exc}")
         
         if not processed_files and errors:
             raise HTTPException(status_code=500, detail={"errors": errors})

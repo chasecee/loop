@@ -143,34 +143,20 @@ class DisplayPlayer:
             if len(self.loop_media) <= 1:
                 return
             
-            # Get current loop order
-            loop_slugs = media_index.list_loop()
-            if not loop_slugs:
-                return  # No items in loop
+            # Use cached loop data for consistency
+            self.current_media_index = (self.current_media_index + 1) % len(self.loop_media)
             
-            # Find current position in loop
-            current_slug = self.get_current_media_slug()
-            try:
-                current_loop_idx = loop_slugs.index(current_slug) if current_slug else -1
-            except ValueError:
-                current_loop_idx = -1
-            
-            # Move to next item in loop
-            next_loop_idx = (current_loop_idx + 1) % len(loop_slugs)
-            next_slug = loop_slugs[next_loop_idx]
-            
-            # Find this item in media list
-            for i, media in enumerate(self.loop_media):
-                if media.get('slug') == next_slug:
-                    self.current_media_index = i
-                    self.load_current_sequence()
+            # Load the new sequence
+            if self.load_current_sequence():
+                # Update active media in index
+                new_slug = self.loop_media[self.current_media_index].get('slug')
+                if new_slug:
+                    media_index.set_active(new_slug)
                     
-                    # Update active media in index
-                    media_index.set_active(next_slug)
-                    
-                    media_name = self.loop_media[i].get('original_filename', 'Unknown')
+                    media_name = self.loop_media[self.current_media_index].get('original_filename', 'Unknown')
                     self.logger.info(f"Switched to next media: {media_name}")
-                    break
+            else:
+                self.logger.error("Failed to load next media sequence")
     
     def previous_media(self) -> None:
         """Switch to previous media."""
@@ -178,34 +164,20 @@ class DisplayPlayer:
             if len(self.loop_media) <= 1:
                 return
             
-            # Get current loop order
-            loop_slugs = media_index.list_loop()
-            if not loop_slugs:
-                return  # No items in loop
+            # Use cached loop data for consistency  
+            self.current_media_index = (self.current_media_index - 1) % len(self.loop_media)
             
-            # Find current position in loop
-            current_slug = self.get_current_media_slug()
-            try:
-                current_loop_idx = loop_slugs.index(current_slug) if current_slug else -1
-            except ValueError:
-                current_loop_idx = -1
-            
-            # Move to previous item in loop
-            prev_loop_idx = (current_loop_idx - 1) % len(loop_slugs)
-            prev_slug = loop_slugs[prev_loop_idx]
-            
-            # Find this item in media list
-            for i, media in enumerate(self.loop_media):
-                if media.get('slug') == prev_slug:
-                    self.current_media_index = i
-                    self.load_current_sequence()
+            # Load the new sequence
+            if self.load_current_sequence():
+                # Update active media in index
+                new_slug = self.loop_media[self.current_media_index].get('slug')
+                if new_slug:
+                    media_index.set_active(new_slug)
                     
-                    # Update active media in index
-                    media_index.set_active(prev_slug)
-                    
-                    media_name = self.loop_media[i].get('original_filename', 'Unknown')
+                    media_name = self.loop_media[self.current_media_index].get('original_filename', 'Unknown')
                     self.logger.info(f"Switched to previous media: {media_name}")
-                    break
+            else:
+                self.logger.error("Failed to load previous media sequence")
     
     def set_active_media(self, slug: str) -> bool:
         """Set the active media to the specified slug."""
@@ -456,8 +428,9 @@ class DisplayPlayer:
         """Refresh the media list from index."""
         self.logger.info("Refreshing media list")
         
-        # Store old count to detect changes
+        # Store old state to detect changes
         old_loop_count = len(self.loop_media)
+        old_loop_slugs = [m.get('slug') for m in self.loop_media]
         
         self.load_media_index()
         
@@ -466,9 +439,15 @@ class DisplayPlayer:
             self.current_media_index = 0
             self.current_sequence = None
         
-        # Check if loop count changed (new media added/removed)
+        # Check if loop changed (count or content)
         new_loop_count = len(self.loop_media)
-        if new_loop_count != old_loop_count:
-            self.logger.info(f"Media loop count changed: {old_loop_count} -> {new_loop_count}")
+        new_loop_slugs = [m.get('slug') for m in self.loop_media]
+        
+        loop_changed = (new_loop_count != old_loop_count or old_loop_slugs != new_loop_slugs)
+        
+        if loop_changed:
+            self.logger.info(f"Media loop changed: {old_loop_count} -> {new_loop_count} items")
+            if old_loop_slugs != new_loop_slugs:
+                self.logger.info("Loop content changed (different media items)")
             with self.lock:
                 self.media_list_changed = True
