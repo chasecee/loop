@@ -149,7 +149,7 @@ class FrameDecoder:
 
 
 class FrameSequence:
-    """Manages a sequence of frames for playback."""
+    """Manages a sequence of frames for playback with full pre-loading."""
     
     def __init__(self, frames_dir: Path, frames: List[str], durations: List[float]):
         self.frames_dir = frames_dir
@@ -157,31 +157,31 @@ class FrameSequence:
         self.durations = durations
         self.frame_count = len(frames)
         self.current_frame = 0
+        self.logger = get_logger("framebuf")
         
-        # Pre-load first frame
-        self._current_frame_data = self._load_frame(self.frame_paths[0])
+        # Pre-load ALL frames into memory for blazing fast access
+        self.logger.info(f"Pre-loading {self.frame_count} frames into memory...")
+        self._frame_cache = {}
         
-        # Pre-load next frame
-        next_idx = (self.current_frame + 1) % self.frame_count
-        self._next_frame_data = self._load_frame(self.frame_paths[next_idx])
+        # Load all frames at once
+        for i, frame_path in enumerate(self.frame_paths):
+            frame_data = self._load_frame(frame_path)
+            if frame_data:
+                self._frame_cache[i] = frame_data
+            else:
+                self.logger.error(f"Failed to load frame {i}: {frame_path}")
+        
+        self.logger.info(f"Pre-loaded {len(self._frame_cache)} frames ({sum(len(data) for data in self._frame_cache.values()) / 1024:.1f} KB)")
     
     def get_frame(self) -> Optional[bytes]:
-        """Get the current frame and advance to next."""
-        if not self._current_frame_data:
+        """Get the current frame and advance to next - ZERO disk I/O!"""
+        frame_data = self._frame_cache.get(self.current_frame)
+        
+        if not frame_data:
             return None
             
-        # Get current frame data
-        frame_data = self._current_frame_data
-        
         # Advance to next frame
         self.current_frame = (self.current_frame + 1) % self.frame_count
-        
-        # Swap buffers
-        self._current_frame_data = self._next_frame_data
-        
-        # Pre-load next frame
-        next_idx = (self.current_frame + 1) % self.frame_count
-        self._next_frame_data = self._load_frame(self.frame_paths[next_idx])
         
         return frame_data
     
@@ -193,11 +193,17 @@ class FrameSequence:
         """Get total number of frames."""
         return self.frame_count
     
+    def get_frame_duration(self, frame_idx: int) -> float:
+        """Get duration for a specific frame."""
+        if 0 <= frame_idx < len(self.durations):
+            return self.durations[frame_idx]
+        return 0.1  # Default 100ms
+    
     def _load_frame(self, frame_path: Path) -> Optional[bytes]:
-        """Load a frame from disk."""
+        """Load a frame from disk (only called during initialization)."""
         try:
             with open(frame_path, 'rb') as f:
                 return f.read()
         except Exception as e:
-            LOGGER.error(f"Failed to load frame {frame_path}: {e}")
+            self.logger.error(f"Failed to load frame {frame_path}: {e}")
             return None 

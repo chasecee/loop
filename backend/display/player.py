@@ -291,12 +291,15 @@ class DisplayPlayer:
         loop_count = 0
         min_frame_time = 1.0 / self.frame_rate if self.frame_rate > 0 else 0.0
         
+        # Performance: cache frequently accessed values
+        media_loop_count = self.loop_count if self.loop_count > 0 else 1
+        
         try:
             while self.running:
                 # Check if we have media to play
                 if not self.loop_media:
                     self.show_no_media_message()
-                    time.sleep(1)  # Check less frequently when no media
+                    time.sleep(2)  # Check even less frequently when no media to reduce CPU usage
                     self.load_media_index()  # Refresh to check for new media
                     continue
                 
@@ -309,28 +312,28 @@ class DisplayPlayer:
                 if self.current_sequence:
                     frame = self.current_sequence.get_frame()
                     if frame:
-                        # Calculate timing before display
+                        # Get frame duration BEFORE advancing frame index
+                        prev_frame_idx = (self.current_sequence.current_frame - 1) % self.current_sequence.frame_count
+                        frame_duration = self.current_sequence.get_frame_duration(prev_frame_idx)
+                        frame_duration = max(frame_duration, min_frame_time)
+                        
+                        # Calculate sleep time (single time.time() call)
                         current_time = time.time()
                         elapsed = current_time - last_frame_time
                         
-                        # Get frame duration, respecting minimum frame time
-                        frame_index = self.current_sequence.current_frame
-                        durations = self.current_sequence.durations
-                        frame_duration = durations[frame_index] if durations else min_frame_time
-                        frame_duration = max(frame_duration, min_frame_time)
-                        
-                        # Only sleep if we need to slow down
+                        # Sleep only if needed (non-blocking for fast frames)
                         if elapsed < frame_duration:
                             time.sleep(frame_duration - elapsed)
+                            last_frame_time = last_frame_time + frame_duration  # Precise timing
+                        else:
+                            last_frame_time = current_time  # Catch up timing
                         
-                        # Display frame and update timing
+                        # Display frame (the expensive operation)
                         self.display_driver.display_frame(frame)
-                        last_frame_time = time.time()
                         
                         # Check if we've completed a loop
                         if self.current_sequence.is_complete():
                             loop_count += 1
-                            media_loop_count = self.loop_count if self.loop_count > 0 else 1
                             
                             # Move to next media once we've completed the desired loops
                             if loop_count >= media_loop_count:

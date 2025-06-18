@@ -170,17 +170,24 @@ class ILI9341Driver:
         self._write_command(self.ILI9341_RAMWR)
     
     def write_pixel_data(self, data: bytes) -> None:
-        """Write pixel data to display."""
+        """Write pixel data to display with optimized chunking."""
         if not SPI_AVAILABLE:
             return
         
         GPIO.output(self.config.dc_pin, GPIO.HIGH)  # Data mode
         
-        # Write data in chunks to avoid SPI buffer overflow
-        chunk_size = 4096
-        for i in range(0, len(data), chunk_size):
-            chunk = data[i:i + chunk_size]
-            self.spi.writebytes(chunk)
+        # Use larger chunks for better SPI performance (320*240*2 = 153,600 bytes total)
+        # Aim for 2-4 chunks max to minimize SPI transaction overhead
+        chunk_size = min(65536, len(data))  # 64KB chunks or full frame if smaller
+        
+        if len(data) <= chunk_size:
+            # Single write for small frames - fastest path
+            self.spi.writebytes(data)
+        else:
+            # Chunked write for larger frames
+            for i in range(0, len(data), chunk_size):
+                chunk = data[i:i + chunk_size]
+                self.spi.writebytes(chunk)
     
     def fill_screen(self, color: int = 0x0000) -> None:
         """Fill entire screen with color (RGB565)."""
