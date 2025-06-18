@@ -317,25 +317,26 @@ class DisplayPlayer:
                     try:
                         frame = self.current_sequence.get_frame()
                         if frame:
-                            # Get frame duration for the frame we just displayed
-                            # (current_frame was advanced by get_frame(), so we need the previous one)
+                            # Display frame immediately (the expensive operation)
+                            self.display_driver.display_frame(frame)
+                            
+                            # Optimized timing calculation after display
                             displayed_frame_idx = (self.current_sequence.current_frame - 1) % self.current_sequence.frame_count
                             frame_duration = self.current_sequence.get_frame_duration(displayed_frame_idx)
                             frame_duration = max(frame_duration, min_frame_time)
                             
-                            # Calculate sleep time (single time.time() call)
+                            # Fast timing with minimal overhead
                             current_time = time.time()
                             elapsed = current_time - last_frame_time
                             
-                            # Sleep only if needed (non-blocking for fast frames)
+                            # Only sleep if we're ahead of schedule
                             if elapsed < frame_duration:
-                                time.sleep(frame_duration - elapsed)
-                                last_frame_time = last_frame_time + frame_duration  # Precise timing
+                                sleep_time = frame_duration - elapsed
+                                if sleep_time > 0.001:  # Only sleep if >1ms to avoid tiny sleeps
+                                    time.sleep(sleep_time)
+                                last_frame_time = last_frame_time + frame_duration
                             else:
-                                last_frame_time = current_time  # Catch up timing
-                            
-                            # Display frame (the expensive operation)
-                            self.display_driver.display_frame(frame)
+                                last_frame_time = current_time
                             
                             # Check if we've completed a loop
                             if self.current_sequence.is_complete():

@@ -56,7 +56,7 @@ class ILI9341Driver:
         # Initialize SPI
         self.spi = spidev.SpiDev()
         self.spi.open(self.config.spi_bus, self.config.spi_device)
-        self.spi.max_speed_hz = 32000000  # 32MHz
+        self.spi.max_speed_hz = 64000000  # 64MHz (Pi can handle up to ~125MHz)
         self.spi.mode = 0
         
         self.logger.info(f"Initialized ILI9341 driver: {self.config.width}x{self.config.height}")
@@ -183,30 +183,37 @@ class ILI9341Driver:
         
         GPIO.output(self.config.dc_pin, GPIO.HIGH)  # Data mode
         
-        # Use optimized chunks for Pi SPI - 8KB seems to be the sweet spot
-        # Pi SPI buffer can handle this size while maintaining good performance
-        chunk_size = min(8192, len(data))  # 8KB chunks for optimal performance
+        # Pi SPI driver has a hard limit of 4096 bytes per transaction
+        # Use exactly 4KB chunks to maximize performance within hardware limits
+        chunk_size = min(4096, len(data))  # 4KB chunks - Pi SPI driver maximum
         
         try:
-            # Always use chunked approach for better reliability
-            for i in range(0, len(data), chunk_size):
-                chunk = data[i:i + chunk_size]
-                if chunk:  # Ensure chunk is not empty
-                    try:
-                        # Try bytes first (preferred)
-                        if isinstance(chunk, bytearray):
-                            chunk = bytes(chunk)
-                        self.spi.writebytes(chunk)
-                    except Exception as bytes_error:
-                        # Fallback: convert to list of integers
-                        try:
-                            chunk_list = list(chunk)
-                            self.spi.writebytes(chunk_list)
-                        except Exception as list_error:
-                            self.logger.error(f"SPI write failed both ways - bytes: {bytes_error}, list: {list_error}")
-                            raise list_error
+            # Optimized approach: minimize Python call overhead
+            if len(data) <= 4096:
+                # Single write for small frames - fastest path
+                self.spi.writebytes(data)
+            else:
+                # Pre-split data into chunks to minimize loop overhead
+                chunks = [data[i:i + chunk_size] for i in range(0, len(data), chunk_size)]
+                
+                # Fast bulk write with minimal error checking (for performance)
+                for chunk in chunks:
+                    self.spi.writebytes(chunk)
+                    
         except Exception as e:
-            self.logger.error(f"SPI write failed: {e} (data length: {len(data)}, data type: {type(data)})")
+            # Fallback to slower but more reliable method
+            self.logger.warning(f"Fast SPI write failed, using fallback: {e}")
+            try:
+                for i in range(0, len(data), chunk_size):
+                    chunk = data[i:i + chunk_size]
+                    if chunk:
+                        try:
+                            self.spi.writebytes(chunk)
+                        except:
+                            # Last resort: convert to list
+                            self.spi.writebytes(list(chunk))
+            except Exception as fallback_error:
+                self.logger.error(f"SPI write completely failed: {fallback_error} (data length: {len(data)})")
     
     def fill_screen(self, color: int = 0x0000) -> None:
         """Fill entire screen with color (RGB565)."""
