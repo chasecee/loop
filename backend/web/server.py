@@ -19,7 +19,7 @@ from display.player import DisplayPlayer
 from boot.wifi import WiFiManager
 from deployment.updater import SystemUpdater
 from utils.convert import MediaConverter
-import utils.media_index as mindex
+from utils.media_index import media_index
 from utils.logger import get_logger
 
 logger = get_logger("web")
@@ -172,12 +172,12 @@ def create_app(
     async def get_media():
         """Get all media items."""
         try:
-            media_list = mindex.list_media()
+            media_list = media_index.list_media()
             return APIResponse(
                 success=True,
                 data={
                     "media": media_list,
-                    "active": mindex.get_active(),
+                    "active": media_index.get_active(),
                     "last_updated": int(time.time())
                 }
             )
@@ -241,8 +241,8 @@ def create_app(
             raise HTTPException(status_code=503, detail="Display player not available")
         
         try:
-            mindex.add_to_loop(slug)  # Ensure in loop
-            mindex.set_active(slug)
+            media_index.add_to_loop(slug)  # Ensure in loop
+            media_index.set_active(slug)
             display_player.set_active_media(slug)
             return APIResponse(success=True, message=f"Activated media: {slug}")
         except KeyError:
@@ -253,7 +253,7 @@ def create_app(
         """Delete a media item."""
         try:
             # Update media index first
-            mindex.remove_media(slug)
+            media_index.remove_media(slug)
             
             # Remove from filesystem
             media_dir = media_processed_dir / slug
@@ -281,7 +281,7 @@ def create_app(
     async def cleanup_orphaned_media():
         """Clean up orphaned media files."""
         try:
-            cleanup_count = mindex.cleanup_orphaned_files(media_raw_dir, media_processed_dir)
+            cleanup_count = media_index.cleanup_orphaned_files(media_raw_dir, media_processed_dir)
             
             if display_player:
                 display_player.refresh_media_list()
@@ -301,20 +301,20 @@ def create_app(
         """Get the current loop queue."""
         return APIResponse(
             success=True,
-            data={"loop": mindex.list_loop()}
+            data={"loop": media_index.list_loop()}
         )
     
     @app.post("/api/loop", response_model=APIResponse)
     async def add_to_loop(payload: AddToLoopPayload):
         """Add a media item to the loop queue."""
         try:
-            mindex.add_to_loop(payload.slug)
+            media_index.add_to_loop(payload.slug)
             if display_player:
                 display_player.refresh_media_list()
             return APIResponse(
                 success=True,
                 message="Added to loop",
-                data={"loop": mindex.list_loop()}
+                data={"loop": media_index.list_loop()}
             )
         except KeyError:
             raise HTTPException(status_code=404, detail="Media not found")
@@ -322,25 +322,25 @@ def create_app(
     @app.put("/api/loop", response_model=APIResponse)
     async def reorder_loop(payload: LoopOrderPayload):
         """Reorder the loop queue."""
-        mindex.reorder_loop(payload.loop)
+        media_index.reorder_loop(payload.loop)
         if display_player:
             display_player.refresh_media_list()
         return APIResponse(
             success=True,
             message="Loop reordered",
-            data={"loop": mindex.list_loop()}
+            data={"loop": media_index.list_loop()}
         )
     
     @app.delete("/api/loop/{slug}", response_model=APIResponse)
     async def remove_from_loop(slug: str):
         """Remove a media item from the loop queue."""
-        mindex.remove_from_loop(slug)
+        media_index.remove_from_loop(slug)
         if display_player:
             display_player.refresh_media_list()
         return APIResponse(
             success=True,
             message="Removed from loop",
-            data={"loop": mindex.list_loop()}
+            data={"loop": media_index.list_loop()}
         )
     
     # Playback Control API
@@ -497,7 +497,7 @@ def create_app(
         device_status = await get_status()
         
         # Get media data
-        dashboard_data = mindex.get_dashboard_data()
+        dashboard_data = media_index.get_dashboard_data()
         
         return DashboardData(
             status=device_status,
@@ -561,7 +561,7 @@ async def process_media_file(file: UploadFile, converter: MediaConverter, config
         })
 
         # Add to media index
-        mindex.add_media(metadata, make_active=True)
+        media_index.add_media(metadata, make_active=True)
 
         # Save original for preview
         dest_raw_path = media_raw_dir / f"{slug}{Path(file.filename).suffix}"

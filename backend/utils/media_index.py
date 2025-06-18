@@ -1,4 +1,5 @@
-"""Utility helpers for reading/writing the media index (media/index.json).
+"""
+Utility helpers for reading/writing the media index (media/index.json).
 
 This consolidates all access in one place so multiple endpoints and the
 DisplayPlayer can share a single canonical schema:
@@ -24,12 +25,10 @@ import shutil
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Union
 from dataclasses import dataclass, asdict
-from datetime import datetime
 
 from utils.logger import get_logger
 
 LOGGER = get_logger("media_index")
-
 MEDIA_INDEX_PATH = Path("media/index.json")
 
 @dataclass
@@ -89,13 +88,12 @@ class MediaIndexManager:
         self.index_path.parent.mkdir(parents=True, exist_ok=True)
     
     def _read_raw(self) -> MediaIndex:
-        """Read the raw media index, handling backwards compatibility migration."""
+        """Read the media index from disk."""
         if not self.index_path.exists():
             return MediaIndex.empty()
         
         try:
             with open(self.index_path, "r") as f:
-                # Get an exclusive lock for reading
                 fcntl.flock(f.fileno(), fcntl.LOCK_EX)
                 try:
                     data = json.load(f)
@@ -104,28 +102,8 @@ class MediaIndexManager:
 
             # Validate structure
             if not isinstance(data, dict):
-                LOGGER.warning("Invalid media index format, resetting to default")
+                LOGGER.error("Invalid media index format, resetting to default")
                 return MediaIndex.empty()
-
-            # Backwards compatibility: convert old list format to dict format
-            needs_migration = False
-            
-            # Handle old media list format
-            if isinstance(data.get("media"), list):
-                LOGGER.info("Migrating media from list to dict format")
-                media_dict = {}
-                for item in data["media"]:
-                    if isinstance(item, dict) and "slug" in item:
-                        media_dict[item["slug"]] = item
-                data["media"] = media_dict
-                needs_migration = True
-
-            # Handle old loop format (if it contains objects instead of slugs)
-            loop_raw = data.get("loop", [])
-            if loop_raw and isinstance(loop_raw[0], dict):
-                LOGGER.info("Migrating loop from object list to slug list")
-                data["loop"] = [item.get("slug") for item in loop_raw if isinstance(item, dict) and item.get("slug")]
-                needs_migration = True
 
             # Create MediaIndex with validated data
             index = MediaIndex(
@@ -135,24 +113,21 @@ class MediaIndexManager:
                 last_updated=data.get("last_updated")
             )
 
-            # Clean up orphaned slugs in loop that don't exist in media
+            # Validate data integrity
             valid_slugs = set(index.media.keys())
-            original_loop = index.loop[:]
+            
+            # Clean up orphaned slugs in loop
+            original_loop_length = len(index.loop)
             index.loop = [slug for slug in index.loop if slug in valid_slugs]
             
-            if len(index.loop) != len(original_loop):
-                LOGGER.info(f"Cleaned up {len(original_loop) - len(index.loop)} orphaned slugs from loop")
-                needs_migration = True
+            if len(index.loop) != original_loop_length:
+                LOGGER.info(f"Cleaned up {original_loop_length - len(index.loop)} orphaned slugs from loop")
+                self._write_raw(index)
 
             # Validate active slug
             if index.active and index.active not in valid_slugs:
                 LOGGER.info(f"Clearing invalid active slug: {index.active}")
                 index.active = index.loop[0] if index.loop else None
-                needs_migration = True
-
-            # Write back if we migrated anything
-            if needs_migration:
-                LOGGER.info("Persisting migrated media index")
                 self._write_raw(index)
 
             return index
@@ -385,54 +360,5 @@ class MediaIndexManager:
         
         return cleanup_count
 
-# Global instance for backward compatibility
-_manager = MediaIndexManager()
-
-# Legacy API functions for backward compatibility
-def list_media() -> List[Dict[str, Any]]:
-    """Return all media objects as a list."""
-    return _manager.list_media()
-
-def get_media_dict() -> Dict[str, Dict[str, Any]]:
-    """Return the media dictionary directly."""
-    return _manager.get_media_dict()
-
-def list_loop() -> List[str]:
-    """Return the current loop slug list."""
-    return _manager.list_loop()
-
-def get_active() -> Optional[str]:
-    """Return the currently active media slug."""
-    return _manager.get_active()
-
-def add_media(meta: Dict[str, Any], make_active: bool = True) -> None:
-    """Add a media item to the index."""
-    return _manager.add_media(meta, make_active)
-
-def remove_media(slug: str) -> None:
-    """Remove a media item completely from the index."""
-    return _manager.remove_media(slug)
-
-def add_to_loop(slug: str) -> None:
-    """Add a media item to the loop queue."""
-    return _manager.add_to_loop(slug)
-
-def remove_from_loop(slug: str) -> None:
-    """Remove a media item from the loop queue."""
-    return _manager.remove_from_loop(slug)
-
-def reorder_loop(new_order: List[str]) -> None:
-    """Reorder the loop queue with the given slug list."""
-    return _manager.reorder_loop(new_order)
-
-def set_active(slug: Optional[str]) -> None:
-    """Set the currently active media slug."""
-    return _manager.set_active(slug)
-
-def get_dashboard_data() -> Dict[str, Any]:
-    """Get all data needed for the dashboard in a single operation."""
-    return _manager.get_dashboard_data()
-
-def cleanup_orphaned_files(media_raw_dir: Path, media_processed_dir: Path) -> int:
-    """Clean up files that don't have corresponding entries in the media index."""
-    return _manager.cleanup_orphaned_files(media_raw_dir, media_processed_dir) 
+# Global instance - the clean way to access media index
+media_index = MediaIndexManager() 

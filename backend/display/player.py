@@ -12,7 +12,7 @@ from config.schema import DisplayConfig, MediaConfig
 from display.framebuf import FrameSequence, FrameDecoder, FrameBuffer
 from display.spiout import ILI9341Driver
 from utils.logger import get_logger
-import utils.media_index as mi
+from utils.media_index import media_index
 
 
 class DisplayPlayer:
@@ -57,8 +57,8 @@ class DisplayPlayer:
         """Load the media index from file."""
         try:
             # Load all media and loop order
-            self.all_media = mi.list_media()
-            loop_order = mi.list_loop()
+            self.all_media = media_index.list_media()
+            loop_order = media_index.list_loop()
 
             # Create mapping of slugs to media items
             slug_to_media = {m.get('slug'): m for m in self.all_media}
@@ -71,7 +71,7 @@ class DisplayPlayer:
                 self.current_media_index = 0
             
             # Set active media if specified
-            active_slug = mi.get_active()
+            active_slug = media_index.get_active()
             if active_slug:
                 for i, media in enumerate(self.loop_media):
                     if media.get('slug') == active_slug:
@@ -143,7 +143,7 @@ class DisplayPlayer:
                 return
             
             # Get current loop order
-            loop_slugs = mi.list_loop()
+            loop_slugs = media_index.list_loop()
             if not loop_slugs:
                 return  # No items in loop
             
@@ -165,7 +165,7 @@ class DisplayPlayer:
                     self.load_current_sequence()
                     
                     # Update active media in index
-                    mi.set_active(next_slug)
+                    media_index.set_active(next_slug)
                     
                     media_name = self.loop_media[i].get('original_filename', 'Unknown')
                     self.logger.info(f"Switched to next media: {media_name}")
@@ -178,7 +178,7 @@ class DisplayPlayer:
                 return
             
             # Get current loop order
-            loop_slugs = mi.list_loop()
+            loop_slugs = media_index.list_loop()
             if not loop_slugs:
                 return  # No items in loop
             
@@ -200,24 +200,26 @@ class DisplayPlayer:
                     self.load_current_sequence()
                     
                     # Update active media in index
-                    mi.set_active(prev_slug)
+                    media_index.set_active(prev_slug)
                     
                     media_name = self.loop_media[i].get('original_filename', 'Unknown')
                     self.logger.info(f"Switched to previous media: {media_name}")
                     break
     
     def set_active_media(self, slug: str) -> bool:
-        """Set active media by slug."""
+        """Set the active media to the specified slug."""
         with self.lock:
             for i, media in enumerate(self.loop_media):
                 if media.get('slug') == slug:
                     self.current_media_index = i
-                    success = self.load_current_sequence()
-                    if success:
-                        self.logger.info(f"Set active media: {media.get('original_filename', slug)}")
-                    return success
+                    self.load_current_sequence()
+                    media_index.set_active(slug)
+                    
+                    media_name = media.get('original_filename', 'Unknown')
+                    self.logger.info(f"Set active media: {media_name}")
+                    return True
             
-            self.logger.error(f"Media not found: {slug}")
+            self.logger.warning(f"Media with slug '{slug}' not found in loop")
             return False
     
     def toggle_pause(self) -> None:
@@ -231,192 +233,185 @@ class DisplayPlayer:
         return self.paused
     
     def show_message(self, message: str, duration: float = 2.0, color: int = 0xFFFF) -> None:
-        """Display a text message on screen."""
+        """Display a message on screen temporarily."""
         try:
-            # Create a simple text display using PIL
-            img = Image.new('RGB', (self.display_config.width, self.display_config.height), 'black')
-            draw = ImageDraw.Draw(img)
+            # Create image with message
+            image = Image.new('RGB', (self.display_config.width, self.display_config.height), (0, 0, 0))
+            draw = ImageDraw.Draw(image)
             
-            # Try to use a simple font - fallback to default if not available
+            # Try to load a font, fall back to default if not available
             try:
-                # Use a reasonable font size for the display
-                font_size = min(self.display_config.width, self.display_config.height) // 10
-                font = ImageFont.load_default()  # Use default font
-            except:
-                font = None
+                font_size = 24
+                font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", font_size)
+            except (OSError, IOError):
+                try:
+                    # Try default PIL font
+                    font = ImageFont.load_default()
+                except:
+                    # If all else fails, use basic drawing without font
+                    font = None
             
-            # Calculate text position (center) with proper font handling
-            try:
+            if font:
+                # Get text dimensions
                 bbox = draw.textbbox((0, 0), message, font=font)
-            except Exception:
-                # Fallback for older PIL versions or font issues
-                bbox = (0, 0, len(message) * 8, 16)  # Approximate dimensions
-            text_width = bbox[2] - bbox[0]
-            text_height = bbox[3] - bbox[1]
-            
-            x = (self.display_config.width - text_width) // 2
-            y = (self.display_config.height - text_height) // 2
-            
-            # Draw text
-            draw.text((x, y), message, fill='white', font=font)
-            
-            # Encode to PNG so FrameDecoder can reopen it, then decode to RGB565
-            decoder = FrameDecoder(self.display_config.width, self.display_config.height)
-            img = img.convert('RGB')  # Ensure RGB mode
-            buffer = io.BytesIO()
-            img.save(buffer, format="PNG")
-            frame_data = decoder.decode_image_bytes(buffer.getvalue())
-            buffer.close()
-            
-            if frame_data:
-                self.display_driver.display_frame(frame_data)
+                text_width = bbox[2] - bbox[0]
+                text_height = bbox[3] - bbox[1]
                 
-                # Keep message on screen for duration
-                if duration > 0:
-                    time.sleep(duration)
+                # Center the text
+                x = (self.display_config.width - text_width) // 2
+                y = (self.display_config.height - text_height) // 2
+                
+                # Draw text
+                draw.text((x, y), message, fill=color, font=font)
+            else:
+                # Fallback: draw simple text
+                # This is very basic - just put text roughly in center
+                x = self.display_config.width // 4
+                y = self.display_config.height // 2
+                draw.text((x, y), message, fill=color)
+            
+            # Convert to display format and show
+            frame_data = self.frame_buffer.convert_image_to_frame(image)
+            self.display_driver.display_frame(frame_data)
+            
+            # Sleep for specified duration if > 0
+            if duration > 0:
+                time.sleep(duration)
             
         except Exception as e:
             self.logger.error(f"Failed to show message: {e}")
     
     def show_no_media_message(self) -> None:
-        """Show 'no media' message."""
-        self.show_message("No Media\nUpload GIFs via\nWeb Interface", duration=0)
+        """Show a message when no media is available."""
+        self.show_message("No media loaded", duration=0, color=0x07E0)  # Green text
     
     def run(self) -> None:
         """Main playback loop."""
-        self.running = True
-        self.logger.info("Starting display playback loop")
+        self.logger.info("Starting playback loop")
         
-        # Initial setup
-        if not self.display_driver.initialized:
-            self.display_driver.init()
-        
-        last_frame_time = time.time()
-        loop_count = 0
-        min_frame_time = 1.0 / self.frame_rate if self.frame_rate > 0 else 0.0
-        
-        # Performance: cache frequently accessed values
-        media_loop_count = self.loop_count if self.loop_count > 0 else 1
-        
-        try:
-            while self.running:
+        while self.running:
+            try:
                 # Check if we have media to play
                 if not self.loop_media:
-                    self.show_no_media_message()
-                    time.sleep(2)  # Check even less frequently when no media to reduce CPU usage
-                    self.load_media_index()  # Refresh to check for new media
-                    continue
+                    self.load_media_index()
+                    if not self.loop_media:
+                        self.show_no_media_message()
+                        time.sleep(1)
+                        continue
                 
-                # Handle pause state
-                if self.paused:
-                    time.sleep(0.1)  # Reduced sleep time in pause
-                    continue
-                
-                # Get current frame if sequence loaded
-                if self.current_sequence:
-                    try:
-                        frame = self.current_sequence.get_frame()
-                        if frame:
-                            # Display frame immediately (the expensive operation)
-                            self.display_driver.display_frame(frame)
-                            
-                            # Optimized timing calculation after display
-                            displayed_frame_idx = (self.current_sequence.current_frame - 1) % self.current_sequence.frame_count
-                            frame_duration = self.current_sequence.get_frame_duration(displayed_frame_idx)
-                            frame_duration = max(frame_duration, min_frame_time)
-                            
-                            # Fast timing with minimal overhead
-                            current_time = time.time()
-                            elapsed = current_time - last_frame_time
-                            
-                            # Only sleep if we're ahead of schedule
-                            if elapsed < frame_duration:
-                                sleep_time = frame_duration - elapsed
-                                if sleep_time > 0.001:  # Only sleep if >1ms to avoid tiny sleeps
-                                    time.sleep(sleep_time)
-                                last_frame_time = last_frame_time + frame_duration
-                            else:
-                                last_frame_time = current_time
-                            
-                            # Check if we've completed a loop
-                            if self.current_sequence.is_complete():
-                                loop_count += 1
-                                
-                                # Move to next media once we've completed the desired loops
-                                if loop_count >= media_loop_count:
-                                    self.logger.info(f"Completed {loop_count} loops, moving to next media")
-                                    self.next_media()  # This now updates active media
-                                    loop_count = 0
-                                    last_frame_time = time.time()  # Reset timing for new media
-                        else:
-                            # Failed to get frame, skip to the next media
-                            self.logger.warning(f"Failed to get frame, skipping to next media")
-                            self.next_media()
-                            last_frame_time = time.time()
-                    except Exception as e:
-                        self.logger.error(f"Error during frame processing: {e}")
-                        # Try to recover by moving to next media
-                        self.next_media()
-                        last_frame_time = time.time()
-                else:
-                    # No sequence loaded, try to load current media
+                # Load current sequence if needed
+                if not self.current_sequence:
                     if not self.load_current_sequence():
-                        self.logger.warning("Failed to load current sequence")
-                        time.sleep(0.1)  # Brief pause before retry
-                        # If we can't load the sequence, try moving to next media
-                        self.next_media()
+                        # Failed to load, try next media or wait
+                        if len(self.loop_media) > 1:
+                            self.next_media()
+                        else:
+                            time.sleep(1)
+                        continue
+                
+                # Playback loop
+                sequence_loops = 0
+                max_sequence_loops = self.loop_count if self.loop_count > 0 else 1
+                
+                while (self.running and 
+                       (self.loop_count == 0 or sequence_loops < max_sequence_loops)):
+                    
+                    frame_count = self.current_sequence.get_frame_count()
+                    
+                    for frame_idx in range(frame_count):
+                        if not self.running:
+                            break
                         
-        except Exception as e:
-            self.logger.error(f"Playback loop error: {str(e)}")
-            self.running = False
+                        # Handle pause
+                        while self.paused and self.running:
+                            time.sleep(0.1)
+                        
+                        if not self.running:
+                            break
+                        
+                        # Get frame data and duration
+                        frame_data = self.current_sequence.get_frame_data(frame_idx)
+                        frame_duration = self.current_sequence.get_frame_duration(frame_idx)
+                        
+                        if frame_data is None:
+                            self.logger.error(f"Failed to get frame {frame_idx}")
+                            break
+                        
+                        # Display frame
+                        start_time = time.time()
+                        self.display_driver.display_frame(frame_data)
+                        
+                        # Calculate sleep time to maintain frame rate
+                        display_time = time.time() - start_time
+                        target_duration = frame_duration if frame_duration > 0 else (1.0 / self.frame_rate)
+                        sleep_time = max(0, target_duration - display_time)
+                        
+                        if sleep_time > 0:
+                            time.sleep(sleep_time)
+                    
+                    sequence_loops += 1
+                    
+                    # If we're set to loop infinitely (loop_count == 0), continue
+                    # If we're set to loop a specific number of times, check if we're done
+                    if self.loop_count > 0 and sequence_loops >= max_sequence_loops:
+                        break
+                
+                # Move to next media in the loop if we have multiple items
+                if len(self.loop_media) > 1:
+                    self.next_media()
+                else:
+                    # Single media item - restart if loop_count is 0 (infinite)
+                    if self.loop_count == 0:
+                        continue
+                    else:
+                        # Finite loops - pause at end
+                        self.logger.info("Finished playing all loops, pausing")
+                        time.sleep(1)
+                
+            except Exception as e:
+                self.logger.error(f"Error in playback loop: {e}")
+                time.sleep(1)
         
-        self.logger.info("Playback loop stopped")
+        self.logger.info("Playback loop ended")
     
     def start(self) -> None:
-        """Start the playback thread."""
-        if self.playback_thread and self.playback_thread.is_alive():
-            self.logger.warning("Playback thread already running")
-            return
-        
-        self.playback_thread = threading.Thread(target=self.run, name="DisplayPlayer", daemon=True)
-        self.playback_thread.start()
-        self.logger.info("Playback thread started")
+        """Start the display player."""
+        if not self.running:
+            self.running = True
+            self.playback_thread = threading.Thread(target=self.run, daemon=True)
+            self.playback_thread.start()
+            self.logger.info("Display player started")
     
     def stop(self) -> None:
-        """Stop the playback loop."""
-        self.running = False
-        
-        if self.playback_thread:
-            self.playback_thread.join(timeout=2.0)
-            if self.playback_thread.is_alive():
-                self.logger.warning("Playback thread did not stop gracefully")
-        
-        self.logger.info("Display player stopped")
+        """Stop the display player."""
+        if self.running:
+            self.running = False
+            if self.playback_thread:
+                self.playback_thread.join(timeout=5)
+                if self.playback_thread.is_alive():
+                    self.logger.warning("Playback thread did not stop gracefully")
+            self.logger.info("Display player stopped")
     
     def get_status(self) -> Dict:
         """Get current playback status."""
         current_media = None
         if 0 <= self.current_media_index < len(self.loop_media):
-            current_media = self.loop_media[self.current_media_index]
+            current_media = self.loop_media[self.current_media_index].get('slug')
         
         return {
-            'running': self.running,
-            'paused': self.paused,
-            'media_count': len(self.loop_media),
-            'current_media_index': self.current_media_index,
-            'current_media': current_media,
-            'frame_count': self.current_sequence.get_frame_count() if self.current_sequence else 0,
-            'current_frame': self.current_sequence.current_frame if self.current_sequence else 0
+            "is_playing": self.running and not self.paused,
+            "current_media": current_media,
+            "loop_index": self.current_media_index,
+            "total_media": len(self.loop_media),
+            "frame_rate": self.frame_rate
         }
     
     def refresh_media_list(self) -> None:
-        """Refresh the media list from disk."""
+        """Refresh the media list from index."""
+        self.logger.info("Refreshing media list")
         self.load_media_index()
         
         # If current media is no longer available, reset
-        if (self.current_media_index >= len(self.loop_media) or 
-            not self.loop_media):
+        if self.current_media_index >= len(self.loop_media):
             self.current_media_index = 0
             self.current_sequence = None
-        
-        self.logger.info(f"Refreshed media list: {len(self.loop_media)} items")
