@@ -267,29 +267,49 @@ def create_app(display_player: DisplayPlayer = None,
         """Delete a media item."""
         
         try:
+            # Update media index first (this handles loop cleanup too)
+            mindex.remove_media(slug)
+            
             # Remove from filesystem
             media_dir = media_processed_dir / slug
             raw_files = list(media_raw_dir.glob(f"*{slug}*"))
             
             if media_dir.exists():
                 shutil.rmtree(media_dir)
+                logger.info(f"Removed processed directory: {media_dir}")
             
             for raw_file in raw_files:
                 raw_file.unlink()
-            
-            # Update media index
-            mindex.remove_media(slug)
+                logger.info(f"Removed raw file: {raw_file}")
             
             # Refresh player media list
             if display_player:
                 display_player.refresh_media_list()
             
-            logger.info(f"Deleted media: {slug}")
+            logger.info(f"Successfully deleted media: {slug}")
             
             return {"success": True, "message": f"Deleted media: {slug}"}
             
         except Exception as e:
             logger.error(f"Failed to delete media {slug}: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post("/api/media/cleanup")
+    async def cleanup_orphaned_media():
+        """Clean up orphaned media files and index inconsistencies."""
+        try:
+            cleanup_count = mindex.cleanup_orphaned_files(media_raw_dir, media_processed_dir)
+            
+            # Refresh player after cleanup
+            if display_player:
+                display_player.refresh_media_list()
+            
+            return {
+                "success": True, 
+                "message": f"Cleaned up {cleanup_count} orphaned files"
+            }
+        except Exception as e:
+            logger.error(f"Failed to cleanup media: {e}")
             raise HTTPException(status_code=500, detail=str(e))
     
     @app.post("/api/player/pause")
@@ -406,28 +426,6 @@ def create_app(display_player: DisplayPlayer = None,
     # Loop queue management
     # ------------------------------------------------------------------
 
-    MEDIA_INDEX_PATH = Path("media/index.json")
-
-    def _read_media_index() -> Dict:
-        """Read the media index JSON, returning default structure if missing."""
-        if MEDIA_INDEX_PATH.exists():
-            try:
-                with open(MEDIA_INDEX_PATH, "r") as f:
-                    return json.load(f)
-            except Exception as exc:
-                logger.error(f"Failed to read media index: {exc}")
-        # Default structure
-        return {"media": [], "active": None, "loop": [], "last_updated": None}
-
-    def _write_media_index(data: Dict) -> None:
-        """Persist the media index atomically."""
-        try:
-            MEDIA_INDEX_PATH.parent.mkdir(parents=True, exist_ok=True)
-            with open(MEDIA_INDEX_PATH, "w") as f:
-                json.dump(data, f, indent=2)
-        except Exception as exc:
-            logger.error(f"Failed to write media index: {exc}")
-
     @app.get("/api/loop")
     async def get_loop_queue():
         """Return the current loop queue as a list of slugs."""
@@ -501,18 +499,16 @@ def create_app(display_player: DisplayPlayer = None,
     @app.get("/api/dashboard")
     async def get_dashboard():
         """Return status, media library and loop queue in one request."""
-        # Re-use existing helper handlers to avoid duplicating logic.
+        # Use the new optimized dashboard data function
+        dashboard_data = mindex.get_dashboard_data()
         status_data = await get_status()
-        media_data = await get_media()
-        loop_data = await get_loop_queue()
 
-        # Ensure active media info is included at the top level
         return {
             "status": status_data,
-            "media": media_data["media"],  # Just the media list
-            "active": media_data["active"],  # Active media at top level
-            "loop": loop_data["loop"],  # Just the loop list
-            "last_updated": media_data["last_updated"]
+            "media": dashboard_data["media"],
+            "active": dashboard_data["active"],
+            "loop": dashboard_data["loop"],
+            "last_updated": dashboard_data["last_updated"]
         }
 
     logger.info("FastAPI application created successfully")
