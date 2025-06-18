@@ -377,12 +377,15 @@ class DisplayPlayer:
     
     def start_processing_display(self, job_ids: List[str]) -> None:
         """Start displaying processing progress for given job IDs."""
+        self.logger.info(f"start_processing_display called with job_ids: {job_ids}")
+        
         # Check if progress display is enabled in config
         if not self.display_config.show_progress:
-            self.logger.info("Processing progress display disabled in config")
+            self.logger.warning("Processing progress display disabled in config")
             return
         
         if self.showing_progress:
+            self.logger.info("Progress display already showing, stopping previous")
             self.stop_processing_display()
         
         self.showing_progress = True
@@ -394,7 +397,7 @@ class DisplayPlayer:
             daemon=True
         )
         self.progress_thread.start()
-        self.logger.info(f"Started processing display for {len(job_ids)} jobs")
+        self.logger.info(f"✅ Started processing display thread for {len(job_ids)} jobs")
     
     def stop_processing_display(self) -> None:
         """Stop displaying processing progress."""
@@ -412,6 +415,12 @@ class DisplayPlayer:
     def _processing_display_loop(self, job_ids: List[str]) -> None:
         """Loop that displays processing progress."""
         try:
+            self.logger.info(f"🎨 Processing display loop started for jobs: {job_ids}")
+            
+            # Immediately show initial progress to take over display
+            self.show_progress_bar("Processing Media", "Starting conversion...", 0)
+            self.logger.info("📊 Showed initial progress bar")
+            
             while not self.progress_stop_event.is_set():
                 # Get processing jobs
                 processing_jobs = media_index.list_processing_jobs()
@@ -423,7 +432,7 @@ class DisplayPlayer:
                 }
                 
                 if not relevant_jobs:
-                    # No jobs found, maybe they're completed
+                    self.logger.info("No relevant jobs found, stopping display loop")
                     break
                 
                 # Calculate overall progress

@@ -235,28 +235,30 @@ def create_app(
                 logger.warning(f"Failed to pause playback: {exc}")
         
         try:
+            # Pre-create job IDs and start display progress BEFORE processing
             for file in files:
+                job_id = str(uuid.uuid4())
+                job_ids.append(job_id)
+                media_index.add_processing_job(job_id, file.filename)
+            
+            # Start display progress tracking FIRST, before any processing
+            if job_ids and display_player:
                 try:
-                    # Generate job ID for this file
-                    job_id = str(uuid.uuid4())
-                    job_ids.append(job_id)
-                    
-                    # Add processing job to index
-                    media_index.add_processing_job(job_id, file.filename)
-                    
+                    display_player.start_processing_display(job_ids)
+                    logger.info(f"Started progress display for {len(job_ids)} jobs")
+                except Exception as exc:
+                    logger.warning(f"Failed to start processing display: {exc}")
+            
+            # Now process files with their pre-assigned job IDs
+            for i, file in enumerate(files):
+                try:
+                    job_id = job_ids[i]  # Use pre-assigned job ID
                     metadata = await process_media_file(file, converter, config, job_id)
                     processed_files.append(metadata)
                 except Exception as e:
                     logger.error(f"Upload failed for {file.filename}: {e}")
                     error_detail = e.detail if isinstance(e, HTTPException) else str(e)
                     errors.append({"filename": file.filename, "error": error_detail})
-            
-            # Start display progress tracking if we have jobs and display player
-            if job_ids and display_player:
-                try:
-                    display_player.start_processing_display(job_ids)
-                except Exception as exc:
-                    logger.warning(f"Failed to start processing display: {exc}")
             
         finally:
             # Always refresh player and resume if needed
