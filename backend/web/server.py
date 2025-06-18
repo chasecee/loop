@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, status
+from fastapi import FastAPI, UploadFile, File, HTTPException, status # type: ignore
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -249,45 +249,78 @@ def create_app(
                 except Exception as exc:
                     logger.warning(f"Failed to start processing display: {exc}")
             
-            # Now process files with their pre-assigned job IDs
-            for i, file in enumerate(files):
-                try:
-                    job_id = job_ids[i]  # Use pre-assigned job ID
-                    metadata = await process_media_file(file, converter, config, job_id)
-                    processed_files.append(metadata)
-                except Exception as e:
-                    logger.error(f"Upload failed for {file.filename}: {e}")
-                    error_detail = e.detail if isinstance(e, HTTPException) else str(e)
-                    errors.append({"filename": file.filename, "error": error_detail})
+            # Start processing in background threads and return immediately
+            import threading
             
-        finally:
-            # Always refresh player and resume if needed
-            if display_player:
+            def background_process_files():
+                """Process files in background thread."""
+                last_successful_slug = None
+                
+                for i, file in enumerate(files):
+                    try:
+                        job_id = job_ids[i]
+                        # Read file content synchronously
+                        import asyncio
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                        content = loop.run_until_complete(file.read())
+                        
+                        # Process using the sync implementation
+                        metadata = _process_media_file_impl(
+                            file.filename, content, file.content_type, 
+                            converter, config, job_id
+                        )
+                        last_successful_slug = metadata.get('slug')
+                        logger.info(f"Successfully processed {file.filename}")
+                        
+                    except Exception as e:
+                        logger.error(f"Background processing failed for {file.filename}: {e}")
+                        if job_id:
+                            media_index.complete_processing_job(job_id, False, str(e))
+                
+                # After all processing, refresh player and resume playback
+                if display_player:
+                    try:
+                        display_player.refresh_media_list()
+                        
+                        # Activate the last successfully processed file
+                        if last_successful_slug:
+                            display_player.set_active_media(last_successful_slug)
+                            logger.info(f"Activated newly uploaded media: {last_successful_slug}")
+                        
+                        # Resume playback if it was running
+                        if playback_was_running:
+                            display_player.toggle_pause()
+                            logger.info("Resumed playback after processing")
+                        
+                    except Exception as exc:
+                        logger.error(f"Failed to refresh/activate player: {exc}")
+            
+            # Start background processing
+            thread = threading.Thread(target=background_process_files, daemon=True)
+            thread.start()
+            
+            # Return immediately with job IDs - processing continues in background
+            return APIResponse(
+                success=True,
+                message=f"Started processing {len(files)} files",
+                data={"job_ids": job_ids, "processing_started": True}
+            )
+            
+        except Exception as e:
+            # If there's an error in setup, clean up jobs and re-raise
+            for job_id in job_ids:
+                if job_id:
+                    media_index.complete_processing_job(job_id, False, f"Upload setup failed: {e}")
+            
+            # Resume playback if we paused it
+            if playback_was_running and display_player:
                 try:
-                    display_player.refresh_media_list()
-                    
-                    # If we successfully processed files, activate the last one uploaded
-                    if processed_files:
-                        last_uploaded_slug = processed_files[-1].get('slug')
-                        if last_uploaded_slug:
-                            display_player.set_active_media(last_uploaded_slug)
-                            logger.info(f"Activated newly uploaded media: {last_uploaded_slug}")
-                    
-                    # Resume playback
-                    if playback_was_running:
-                        display_player.toggle_pause()  # Resume
-                except Exception as exc:
-                    logger.error(f"Failed to refresh/activate player: {exc}")
-        
-        if not processed_files and errors:
-            raise HTTPException(status_code=500, detail={"errors": errors})
-        
-        return APIResponse(
-            success=True,
-            message=f"Processed {len(processed_files)} files",
-            data={"processed_files": processed_files, "job_ids": job_ids},
-            errors=errors if errors else None
-        )
+                    display_player.toggle_pause()
+                except:
+                    pass
+            
+            raise HTTPException(status_code=500, detail=str(e))
     
     @app.post("/api/media/{slug}/activate", response_model=APIResponse)
     async def activate_media(slug: str):
@@ -618,6 +651,95 @@ def create_app(
     
     logger.info("FastAPI application created successfully")
     return app
+
+# Removed - now using _process_media_file_impl directly
+
+def _process_media_file_impl(filename: str, content: bytes, content_type: str, converter: MediaConverter, config: Config, job_id: str = None) -> Dict[str, Any]:
+    """Core media file processing implementation."""
+    from datetime import datetime
+    import tempfile
+    import shutil
+    
+    # Validate file type and size
+    allowed_extensions = {".gif", ".mp4", ".avi", ".mov", ".png", ".jpg", ".jpeg"}
+    file_ext = Path(filename).suffix.lower()
+    if file_ext not in allowed_extensions:
+        if job_id:
+            media_index.complete_processing_job(job_id, False, f"Unsupported file type: {filename}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type: {filename}",
+        )
+
+    max_size = (config.media.max_file_size_mb if config else 10) * 1024 * 1024
+    
+    if len(content) > max_size:
+        if job_id:
+            media_index.complete_processing_job(job_id, False, f"File too large: {filename}")
+        raise HTTPException(
+            status_code=413, detail=f"File too large: {filename}"
+        )
+    
+    # Save to temporary file
+    media_raw_dir = Path("media/raw")
+    try:
+        if job_id:
+            media_index.update_processing_job(job_id, 5, "uploading", "Saving uploaded file...")
+        
+        with tempfile.NamedTemporaryFile(
+            delete=False, suffix=filename, dir=media_raw_dir
+        ) as tmp:
+            tmp.write(content)
+            tmp_path = Path(tmp.name)
+
+        # Generate slug and output directory
+        slug = converter._generate_slug(tmp_path.name)
+        output_dir = Path("media/processed") / slug
+
+        if job_id:
+            media_index.update_processing_job(job_id, 10, "converting", "Starting media conversion...")
+        
+        # Convert media with progress tracking
+        metadata = converter.convert_media_file(tmp_path, output_dir, job_id=job_id)
+        if not metadata:
+            if job_id:
+                media_index.complete_processing_job(job_id, False, f"Failed to process {filename}")
+            raise HTTPException(
+                status_code=500, detail=f"Failed to process {filename}"
+            )
+        
+        # Augment metadata for frontend
+        file_size = len(content)
+        uploaded_at_iso = datetime.utcnow().isoformat() + "Z"
+
+        metadata.update({
+            "filename": filename,
+            "type": content_type or metadata.get("type", "unknown"),
+            "size": file_size,
+            "uploadedAt": uploaded_at_iso,
+            "url": f"/media/raw/{slug}{Path(filename).suffix}",
+        })
+
+        # Add to media index
+        media_index.add_media(metadata, make_active=True)
+
+        # Save original for preview
+        dest_raw_path = media_raw_dir / f"{slug}{Path(filename).suffix}"
+        shutil.copy(tmp_path, dest_raw_path)
+
+        if job_id:
+            media_index.complete_processing_job(job_id, True)
+
+        return metadata
+
+    except Exception as e:
+        if job_id:
+            media_index.complete_processing_job(job_id, False, str(e))
+        raise
+    finally:
+        # Clean up temp file
+        if "tmp_path" in locals() and tmp_path.exists():
+            tmp_path.unlink()
 
 async def process_media_file(file: UploadFile, converter: MediaConverter, config: Config, job_id: str = None) -> Dict[str, Any]:
     """Process a single uploaded media file."""
