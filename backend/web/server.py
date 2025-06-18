@@ -312,12 +312,13 @@ def create_app(
                 except Exception as exc:
                     logger.warning(f"Failed to resume playback: {exc}")
             
-            # Return results
+            # Return results in format expected by frontend
             if processed_files:
                 return APIResponse(
                     success=True,
                     message=f"Successfully processed {len(processed_files)} of {len(files)} files",
                     data={
+                        "job_ids": job_ids,
                         "processed": processed_files,
                         "errors": errors if errors else None
                     }

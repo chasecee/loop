@@ -529,46 +529,65 @@ class DisplayPlayer:
                 # For loop mode behavior, we only play the media once, then decide what to do next
                 frame_count = self.current_sequence.get_frame_count()
                 
-                # Play all frames in the sequence
-                for frame_idx in range(frame_count):
-                    if not self.running:
-                        break
-                    
-                    # Don't interfere with processing display
-                    if self.showing_progress:
-                        break
-                    
-                    # Handle pause
-                    while self.paused and self.running and not self.showing_progress:
-                        time.sleep(0.1)
-                    
-                    if not self.running or self.showing_progress:
-                        break
-                    
-                    # Get frame data and duration
-                    frame_data = self.current_sequence.get_frame_data(frame_idx)
-                    frame_duration = self.current_sequence.get_frame_duration(frame_idx)
-                    
-                    if frame_data is None:
-                        self.logger.error(f"Failed to get frame {frame_idx}")
-                        break
-                    
-                    # Display frame
-                    start_time = time.time()
-                    self.display_driver.display_frame(frame_data)
-                    
-                    # Calculate sleep time to maintain frame rate
-                    display_time = time.time() - start_time
-                    target_duration = frame_duration if frame_duration > 0 else (1.0 / self.frame_rate)
-                    sleep_time = max(0, target_duration - display_time)
-                    
-                    if sleep_time > 0:
-                        time.sleep(sleep_time)
+                # For static images, display for a minimum time
+                is_static_image = frame_count == 1 and self.current_sequence.get_frame_duration(0) == 0.0
                 
-                # Handle loop mode behavior
+                if is_static_image:
+                    # Display static image for 3 seconds before moving to next
+                    frame_data = self.current_sequence.get_frame_data(0)
+                    if frame_data:
+                        self.display_driver.display_frame(frame_data)
+                        
+                        # Wait 3 seconds for static images (or until interrupted)
+                        for _ in range(30):  # 30 * 0.1s = 3 seconds
+                            if not self.running or self.showing_progress:
+                                break
+                            while self.paused and self.running and not self.showing_progress:
+                                time.sleep(0.1)
+                            if not self.running or self.showing_progress:
+                                break
+                            time.sleep(0.1)
+                else:
+                    # Play all frames in animated sequence
+                    for frame_idx in range(frame_count):
+                        if not self.running:
+                            break
+                        
+                        # Don't interfere with processing display
+                        if self.showing_progress:
+                            break
+                        
+                        # Handle pause
+                        while self.paused and self.running and not self.showing_progress:
+                            time.sleep(0.1)
+                        
+                        if not self.running or self.showing_progress:
+                            break
+                        
+                        # Get frame data and duration
+                        frame_data = self.current_sequence.get_frame_data(frame_idx)
+                        frame_duration = self.current_sequence.get_frame_duration(frame_idx)
+                        
+                        if frame_data is None:
+                            self.logger.error(f"Failed to get frame {frame_idx}")
+                            break
+                        
+                        # Display frame
+                        start_time = time.time()
+                        self.display_driver.display_frame(frame_data)
+                        
+                        # Calculate sleep time to maintain frame rate
+                        display_time = time.time() - start_time
+                        target_duration = frame_duration if frame_duration > 0 else (1.0 / self.frame_rate)
+                        sleep_time = max(0, target_duration - display_time)
+                        
+                        if sleep_time > 0:
+                            time.sleep(sleep_time)
+                
+                # Handle loop mode behavior after playing sequence
                 current_loop_slugs = media_index.list_loop()  # Re-check in case it changed
                 if self.loop_mode == "one":
-                    # Loop one mode - keep playing same media (just continue to reload same sequence)
+                    # Loop one mode - keep playing same media
                     continue
                 elif len(current_loop_slugs) > 1:
                     # Loop all mode with multiple items - move to next
