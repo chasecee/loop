@@ -156,11 +156,11 @@ class MediaIndexManager:
                 index.active = index.loop[0] if index.loop else None
                 self._write_raw(index)
 
-            # Clean up old processing jobs (older than 1 hour)
+            # Clean up old processing jobs (older than 30 minutes for cleaner experience)
             current_time = time.time()
             old_jobs = [
                 job_id for job_id, job_data in index.processing.items()
-                if current_time - job_data.get("timestamp", 0) > 3600
+                if current_time - job_data.get("timestamp", 0) > 1800  # 30 minutes
             ]
             for job_id in old_jobs:
                 del index.processing[job_id]

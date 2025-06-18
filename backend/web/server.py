@@ -225,12 +225,11 @@ def create_app(
         errors = []
         job_ids = []
         
-        # Pause playback during processing
-        playback_was_running = False
+        # Pause playback during processing (will restart fresh when done)
         if display_player and not display_player.is_paused():
-            playback_was_running = True
             try:
                 display_player.toggle_pause()
+                logger.info("Paused playback for upload processing")
             except Exception as exc:
                 logger.warning(f"Failed to pause playback: {exc}")
         
@@ -252,46 +251,57 @@ def create_app(
             # Start processing in background threads and return immediately
             import threading
             
+            # Read all file contents BEFORE starting background thread
+            file_data = []
+            for i, file in enumerate(files):
+                try:
+                    content = await file.read()
+                    file_data.append({
+                        'filename': file.filename,
+                        'content': content,
+                        'content_type': file.content_type,
+                        'job_id': job_ids[i]
+                    })
+                except Exception as e:
+                    logger.error(f"Failed to read file {file.filename}: {e}")
+                    media_index.complete_processing_job(job_ids[i], False, f"Failed to read file: {e}")
+
             def background_process_files():
                 """Process files in background thread."""
                 last_successful_slug = None
                 
-                for i, file in enumerate(files):
+                for file_info in file_data:
                     try:
-                        job_id = job_ids[i]
-                        # Read file content synchronously
-                        import asyncio
-                        loop = asyncio.new_event_loop()
-                        asyncio.set_event_loop(loop)
-                        content = loop.run_until_complete(file.read())
-                        
-                        # Process using the sync implementation
+                        # Process using the sync implementation with pre-read content
                         metadata = _process_media_file_impl(
-                            file.filename, content, file.content_type, 
-                            converter, config, job_id
+                            file_info['filename'], 
+                            file_info['content'], 
+                            file_info['content_type'], 
+                            converter, config, 
+                            file_info['job_id']
                         )
                         last_successful_slug = metadata.get('slug')
-                        logger.info(f"Successfully processed {file.filename}")
+                        logger.info(f"Successfully processed {file_info['filename']}")
                         
                     except Exception as e:
-                        logger.error(f"Background processing failed for {file.filename}: {e}")
-                        if job_id:
-                            media_index.complete_processing_job(job_id, False, str(e))
+                        logger.error(f"Background processing failed for {file_info['filename']}: {e}")
+                        if file_info['job_id']:
+                            media_index.complete_processing_job(file_info['job_id'], False, str(e))
                 
-                # After all processing, refresh player and resume playback
+                # After all processing, refresh and start fresh
                 if display_player:
                     try:
                         display_player.refresh_media_list()
                         
-                        # Activate the last successfully processed file
+                        # Activate the last successfully processed file and start fresh
                         if last_successful_slug:
                             display_player.set_active_media(last_successful_slug)
                             logger.info(f"Activated newly uploaded media: {last_successful_slug}")
                         
-                        # Resume playback if it was running
-                        if playback_was_running:
+                        # Start playback fresh (simple and clean)
+                        if display_player.is_paused():
                             display_player.toggle_pause()
-                            logger.info("Resumed playback after processing")
+                            logger.info("Started fresh playback after processing")
                         
                     except Exception as exc:
                         logger.error(f"Failed to refresh/activate player: {exc}")
@@ -313,10 +323,11 @@ def create_app(
                 if job_id:
                     media_index.complete_processing_job(job_id, False, f"Upload setup failed: {e}")
             
-            # Resume playback if we paused it
-            if playback_was_running and display_player:
+            # Resume playback if needed (error case)
+            if display_player and display_player.is_paused():
                 try:
                     display_player.toggle_pause()
+                    logger.info("Resumed playback after upload error")
                 except:
                     pass
             
