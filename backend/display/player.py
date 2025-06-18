@@ -289,8 +289,11 @@ class DisplayPlayer:
         except Exception as e:
             self.logger.error(f"Failed to show message: {e}")
     
-    def show_progress_bar(self, title: str, subtitle: str, progress: float, color: int = 0x07E0) -> None:
+    def show_progress_bar(self, title: str, subtitle: str, progress: float, color: Optional[int] = None) -> None:
         """Display a progress bar with title and subtitle."""
+        # Use configured color if none provided
+        if color is None:
+            color = self.display_config.progress_color
         try:
             # Create image
             image = Image.new('RGB', (self.display_config.width, self.display_config.height), (0, 0, 0))
@@ -374,6 +377,11 @@ class DisplayPlayer:
     
     def start_processing_display(self, job_ids: List[str]) -> None:
         """Start displaying processing progress for given job IDs."""
+        # Check if progress display is enabled in config
+        if not self.display_config.show_progress:
+            self.logger.info("Processing progress display disabled in config")
+            return
+        
         if self.showing_progress:
             self.stop_processing_display()
         

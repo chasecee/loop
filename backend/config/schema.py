@@ -20,6 +20,8 @@ class DisplayConfig:
     bl_pin: int = 18
     rotation: int = 0
     framerate: int = 30
+    show_progress: bool = True  # Enable processing progress display
+    progress_color: int = 0x07E0  # Green progress bar color (RGB565)
 
 
 @dataclass

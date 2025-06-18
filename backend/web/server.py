@@ -570,7 +570,8 @@ def create_app(
             media=dashboard_data["media"],
             active=dashboard_data["active"],
             loop=dashboard_data["loop"],
-            last_updated=dashboard_data["last_updated"]
+            last_updated=dashboard_data["last_updated"],
+            processing=dashboard_data["processing"]
         )
     
     # Processing Progress API

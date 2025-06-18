@@ -13,7 +13,9 @@
     "rst_pin": 27,
     "bl_pin": 18,
     "rotation": 270,
-    "framerate": 30
+    "framerate": 30,
+    "show_progress": true,
+    "progress_color": 1984
   },
   "wifi": {
     "ssid": "",
@@ -38,6 +40,11 @@
     "server_url": "",
     "interval_minutes": 60,
     "last_sync": null
+  },
+  "processing": {
+    "progress_update_interval_ms": 500,
+    "job_cleanup_hours": 1,
+    "max_concurrent_jobs": 3
   },
   "web": {
     "host": "0.0.0.0",
