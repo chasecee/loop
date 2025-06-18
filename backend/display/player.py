@@ -332,15 +332,15 @@ class DisplayPlayer:
                             time.sleep(1)
                         continue
                 
-                # Playback loop
+                # Play current media sequence
                 sequence_loops = 0
-                max_sequence_loops = self.loop_count if self.loop_count > 0 else 1
+                infinite_loop = (self.loop_count <= 0)  # -1 or 0 means infinite
                 
-                while (self.running and 
-                       (self.loop_count == 0 or sequence_loops < max_sequence_loops)):
-                    
+                # Keep playing until we hit the loop limit or it's infinite
+                while self.running:
                     frame_count = self.current_sequence.get_frame_count()
                     
+                    # Play all frames in the sequence
                     for frame_idx in range(frame_count):
                         if not self.running:
                             break
@@ -372,24 +372,31 @@ class DisplayPlayer:
                         if sleep_time > 0:
                             time.sleep(sleep_time)
                     
+                    # Completed one sequence loop
                     sequence_loops += 1
                     
-                    # If we're set to loop infinitely (loop_count == 0), continue
-                    # If we're set to loop a specific number of times, check if we're done
-                    if self.loop_count > 0 and sequence_loops >= max_sequence_loops:
+                    # Check if we should stop looping this sequence
+                    if not infinite_loop and sequence_loops >= self.loop_count:
+                        break
+                    
+                    # If not running anymore, break
+                    if not self.running:
                         break
                 
                 # Move to next media in the loop if we have multiple items
                 if len(self.loop_media) > 1:
                     self.next_media()
+                    # Reset current_sequence to None so it reloads the next media
+                    self.current_sequence = None
                 else:
-                    # Single media item - restart if loop_count is 0 (infinite)
-                    if self.loop_count == 0:
+                    # Single media item - if infinite loop, continue playing
+                    if infinite_loop:
+                        # Just continue the outer while loop to replay
                         continue
                     else:
-                        # Finite loops - pause at end
-                        self.logger.info("Finished playing all loops, pausing")
-                        time.sleep(1)
+                        # Finite loops - we're done, just wait
+                        self.logger.info("Finished playing all loops, waiting...")
+                        time.sleep(2)
                 
             except Exception as e:
                 self.logger.error(f"Error in playback loop: {e}")
