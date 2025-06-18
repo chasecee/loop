@@ -36,6 +36,7 @@ class DisplayPlayer:
         self.paused = False
         self.frame_rate = display_config.framerate
         self.loop_count = media_config.loop_count
+        self.loop_mode = "all"  # "all" or "one"
         
         # Threading
         self.playback_thread: Optional[threading.Thread] = None
@@ -200,6 +201,17 @@ class DisplayPlayer:
         """Check if playback is paused."""
         return self.paused
     
+    def toggle_loop_mode(self) -> str:
+        """Toggle between 'all' and 'one' loop modes."""
+        with self.lock:
+            self.loop_mode = "one" if self.loop_mode == "all" else "all"
+            self.logger.info(f"Loop mode changed to: {self.loop_mode}")
+            return self.loop_mode
+    
+    def get_loop_mode(self) -> str:
+        """Get current loop mode."""
+        return self.loop_mode
+    
     def show_message(self, message: str, duration: float = 2.0, color: int = 0xFFFF) -> None:
         """Display a message on screen temporarily."""
         try:
@@ -348,14 +360,23 @@ class DisplayPlayer:
                     if not infinite_loop and sequence_loops >= self.loop_count:
                         break
                 
-                # Move to next media in the loop if we have multiple items
+                # Handle loop mode behavior
                 current_loop_slugs = media_index.list_loop()  # Re-check in case it changed
-                if len(current_loop_slugs) > 1:
+                if self.loop_mode == "one":
+                    # Loop one mode - keep playing same media
+                    if infinite_loop:
+                        continue  # Just replay the same media
+                    else:
+                        # Finite loops - we're done, just wait
+                        self.logger.info("Finished playing all loops, waiting...")
+                        time.sleep(2)
+                elif len(current_loop_slugs) > 1:
+                    # Loop all mode with multiple items - move to next
                     self.next_media()
                     # Clear current sequence to force reload of next media
                     self.current_sequence = None
                 else:
-                    # Single media item - if infinite loop, continue playing
+                    # Single media item in loop all mode - if infinite loop, continue playing
                     if infinite_loop:
                         # Just continue the outer while loop to replay
                         continue
@@ -399,7 +420,8 @@ class DisplayPlayer:
             "current_media": current_media,
             "loop_index": current_index,
             "total_media": len(loop_slugs),
-            "frame_rate": self.frame_rate
+            "frame_rate": self.frame_rate,
+            "loop_mode": self.loop_mode
         }
     
     def refresh_media_list(self) -> None:

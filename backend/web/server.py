@@ -386,6 +386,19 @@ def create_app(
         display_player.previous_media()
         return APIResponse(success=True, message="Switched to previous media")
     
+    @app.post("/api/playback/loop-mode", response_model=APIResponse)
+    async def toggle_loop_mode():
+        """Toggle loop mode between 'all' and 'one'."""
+        if not display_player:
+            raise HTTPException(status_code=503, detail="Display player not available")
+        
+        new_mode = display_player.toggle_loop_mode()
+        return APIResponse(
+            success=True, 
+            message=f"Loop mode set to: {new_mode}",
+            data={"loop_mode": new_mode}
+        )
+    
     # WiFi Management API
     
     @app.get("/api/wifi/scan", response_model=APIResponse)
