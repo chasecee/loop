@@ -622,20 +622,20 @@ class DisplayPlayer:
                         if self.loop_count > 0 and self.current_media_loops >= self.loop_count:
                             self.current_media_loops = 0  # Reset for next round
                         should_continue_current_media = True
-                                         else:
-                         # Multiple media items - check if we should switch
-                         if not self.media_config.auto_advance_enabled:
-                             # Auto-advance disabled - stay on current media
-                             should_continue_current_media = True
-                         elif self.loop_count <= 0:
-                             # Infinite loops - play each media once then move to next
-                             should_continue_current_media = False
-                         elif self.current_media_loops >= self.loop_count:
-                             # Completed required loops - move to next
-                             should_continue_current_media = False
-                         else:
-                             # Still need more loops of current media
-                             should_continue_current_media = True
+                    else:
+                        # Multiple media items - check if we should switch
+                        if not self.media_config.auto_advance_enabled:
+                            # Auto-advance disabled - stay on current media
+                            should_continue_current_media = True
+                        elif self.loop_count <= 0:
+                            # Infinite loops - play each media once then move to next
+                            should_continue_current_media = False
+                        elif self.current_media_loops >= self.loop_count:
+                            # Completed required loops - move to next
+                            should_continue_current_media = False
+                        else:
+                            # Still need more loops of current media
+                            should_continue_current_media = True
                 
                 if not should_continue_current_media:
                     # Time to switch to next media
@@ -694,4 +694,4 @@ class DisplayPlayer:
         self.logger.info("Refreshing media list (clearing current sequence)")
         with self.lock:
             # Simply clear the current sequence to force reload on next cycle
-            self.current_sequence = None
+            self.current_sequence = None 
