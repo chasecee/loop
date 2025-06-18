@@ -336,6 +336,17 @@ class DisplayPlayer:
                             
                             # Display frame (the expensive operation)
                             self.display_driver.display_frame(frame)
+                            
+                            # Check if we've completed a loop
+                            if self.current_sequence.is_complete():
+                                loop_count += 1
+                                
+                                # Move to next media once we've completed the desired loops
+                                if loop_count >= media_loop_count:
+                                    self.logger.info(f"Completed {loop_count} loops, moving to next media")
+                                    self.next_media()  # This now updates active media
+                                    loop_count = 0
+                                    last_frame_time = time.time()  # Reset timing for new media
                         else:
                             # Failed to get frame, skip to the next media
                             self.logger.warning(f"Failed to get frame, skipping to next media")
@@ -344,22 +355,6 @@ class DisplayPlayer:
                     except Exception as e:
                         self.logger.error(f"Error during frame processing: {e}")
                         # Try to recover by moving to next media
-                        self.next_media()
-                        last_frame_time = time.time()
-                        
-                        # Check if we've completed a loop
-                        if self.current_sequence.is_complete():
-                            loop_count += 1
-                            
-                            # Move to next media once we've completed the desired loops
-                            if loop_count >= media_loop_count:
-                                self.logger.info(f"Completed {loop_count} loops, moving to next media")
-                                self.next_media()  # This now updates active media
-                                loop_count = 0
-                                last_frame_time = time.time()  # Reset timing for new media
-                    else:
-                        # Failed to get frame, skip to the next media
-                        self.logger.warning(f"Failed to get frame, skipping to next media")
                         self.next_media()
                         last_frame_time = time.time()
                 else:
