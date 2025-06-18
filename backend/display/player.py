@@ -38,6 +38,7 @@ class DisplayPlayer:
         # Playback control
         self.running = False
         self.paused = False
+        self.media_list_changed = False  # Flag to interrupt playback when media list changes
         self.frame_rate = display_config.framerate
         self.loop_count = media_config.loop_count
         
@@ -352,6 +353,14 @@ class DisplayPlayer:
                         if not self.running:
                             break
                         
+                        # Check if media list changed (new media added)
+                        with self.lock:
+                            if self.media_list_changed:
+                                self.media_list_changed = False
+                                self.logger.info("Media list changed - interrupting playback to cycle through items")
+                                # Break out of both loops to restart with new media list
+                                break
+                        
                         # Get frame data and duration
                         frame_data = self.current_sequence.get_frame_data(frame_idx)
                         frame_duration = self.current_sequence.get_frame_duration(frame_idx)
@@ -371,6 +380,13 @@ class DisplayPlayer:
                         
                         if sleep_time > 0:
                             time.sleep(sleep_time)
+                    
+                    # Check if we broke out due to media list change
+                    with self.lock:
+                        if self.media_list_changed:
+                            self.media_list_changed = False
+                            self.logger.info("Breaking out of sequence loop due to media list change")
+                            break
                     
                     # Completed one sequence loop
                     sequence_loops += 1
@@ -439,9 +455,20 @@ class DisplayPlayer:
     def refresh_media_list(self) -> None:
         """Refresh the media list from index."""
         self.logger.info("Refreshing media list")
+        
+        # Store old count to detect changes
+        old_loop_count = len(self.loop_media)
+        
         self.load_media_index()
         
         # If current media is no longer available, reset
         if self.current_media_index >= len(self.loop_media):
             self.current_media_index = 0
             self.current_sequence = None
+        
+        # Check if loop count changed (new media added/removed)
+        new_loop_count = len(self.loop_media)
+        if new_loop_count != old_loop_count:
+            self.logger.info(f"Media loop count changed: {old_loop_count} -> {new_loop_count}")
+            with self.lock:
+                self.media_list_changed = True
