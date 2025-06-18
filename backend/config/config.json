@@ -15,7 +15,11 @@
     "rotation": 270,
     "framerate": 30,
     "show_progress": true,
-    "progress_color": 1984
+    "progress_color": 1984,
+    "spi_speed_hz": 32000000,
+    "double_buffer": true,
+    "vsync_enabled": true,
+    "anti_tearing": true
   },
   "wifi": {
     "ssid": "",

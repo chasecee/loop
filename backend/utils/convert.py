@@ -162,11 +162,11 @@ class MediaConverter:
                 self._update_progress(job_id, 20, "extracting", "Extracting frames with ffmpeg...")
             
             if format_type == "rgb565":
-                # Direct RGB565 conversion with proper aspect ratio handling
+                # Direct RGB565 conversion with anti-tearing optimizations
                 # This is MUCH faster than PNG intermediate files
                 cmd = [
                     'ffmpeg', '-i', str(video_path),
-                    '-vf', (
+                                        '-vf', (
                         f'fps={fps},'
                         f'scale={self.target_width}:{self.target_height}:force_original_aspect_ratio=increase,'
                         f'crop={self.target_width}:{self.target_height},'

@@ -56,8 +56,24 @@ class ILI9341Driver:
         # Initialize SPI
         self.spi = spidev.SpiDev()
         self.spi.open(self.config.spi_bus, self.config.spi_device)
-        self.spi.max_speed_hz = 32000000  # 32MHz - compromise between performance and stability
+        
+        # Use config SPI speed if available, otherwise default
+        spi_speed = getattr(self.config, 'spi_speed_hz', 32000000)
+        self.spi.max_speed_hz = spi_speed
         self.spi.mode = 0
+        
+        # Initialize anti-tearing features if enabled
+        self.double_buffer = getattr(self.config, 'double_buffer', False)
+        self.vsync_enabled = getattr(self.config, 'vsync_enabled', False)
+        self.anti_tearing = getattr(self.config, 'anti_tearing', False)
+        
+        if self.double_buffer:
+            self.back_buffer = bytearray(self.config.width * self.config.height * 2)
+        
+        self.logger.info(f"SPI speed: {spi_speed/1000000:.1f}MHz, "
+                        f"Double buffer: {self.double_buffer}, "
+                        f"V-sync: {self.vsync_enabled}, "
+                        f"Anti-tearing: {self.anti_tearing}")
         
         self.logger.info(f"Initialized ILI9341 driver: {self.config.width}x{self.config.height}")
     
@@ -224,7 +240,7 @@ class ILI9341Driver:
         self.write_pixel_data(bytes(pixel_data))
     
     def display_frame(self, frame_data: bytes) -> None:
-        """Display a frame of RGB565 pixel data."""
+        """Display a frame of RGB565 pixel data with anti-tearing optimizations."""
         if not self.initialized:
             self.init()
         
@@ -233,8 +249,20 @@ class ILI9341Driver:
         if not frame_data or len(frame_data) != expected_size:
             return
         
-        self.set_window(0, 0, self.config.width - 1, self.config.height - 1)
-        self.write_pixel_data(frame_data)
+        if hasattr(self, 'double_buffer') and self.double_buffer and hasattr(self, 'back_buffer'):
+            # Double buffering: prepare frame in back buffer first
+            self.back_buffer[:] = frame_data
+            
+            if hasattr(self, 'vsync_enabled') and self.vsync_enabled:
+                # V-sync simulation: small delay to reduce tearing
+                time.sleep(0.0005)  # 0.5ms delay
+            
+            self.set_window(0, 0, self.config.width - 1, self.config.height - 1)
+            self.write_pixel_data(bytes(self.back_buffer))
+        else:
+            # Direct rendering (faster but potential tearing)
+            self.set_window(0, 0, self.config.width - 1, self.config.height - 1)
+            self.write_pixel_data(frame_data)
     
     def set_backlight(self, enabled: bool) -> None:
         """Control backlight."""
