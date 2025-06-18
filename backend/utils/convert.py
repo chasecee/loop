@@ -55,7 +55,7 @@ class MediaConverter:
                 
                 frame_count = 0
                 for frame in ImageSequence.Iterator(img):
-                    # Resize & crop frame to fill the display
+                    # Resize & crop frame to fill the display (proper aspect ratio handling)
                     frame = self._resize_and_crop(frame)
                     
                     # Save frame
@@ -100,7 +100,7 @@ class MediaConverter:
             return None
     
     def convert_video(self, video_path: Path, output_dir: Path, format_type: str = "rgb565", fps: float = 10.0) -> Optional[Dict]:
-        """Convert video to frame sequence using ffmpeg."""
+        """Convert video to frame sequence using ffmpeg with proper aspect ratio handling."""
         if not self.ffmpeg_available:
             self.logger.error("ffmpeg not available for video conversion")
             return None
@@ -112,16 +112,20 @@ class MediaConverter:
             frames_dir = output_dir / "frames"
             frames_dir.mkdir(exist_ok=True)
             
-            # Create temporary directory for intermediate frames
-            with tempfile.TemporaryDirectory() as temp_dir:
-                temp_path = Path(temp_dir)
-                
-                # Extract frames using ffmpeg
+            if format_type == "rgb565":
+                # Direct RGB565 conversion with proper aspect ratio handling
+                # This is MUCH faster than PNG intermediate files
                 cmd = [
                     'ffmpeg', '-i', str(video_path),
-                    '-vf', f'fps={fps},scale={self.target_width}:{self.target_height}:flags=lanczos',
+                    '-vf', (
+                        f'fps={fps},'
+                        f'scale={self.target_width}:{self.target_height}:force_original_aspect_ratio=increase,'
+                        f'crop={self.target_width}:{self.target_height},'
+                        f'format=rgb565be'
+                    ),
+                    '-f', 'rawvideo',
                     '-y',  # Overwrite output files
-                    str(temp_path / 'frame_%06d.png')
+                    str(frames_dir / 'frames.raw')
                 ]
                 
                 result = subprocess.run(cmd, capture_output=True, text=True)
@@ -129,58 +133,107 @@ class MediaConverter:
                     self.logger.error(f"ffmpeg failed: {result.stderr}")
                     return None
                 
-                # Convert extracted frames
-                frame_files = sorted(temp_path.glob('frame_*.png'))
-                if not frame_files:
-                    self.logger.error("No frames extracted from video")
+                # Split the raw video into individual frame files
+                raw_file = frames_dir / 'frames.raw'
+                if not raw_file.exists():
+                    self.logger.error("No raw video data generated")
                     return None
                 
+                frame_size = self.target_width * self.target_height * 2  # RGB565 = 2 bytes per pixel
                 frames = []
                 durations = []
-                frame_duration = 1.0 / fps  # Duration per frame
+                frame_duration = 1.0 / fps
+                frame_index = 0
                 
-                for i, frame_file in enumerate(frame_files):
-                    with Image.open(frame_file) as img:
-                        # Resize & crop frame to fill the display
-                        img = self._resize_and_crop(img)
+                with open(raw_file, 'rb') as f:
+                    while True:
+                        frame_data = f.read(frame_size)
+                        if len(frame_data) != frame_size:
+                            break
                         
-                        # Convert to RGB if needed
-                        if img.mode != 'RGB':
-                            img = img.convert('RGB')
+                        # Save individual frame
+                        frame_path = frames_dir / f"frame_{frame_index:06d}.rgb565"
+                        with open(frame_path, 'wb') as frame_file:
+                            frame_file.write(frame_data)
                         
-                        # Save frame
-                        frame_path = self._save_frame(img, frames_dir, i, format_type)
-                        if frame_path:
-                            frames.append(frame_path.name)
-                            durations.append(frame_duration)
+                        frames.append(frame_path.name)
+                        durations.append(frame_duration)
+                        frame_index += 1
                 
-                if not frames:
-                    self.logger.error("No frames were converted")
-                    return None
+                # Clean up raw file
+                raw_file.unlink()
                 
-                # Generate metadata
-                metadata = {
-                    "type": "video",
-                    "slug": self._generate_slug(video_path.name),
-                    "original_filename": video_path.name,
-                    "width": self.target_width,
-                    "height": self.target_height,
-                    "frame_count": len(frames),
-                    "frames": frames,
-                    "durations": durations,
-                    "format": format_type,
-                    "fps": fps,
-                    "loop_count": -1  # Infinite loop for videos
-                }
-                
-                # Save metadata
-                metadata_path = output_dir / "metadata.json"
-                with open(metadata_path, 'w') as f:
-                    json.dump(metadata, f, indent=2)
-                
-                self.logger.info(f"Converted video to {len(frames)} frames at {fps} FPS")
-                return metadata
-                
+            else:
+                # For JPEG format, use PNG intermediate (less efficient but works)
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    temp_path = Path(temp_dir)
+                    
+                    # Extract frames using ffmpeg with proper aspect ratio handling
+                    cmd = [
+                        'ffmpeg', '-i', str(video_path),
+                        '-vf', (
+                            f'fps={fps},'
+                            f'scale={self.target_width}:{self.target_height}:force_original_aspect_ratio=increase,'
+                            f'crop={self.target_width}:{self.target_height}'
+                        ),
+                        '-y',  # Overwrite output files
+                        str(temp_path / 'frame_%06d.png')
+                    ]
+                    
+                    result = subprocess.run(cmd, capture_output=True, text=True)
+                    if result.returncode != 0:
+                        self.logger.error(f"ffmpeg failed: {result.stderr}")
+                        return None
+                    
+                    # Convert extracted frames (no need for _resize_and_crop since ffmpeg did it)
+                    frame_files = sorted(temp_path.glob('frame_*.png'))
+                    if not frame_files:
+                        self.logger.error("No frames extracted from video")
+                        return None
+                    
+                    frames = []
+                    durations = []
+                    frame_duration = 1.0 / fps
+                    
+                    for i, frame_file in enumerate(frame_files):
+                        with Image.open(frame_file) as img:
+                            # Convert to RGB if needed (no resizing needed!)
+                            if img.mode != 'RGB':
+                                img = img.convert('RGB')
+                            
+                            # Save frame directly (no cropping needed since ffmpeg handled it)
+                            frame_path = self._save_frame(img, frames_dir, i, format_type)
+                            if frame_path:
+                                frames.append(frame_path.name)
+                                durations.append(frame_duration)
+            
+            if not frames:
+                self.logger.error("No frames were converted")
+                return None
+            
+            # Generate metadata
+            metadata = {
+                "type": "video",
+                "slug": self._generate_slug(video_path.name),
+                "original_filename": video_path.name,
+                "width": self.target_width,
+                "height": self.target_height,
+                "frame_count": len(frames),
+                "frames": frames,
+                "durations": durations,
+                "format": format_type,
+                "fps": fps,
+                "loop_count": -1  # Infinite loop for videos
+            }
+            
+            # Save metadata
+            metadata_path = output_dir / "metadata.json"
+            with open(metadata_path, 'w') as f:
+                json.dump(metadata, f, indent=2)
+            
+            self.logger.info(f"Converted video to {len(frames)} frames at {fps} FPS")
+            return metadata
+            
         except Exception as e:
             self.logger.error(f"Failed to convert video {video_path}: {e}")
             return None
