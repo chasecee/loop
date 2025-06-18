@@ -217,3 +217,16 @@ The application now has:
 **Final Result**: The LOOP application is now a lean, mean, media-playing machine! 🎵
 
 _No more sloppy dev - this LOOP is ready for production! 🎵_
+
+## 🔥 Legacy Cleanup & Critical Bug Fixes
+
+1. **Legacy compatibility removal** - Stripped out all backward compatibility code, migration logic, and wrapper functions from media_index.py for a truly clean codebase
+2. **Install script modernization** - Updated install.sh to work with new MediaIndex format, removed OpenCV cruft, and fixed media index generation for clean deployments
+3. **Critical display bug fix** - Fixed show_message() method that was calling non-existent convert_image_to_frame() on FrameBuffer, causing crashes on status messages
+4. **Added missing FrameSequence method** - Implemented get_frame_data(frame_idx) that the player was trying to call but didn't exist
+5. **Fixed infinite loop logic** - Corrected loop_count handling to recognize both -1 and 0 as infinite loop (config uses -1), preventing immediate playback exit
+6. **Streamlined playback flow** - Replaced confusing nested loop conditions with clear infinite_loop boolean and proper sequence management
+7. **Enhanced error handling** - Added proper fallbacks for image conversion failures and frame loading issues in display messages
+8. **Service stability** - Fixed "LOOP Ready!" freeze issue where playback thread would exit immediately due to incorrect loop count interpretation
+9. **Clean API usage** - Updated all components (server.py, player.py) to use new media_index global instance instead of legacy function calls
+10. **Production ready** - LOOP now has zero legacy overhead, bulletproof playback logic, and professional-grade error handling for reliable Pi deployment
