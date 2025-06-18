@@ -673,7 +673,8 @@ class LOOPApplication:
                         try:
                             # Update component heartbeats for running components
                             for name, health in self.component_health.items():
-                                if name in ["web_server", "display_player"] and health.is_healthy:
+                                if health.is_healthy:
+                                    # All healthy components get heartbeat updates
                                     health.heartbeat()
                             
                             # Perform health check
