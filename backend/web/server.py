@@ -324,6 +324,7 @@ def create_app(
                     message=f"Successfully processed {len(processed_files)} of {len(files)} files",
                     data={
                         "job_ids": job_ids,
+                        "processing_started": True,
                         "processed": processed_files,
                         "errors": errors if errors else None
                     }

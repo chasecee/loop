@@ -74,6 +74,59 @@ check_service() {
 echo "🤖 LOOP Installation Script"
 echo "================================"
 
+# Add cleanup option
+if [ "$1" = "cleanup" ] || [ "$1" = "reset" ]; then
+    echo "🧹 CLEANING UP LOOP DATA..."
+    
+    # Stop service if running
+    if systemctl is-active --quiet ${SERVICE_NAME}; then
+        echo "🛑 Stopping LOOP service..."
+        sudo systemctl stop ${SERVICE_NAME}
+    fi
+    
+    # Clean up media files and index
+    echo "🗑️  Removing media files and index..."
+    rm -rf "${BACKEND_DIR}/media/raw"/*
+    rm -rf "${BACKEND_DIR}/media/processed"/*
+    rm -f "${BACKEND_DIR}/media/index.json"
+    
+    # Recreate directories
+    mkdir -p "${BACKEND_DIR}/media/raw" "${BACKEND_DIR}/media/processed"
+    
+    # Create fresh empty index
+    cat > "${BACKEND_DIR}/media/index.json" << 'EOF'
+{
+  "media": {},
+  "loop": [],
+  "active": null,
+  "last_updated": null,
+  "processing": {}
+}
+EOF
+    
+    # Clean up logs
+    echo "📋 Cleaning up logs..."
+    rm -f "${BACKEND_DIR}/logs"/*.log
+    rm -f ~/.loop/logs/*.log
+    
+    # Reset flag
+    rm -f "$CONFIG_FLAG"
+    
+    echo "✅ LOOP data cleaned up!"
+    
+    # If cleanup only, restart and exit
+    if [ "$1" = "cleanup" ]; then
+        if systemctl list-unit-files | grep -q "^${SERVICE_NAME}.service"; then
+            echo "🔄 Restarting service..."
+            sudo systemctl start ${SERVICE_NAME}
+        fi
+        echo "🎉 Cleanup complete!"
+        exit 0
+    fi
+    
+    echo "Continuing with fresh installation..."
+fi
+
 # Check if this is a reinstall
 if [ -f "$CONFIG_FLAG" ]; then
     if check_venv; then
