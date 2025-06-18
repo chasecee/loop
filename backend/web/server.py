@@ -217,30 +217,33 @@ def create_app(
     
     @app.post("/api/media", response_model=APIResponse)
     async def upload_media(files: List[UploadFile] = File(...)):
-        """Upload and process media files."""
+        """Upload and process media files synchronously with display progress."""
         if not files:
             raise HTTPException(status_code=400, detail="No files provided")
         
         processed_files = []
         errors = []
         job_ids = []
+        was_paused = False
         
-        # Pause playback during processing (will restart fresh when done)
-        if display_player and not display_player.is_paused():
-            try:
-                display_player.toggle_pause()
-                logger.info("Paused playback for upload processing")
-            except Exception as exc:
-                logger.warning(f"Failed to pause playback: {exc}")
+        # Pause playback during processing
+        if display_player:
+            was_paused = display_player.is_paused()
+            if not was_paused:
+                try:
+                    display_player.toggle_pause()
+                    logger.info("Paused playback for upload processing")
+                except Exception as exc:
+                    logger.warning(f"Failed to pause playback: {exc}")
         
         try:
-            # Pre-create job IDs and start display progress BEFORE processing
+            # Create job IDs and start display progress BEFORE processing
             for file in files:
                 job_id = str(uuid.uuid4())
                 job_ids.append(job_id)
                 media_index.add_processing_job(job_id, file.filename)
             
-            # Start display progress tracking FIRST, before any processing
+            # Start display progress tracking
             if job_ids and display_player:
                 try:
                     display_player.start_processing_display(job_ids)
@@ -248,89 +251,108 @@ def create_app(
                 except Exception as exc:
                     logger.warning(f"Failed to start processing display: {exc}")
             
-            # Start processing in background threads and return immediately
-            import threading
-            
-            # Read all file contents BEFORE starting background thread
-            file_data = []
+            # Process files synchronously
+            last_successful_slug = None
             for i, file in enumerate(files):
+                job_id = job_ids[i]
                 try:
+                    logger.info(f"Processing file {i+1}/{len(files)}: {file.filename}")
+                    
+                    # Read file content
                     content = await file.read()
-                    file_data.append({
-                        'filename': file.filename,
-                        'content': content,
-                        'content_type': file.content_type,
-                        'job_id': job_ids[i]
-                    })
+                    
+                    # Process the file
+                    metadata = _process_media_file_impl(
+                        file.filename, 
+                        content, 
+                        file.content_type, 
+                        converter, 
+                        config, 
+                        job_id
+                    )
+                    
+                    processed_files.append(metadata)
+                    last_successful_slug = metadata.get('slug')
+                    logger.info(f"Successfully processed {file.filename}")
+                    
                 except Exception as e:
-                    logger.error(f"Failed to read file {file.filename}: {e}")
-                    media_index.complete_processing_job(job_ids[i], False, f"Failed to read file: {e}")
-
-            def background_process_files():
-                """Process files in background thread."""
-                last_successful_slug = None
-                
-                for file_info in file_data:
-                    try:
-                        # Process using the sync implementation with pre-read content
-                        metadata = _process_media_file_impl(
-                            file_info['filename'], 
-                            file_info['content'], 
-                            file_info['content_type'], 
-                            converter, config, 
-                            file_info['job_id']
-                        )
-                        last_successful_slug = metadata.get('slug')
-                        logger.info(f"Successfully processed {file_info['filename']}")
-                        
-                    except Exception as e:
-                        logger.error(f"Background processing failed for {file_info['filename']}: {e}")
-                        if file_info['job_id']:
-                            media_index.complete_processing_job(file_info['job_id'], False, str(e))
-                
-                # After all processing, refresh and start fresh
-                if display_player:
-                    try:
-                        display_player.refresh_media_list()
-                        
-                        # Activate the last successfully processed file and start fresh
-                        if last_successful_slug:
-                            display_player.set_active_media(last_successful_slug)
-                            logger.info(f"Activated newly uploaded media: {last_successful_slug}")
-                        
-                        # Start playback fresh (simple and clean)
-                        if display_player.is_paused():
-                            display_player.toggle_pause()
-                            logger.info("Started fresh playback after processing")
-                        
-                    except Exception as exc:
-                        logger.error(f"Failed to refresh/activate player: {exc}")
+                    error_msg = f"Failed to process {file.filename}: {str(e)}"
+                    logger.error(error_msg)
+                    errors.append({"filename": file.filename, "error": str(e)})
+                    if job_id:
+                        media_index.complete_processing_job(job_id, False, str(e))
             
-            # Start background processing
-            thread = threading.Thread(target=background_process_files, daemon=True)
-            thread.start()
+            # Stop processing display
+            if display_player:
+                try:
+                    display_player.stop_processing_display()
+                    logger.info("Stopped processing display")
+                except Exception as exc:
+                    logger.warning(f"Failed to stop processing display: {exc}")
             
-            # Return immediately with job IDs - processing continues in background
-            return APIResponse(
-                success=True,
-                message=f"Started processing {len(files)} files",
-                data={"job_ids": job_ids, "processing_started": True}
-            )
+            # Refresh player and activate last successful media
+            if display_player and processed_files:
+                try:
+                    display_player.refresh_media_list()
+                    
+                    # Activate the last successfully processed file
+                    if last_successful_slug:
+                        display_player.set_active_media(last_successful_slug)
+                        logger.info(f"Activated newly uploaded media: {last_successful_slug}")
+                    
+                except Exception as exc:
+                    logger.error(f"Failed to refresh/activate player: {exc}")
+            
+            # Resume playback if it wasn't originally paused
+            if display_player and not was_paused:
+                try:
+                    if display_player.is_paused():
+                        display_player.toggle_pause()
+                        logger.info("Resumed playback after processing")
+                except Exception as exc:
+                    logger.warning(f"Failed to resume playback: {exc}")
+            
+            # Return results
+            if processed_files:
+                return APIResponse(
+                    success=True,
+                    message=f"Successfully processed {len(processed_files)} of {len(files)} files",
+                    data={
+                        "processed": processed_files,
+                        "errors": errors if errors else None
+                    }
+                )
+            else:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Failed to process any files: {'; '.join([e['error'] for e in errors])}"
+                )
             
         except Exception as e:
-            # If there's an error in setup, clean up jobs and re-raise
+            # Clean up jobs on error
             for job_id in job_ids:
                 if job_id:
-                    media_index.complete_processing_job(job_id, False, f"Upload setup failed: {e}")
+                    try:
+                        media_index.complete_processing_job(job_id, False, f"Upload failed: {e}")
+                    except:
+                        pass
+            
+            # Stop processing display on error
+            if display_player:
+                try:
+                    display_player.stop_processing_display()
+                except:
+                    pass
             
             # Resume playback if needed (error case)
-            if display_player and display_player.is_paused():
+            if display_player and not was_paused and display_player.is_paused():
                 try:
                     display_player.toggle_pause()
                     logger.info("Resumed playback after upload error")
                 except:
                     pass
             
+            logger.error(f"Upload processing failed: {e}")
             raise HTTPException(status_code=500, detail=str(e))
     
     @app.post("/api/media/{slug}/activate", response_model=APIResponse)
