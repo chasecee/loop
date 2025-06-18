@@ -18,6 +18,13 @@ import os
 import psutil
 from datetime import datetime, timedelta
 
+# Add systemd support for proper watchdog integration
+try:
+    from systemd import daemon
+    SYSTEMD_AVAILABLE = True
+except ImportError:
+    SYSTEMD_AVAILABLE = False
+
 # Add project root to Python path
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -147,8 +154,16 @@ class LOOPApplication:
         return health
     
     def _reset_watchdog(self):
-        """Reset the software watchdog timer."""
+        """Reset the software watchdog timer and notify systemd."""
         self.last_watchdog_reset = datetime.now()
+        
+        # Notify systemd watchdog that we're still alive
+        if SYSTEMD_AVAILABLE:
+            try:
+                daemon.notify("WATCHDOG=1")
+            except Exception as e:
+                # Don't let watchdog notification failures crash the app
+                pass
     
     def _check_system_resources(self) -> bool:
         """Check system resource usage."""
@@ -645,6 +660,14 @@ class LOOPApplication:
             self.start_web_server()
             
             self.logger.info("LOOP started successfully!")
+            
+            # Notify systemd that we're ready
+            if SYSTEMD_AVAILABLE:
+                try:
+                    daemon.notify("READY=1")
+                    self.logger.info("Notified systemd that service is ready")
+                except Exception as e:
+                    self.logger.warning(f"Failed to notify systemd: {e}")
             
             # Show welcome message
             if self.display_player:

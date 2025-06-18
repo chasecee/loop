@@ -56,7 +56,7 @@ class ILI9341Driver:
         # Initialize SPI
         self.spi = spidev.SpiDev()
         self.spi.open(self.config.spi_bus, self.config.spi_device)
-        self.spi.max_speed_hz = 64000000  # 64MHz (Pi can handle up to ~125MHz)
+        self.spi.max_speed_hz = 32000000  # Reduced from 64MHz to 32MHz for stability
         self.spi.mode = 0
         
         self.logger.info(f"Initialized ILI9341 driver: {self.config.width}x{self.config.height}")
@@ -173,47 +173,39 @@ class ILI9341Driver:
         self._write_command(self.ILI9341_RAMWR)
     
     def write_pixel_data(self, data: bytes) -> None:
-        """Write pixel data to display with optimized chunking."""
-        if not SPI_AVAILABLE:
-            return
-            
-        if not data:
-            self.logger.error("write_pixel_data called with empty data")
+        """Write pixel data to display with optimized chunking and minimal overhead."""
+        if not SPI_AVAILABLE or not data:
             return
         
-        GPIO.output(self.config.dc_pin, GPIO.HIGH)  # Data mode
+        # Set data mode ONCE at the start - major optimization
+        GPIO.output(self.config.dc_pin, GPIO.HIGH)
         
         # Pi SPI driver has a hard limit of 4096 bytes per transaction
-        # Use exactly 4KB chunks to maximize performance within hardware limits
-        chunk_size = min(4096, len(data))  # 4KB chunks - Pi SPI driver maximum
+        chunk_size = 4096  # Fixed 4KB chunks for Pi Zero 2
         
         try:
-            # Optimized approach: minimize Python call overhead
-            if len(data) <= 4096:
-                # Single write for small frames - fastest path
+            # Optimized single-pass chunking for performance
+            if len(data) <= chunk_size:
+                # Single write for small data - fastest path
                 self.spi.writebytes(data)
             else:
-                # Pre-split data into chunks to minimize loop overhead
-                chunks = [data[i:i + chunk_size] for i in range(0, len(data), chunk_size)]
-                
-                # Fast bulk write with minimal error checking (for performance)
-                for chunk in chunks:
-                    self.spi.writebytes(chunk)
-                    
-        except Exception as e:
-            # Fallback to slower but more reliable method
-            self.logger.warning(f"Fast SPI write failed, using fallback: {e}")
-            try:
+                # Chunked write - minimize Python overhead
                 for i in range(0, len(data), chunk_size):
                     chunk = data[i:i + chunk_size]
-                    if chunk:
+                    self.spi.writebytes(chunk)
+        except Exception:
+            # Silent fallback - no logging during frame ops for performance
+            # Convert to list as last resort if bytes object fails
+            try:
+                if len(data) <= chunk_size:
+                    self.spi.writebytes(list(data))
+                else:
+                    for i in range(0, len(data), chunk_size):
+                        chunk = data[i:i + chunk_size]
                         try:
                             self.spi.writebytes(chunk)
                         except:
-                            # Last resort: convert to list
                             self.spi.writebytes(list(chunk))
-            except Exception as fallback_error:
-                self.logger.error(f"SPI write completely failed: {fallback_error} (data length: {len(data)})")
     
     def fill_screen(self, color: int = 0x0000) -> None:
         """Fill entire screen with color (RGB565)."""
@@ -233,14 +225,9 @@ class ILI9341Driver:
         if not self.initialized:
             self.init()
         
-        # Validate frame data first
-        if not frame_data:
-            self.logger.error("Frame data is empty or None")
-            return
-            
+        # Quick validation without logging for performance
         expected_size = self.config.width * self.config.height * 2  # 2 bytes per RGB565 pixel
-        if len(frame_data) != expected_size:
-            self.logger.error(f"Frame data size mismatch: got {len(frame_data)}, expected {expected_size}")
+        if not frame_data or len(frame_data) != expected_size:
             return
         
         self.set_window(0, 0, self.config.width - 1, self.config.height - 1)

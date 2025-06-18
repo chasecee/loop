@@ -17,6 +17,7 @@ spidev==3.6; platform_machine == 'armv7l' or platform_machine == 'aarch64'
 psutil==5.9.6
 requests==2.31.0
 python-dotenv==1.0.0
+systemd-python==235; platform_machine == 'armv7l' or platform_machine == 'aarch64'
 
 # Optional (for development)
 black==23.11.0
