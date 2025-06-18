@@ -261,22 +261,45 @@ class DisplayPlayer:
                 x = (self.display_config.width - text_width) // 2
                 y = (self.display_config.height - text_height) // 2
                 
+                # Convert color to RGB
+                if isinstance(color, int):
+                    # Convert RGB565 to RGB888
+                    r = (color >> 11) << 3
+                    g = ((color >> 5) & 0x3F) << 2
+                    b = (color & 0x1F) << 3
+                    rgb_color = (r, g, b)
+                else:
+                    rgb_color = color
+                
                 # Draw text
-                draw.text((x, y), message, fill=color, font=font)
+                draw.text((x, y), message, fill=rgb_color, font=font)
             else:
                 # Fallback: draw simple text
                 # This is very basic - just put text roughly in center
                 x = self.display_config.width // 4
                 y = self.display_config.height // 2
-                draw.text((x, y), message, fill=color)
+                draw.text((x, y), message, fill=(255, 255, 255))
             
-            # Convert to display format and show
-            frame_data = self.frame_buffer.convert_image_to_frame(image)
-            self.display_driver.display_frame(frame_data)
+            # Convert to RGB565 format using FrameDecoder
+            decoder = FrameDecoder(self.display_config.width, self.display_config.height)
             
-            # Sleep for specified duration if > 0
-            if duration > 0:
-                time.sleep(duration)
+            # Save image to bytes buffer
+            buffer = io.BytesIO()
+            image.save(buffer, format='PNG')
+            buffer.seek(0)
+            
+            # Convert to RGB565 frame data
+            frame_data = decoder.decode_image_bytes(buffer.getvalue())
+            buffer.close()
+            
+            if frame_data:
+                self.display_driver.display_frame(frame_data)
+                
+                # Sleep for specified duration if > 0
+                if duration > 0:
+                    time.sleep(duration)
+            else:
+                self.logger.error("Failed to convert message image to frame data")
             
         except Exception as e:
             self.logger.error(f"Failed to show message: {e}")

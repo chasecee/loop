@@ -118,11 +118,10 @@ if ! grep -q "Raspberry Pi" /proc/cpuinfo 2>/dev/null; then
     fi
 fi
 
-# Update and upgrade system, and install python3-opencv
+# Update and upgrade system
+echo "🔄 Updating system packages..."
 sudo apt update
 sudo apt upgrade -y
-## remove python3-opencv because it's not needed or used by the backend
-# sudo apt install -y python3-opencv
 
 # Install system dependencies only if missing
 echo "🔧 Checking system dependencies..."
@@ -164,11 +163,8 @@ cd "$BACKEND_DIR"
 source venv/bin/activate
 pip install --upgrade pip
 
-# Install system OpenCV (already installed as system package, venv can access via --system-site-packages)
-echo "🔧 Using system OpenCV package (python3-opencv)..."
-
 # Use binary packages where possible and avoid building from source
-echo "📦 Installing remaining Python packages..."
+echo "📦 Installing Python packages..."
 export PIP_PREFER_BINARY=1
 export PIP_ONLY_BINARY=numpy
 pip install --no-cache-dir -r requirements.txt
@@ -185,12 +181,6 @@ if [ ! -f "${BACKEND_DIR}/config/config.json" ]; then
     echo "❌ config.json missing! Aborting install."
     exit 1
 fi
-
-# MEDIA_COUNT=$(find "${BACKEND_DIR}/media/processed" -mindepth 1 -maxdepth 1 -type d | wc -l)
-# if [ "$MEDIA_COUNT" -eq 0 ]; then
-#     echo "❌ No media found in media/processed! Aborting install."
-#     exit 1
-# fi
 
 # Create systemd service if needed
 if ! check_service; then
@@ -331,24 +321,63 @@ sudo chmod +x /usr/local/bin/loop-hotspot
 # Import default media if present and no media exists yet
 if [ -d "$PROJECT_DIR/assets/default-media" ]; then
     echo "📦 Importing default media from assets/default-media..."
-    cp -r "$PROJECT_DIR/assets/default-media"/* "$BACKEND_DIR/media/processed/"
+    cp -r "$PROJECT_DIR/assets/default-media"/* "$BACKEND_DIR/media/processed/" 2>/dev/null || true
     
     INDEX_FILE="$BACKEND_DIR/media/index.json"
     if [ ! -f "$INDEX_FILE" ] || [ ! -s "$INDEX_FILE" ]; then
         echo "📝 Generating media index from default media..."
-        MEDIA_JSON="{\"media\":[],\"active\":null,\"last_updated\":$(date +%s)}"
-        for slug in "$BACKEND_DIR/media/processed"/*; do
-            if [ -d "$slug" ]; then
-                SLUG_NAME=$(basename "$slug")
-                META_FILE="$slug/metadata.json"
+        
+        # Create initial empty index in the new clean format
+        cat > "$INDEX_FILE" << EOF
+{
+  "media": {},
+  "loop": [],
+  "active": null,
+  "last_updated": $(date +%s)
+}
+EOF
+        
+        # Add any processed media to the index
+        for media_dir in "$BACKEND_DIR/media/processed"/*; do
+            if [ -d "$media_dir" ]; then
+                SLUG_NAME=$(basename "$media_dir")
+                META_FILE="$media_dir/metadata.json"
+                
                 if [ -f "$META_FILE" ]; then
-                    # Merge metadata into index
-                    MEDIA_JSON=$(echo "$MEDIA_JSON" | \
-                        python3 -c "import sys, json; d=json.load(sys.stdin); m=json.load(open('$META_FILE')); d['media'].append(m); d['active']=d['active'] or m.get('slug'); print(json.dumps(d))")
+                    echo "📄 Adding $SLUG_NAME to media index..."
+                    
+                    # Use Python to properly merge the metadata
+                    python3 -c "
+import json
+import sys
+from pathlib import Path
+
+# Load current index
+with open('$INDEX_FILE', 'r') as f:
+    index = json.load(f)
+
+# Load metadata
+with open('$META_FILE', 'r') as f:
+    metadata = json.load(f)
+
+# Add to media dict and loop
+slug = metadata.get('slug', '$SLUG_NAME')
+index['media'][slug] = metadata
+if slug not in index['loop']:
+    index['loop'].append(slug)
+
+# Set as active if it's the first one
+if not index['active']:
+    index['active'] = slug
+
+# Write back
+with open('$INDEX_FILE', 'w') as f:
+    json.dump(index, f, indent=2)
+" 2>/dev/null || echo "⚠️  Could not add $SLUG_NAME to index (metadata format issue)"
                 fi
             fi
         done
-        echo "$MEDIA_JSON" | python3 -c 'import sys, json; print(json.dumps(json.load(sys.stdin), indent=2))' > "$INDEX_FILE"
-        echo "✅ Default media index created."
+        
+        echo "✅ Default media index created with $(ls -1d "$BACKEND_DIR/media/processed"/*/ 2>/dev/null | wc -l) items"
     fi
 fi 

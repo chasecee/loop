@@ -173,6 +173,12 @@ class FrameSequence:
         
         self.logger.info(f"Pre-loaded {len(self._frame_cache)} frames ({sum(len(data) for data in self._frame_cache.values()) / 1024:.1f} KB)")
     
+    def get_frame_data(self, frame_idx: int) -> Optional[bytes]:
+        """Get frame data by index without advancing current frame."""
+        if 0 <= frame_idx < self.frame_count:
+            return self._frame_cache.get(frame_idx)
+        return None
+    
     def get_frame(self) -> Optional[bytes]:
         """Get the current frame and advance to next - ZERO disk I/O!"""
         frame_data = self._frame_cache.get(self.current_frame)
