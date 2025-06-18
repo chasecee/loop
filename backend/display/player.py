@@ -377,6 +377,20 @@ class DisplayPlayer:
                     # Reset current_sequence to None so it reloads the next media
                     self.current_sequence = None
                 else:
+                    # Check if media list changed - if so, reload before deciding what to do
+                    with self.lock:
+                        if self.media_list_changed:
+                            self.media_list_changed = False
+                            self.logger.info("Reloading media index due to pending changes")
+                            self.load_media_index()
+                            
+                            # Now check again with fresh data
+                            if len(self.loop_media) > 1:
+                                self.logger.info("Found multiple items after reload - starting multi-item cycle")
+                                self.next_media()
+                                self.current_sequence = None
+                                continue
+                    
                     # Single media item - if infinite loop, continue playing
                     if infinite_loop:
                         # Just continue the outer while loop to replay
