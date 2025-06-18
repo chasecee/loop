@@ -6,12 +6,13 @@ import shutil
 import tempfile
 import time
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from datetime import datetime
 
-from fastapi import FastAPI, UploadFile, File, Form, Request, HTTPException, Depends
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, FileResponse
+from fastapi import FastAPI, UploadFile, File, HTTPException, status
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
 from config.schema import Config
 from display.player import DisplayPlayer
@@ -21,8 +22,54 @@ from utils.convert import MediaConverter
 import utils.media_index as mindex
 from utils.logger import get_logger
 
-# Define a Pydantic model for the WiFi connection request
-from pydantic import BaseModel
+logger = get_logger("web")
+
+# Pydantic models for request/response validation
+class WiFiCredentials(BaseModel):
+    ssid: str
+    password: Optional[str] = ""
+
+class AddToLoopPayload(BaseModel):
+    slug: str
+
+class LoopOrderPayload(BaseModel):
+    loop: List[str]
+
+class MediaItem(BaseModel):
+    slug: str
+    filename: str
+    type: str
+    size: int
+    uploadedAt: str
+    url: Optional[str] = None
+    duration: Optional[float] = None
+    width: Optional[int] = None
+    height: Optional[int] = None
+    frame_count: Optional[int] = None
+
+class DeviceStatus(BaseModel):
+    """Device status matching frontend expectations."""
+    system: str = "LOOP v1.0.0"
+    status: str = "running"
+    timestamp: int = Field(default_factory=lambda: int(time.time()))
+    player: Optional[Dict[str, Any]] = None
+    wifi: Optional[Dict[str, Any]] = None
+    updates: Optional[Dict[str, Any]] = None
+
+class DashboardData(BaseModel):
+    """Combined dashboard data."""
+    status: DeviceStatus
+    media: List[Dict[str, Any]]
+    active: Optional[str]
+    loop: List[str]
+    last_updated: Optional[int]
+
+class APIResponse(BaseModel):
+    """Standard API response format."""
+    success: bool
+    message: Optional[str] = None
+    data: Optional[Any] = None
+    errors: Optional[List[Dict[str, str]]] = None
 
 def get_dir_size(path: Path) -> int:
     """Recursively get the size of a directory."""
@@ -35,28 +82,21 @@ def get_dir_size(path: Path) -> int:
                 total += get_dir_size(Path(entry.path))
     return total
 
-class WiFiCredentials(BaseModel):
-    ssid: str
-    password: Optional[str] = ""
-
-class AddToLoopPayload(BaseModel):
-    slug: str
-
-def create_app(display_player: DisplayPlayer = None,
-               wifi_manager: WiFiManager = None, 
-               updater: SystemUpdater = None,
-               config: Config = None) -> FastAPI:
+def create_app(
+    display_player: DisplayPlayer = None,
+    wifi_manager: WiFiManager = None, 
+    updater: SystemUpdater = None,
+    config: Config = None
+) -> FastAPI:
     """Create and configure the FastAPI application."""
     
     app = FastAPI(
         title="LOOP",
         description="Little Optical Output Pal - Your pocket-sized animation companion!",
-        version="1.0.0"
+        version="1.0.0",
+        docs_url="/docs" if config and config.web.debug else None,
+        redoc_url="/redoc" if config and config.web.debug else None
     )
-    
-    logger = get_logger("web")
-    
-    # (Removed legacy /static mount; SPA bundle should contain all assets)
     
     # SPA assets directory (Next.js export)
     spa_dir = Path(__file__).parent / "spa"
@@ -71,132 +111,90 @@ def create_app(display_player: DisplayPlayer = None,
     media_raw_dir.mkdir(parents=True, exist_ok=True)
     media_processed_dir.mkdir(parents=True, exist_ok=True)
     
-    # Serve raw media files so the frontend can display previews
+    # Serve raw media files for frontend previews
     app.mount("/media/raw", StaticFiles(directory=media_raw_dir), name="raw-media")
     
     # Media converter
-    if config:
-        converter = MediaConverter(config.display.width, config.display.height)
-    else:
-        converter = MediaConverter(240, 320)  # Default size
+    converter = MediaConverter(
+        config.display.width if config else 240,
+        config.display.height if config else 320
+    )
+    
+    # Exception handlers
+    @app.exception_handler(ValueError)
+    async def value_error_handler(request, exc):
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={"success": False, "message": str(exc)}
+        )
+    
+    @app.exception_handler(KeyError)
+    async def key_error_handler(request, exc):
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content={"success": False, "message": f"Resource not found: {exc}"}
+        )
+    
+    # Routes
     
     @app.get("/", response_class=HTMLResponse)
     async def root_spa():
-        spa_index = Path(__file__).parent / "spa" / "index.html"
+        """Serve the SPA index page."""
+        spa_index = spa_dir / "index.html"
         if spa_index.exists():
             return FileResponse(spa_index)
         raise HTTPException(status_code=404, detail="SPA not built/deployed")
     
-    @app.get("/api/status")
+    # System Status API
+    
+    @app.get("/api/status", response_model=DeviceStatus)
     async def get_status():
-        """Get system status."""
-        status = {
-            "system": "LOOP v1.0.0",
-            "status": "running",
-            "timestamp": int(time.time())
-        }
+        """Get comprehensive system status."""
+        device_status = DeviceStatus()
         
         if display_player:
-            status["player"] = display_player.get_status()
+            player_status = display_player.get_status()
+            device_status.player = player_status
         
         if wifi_manager:
-            status["wifi"] = wifi_manager.get_status()
+            wifi_status = wifi_manager.get_status()
+            device_status.wifi = wifi_status
         
         if updater:
-            status["updates"] = updater.get_update_status()
+            update_status = updater.get_update_status()
+            device_status.updates = update_status
         
-        return status
+        return device_status
     
-    async def process_and_index_file(
-        file: UploadFile, converter: MediaConverter, config: Config
-    ):
-        """Helper to process a single uploaded file."""
-        # Validate file type and size
-        allowed_extensions = {
-            ".gif", ".mp4", ".avi", ".mov", ".png", ".jpg", ".jpeg"
-        }
-        file_ext = Path(file.filename).suffix.lower()
-        if file_ext not in allowed_extensions:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Unsupported file type: {file.filename}",
-            )
-
-        max_size = (
-            config.media.max_file_size_mb if config else 10
-        ) * 1024 * 1024
-        
-        # Save to a temporary file to check size and pass to converter
+    # Media Management API
+    
+    @app.get("/api/media", response_model=APIResponse)
+    async def get_media():
+        """Get all media items."""
         try:
-            with tempfile.NamedTemporaryFile(
-                delete=False, suffix=file.filename, dir=media_raw_dir
-            ) as tmp:
-                content = await file.read()
-                if len(content) > max_size:
-                    raise HTTPException(
-                        status_code=413, detail=f"File too large: {file.filename}"
-                    )
-                tmp.write(content)
-                tmp_path = Path(tmp.name)
-
-            # Generate slug and output directory
-            slug = converter._generate_slug(tmp_path.name)
-            output_dir = media_processed_dir / slug
-
-            # Convert media
-            metadata = converter.convert_media_file(tmp_path, output_dir)
-            if not metadata:
-                raise HTTPException(
-                    status_code=500, detail=f"Failed to process {file.filename}"
-                )
-            
-            # --- Augment metadata with extra fields expected by the frontend UI ---
-            file_size = len(content)  # Size in bytes from uploaded content
-            uploaded_at_iso = datetime.utcnow().isoformat() + "Z"
-
-            metadata.update(
-                {
-                    "filename": file.filename,
-                    "type": file.content_type or metadata.get("type", "unknown"),
-                    "size": file_size,
-                    "uploadedAt": uploaded_at_iso,
-                    "url": f"/media/raw/{slug}{Path(file.filename).suffix}",
+            media_list = mindex.list_media()
+            return APIResponse(
+                success=True,
+                data={
+                    "media": media_list,
+                    "active": mindex.get_active(),
+                    "last_updated": int(time.time())
                 }
             )
-
-            # Persist via media_index – automatically marks active & adds to loop
-            mindex.add_media(metadata, make_active=True)
-
-            # Persist original upload for preview image (copy instead of move to retain tmp for cleanup)
-            dest_raw_path = media_raw_dir / f"{slug}{Path(file.filename).suffix}"
-            shutil.copy(tmp_path, dest_raw_path)
-
-            return metadata
-
-        finally:
-            # Clean up the temporary file
-            if "tmp_path" in locals() and tmp_path.exists():
-                tmp_path.unlink()
+        except Exception as e:
+            logger.error(f"Failed to get media: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
     
-    @app.post("/api/media")
-    async def upload_media_files(files: List[UploadFile] = File(...)):
-        """Handle multiple file uploads and processing.
-
-        While conversion is underway, pause the on-device playback and show a
-        *Processing…* message so the user isn't left wondering what's
-        happening. Playback automatically resumes (with a *Done!* toast) once
-        everything is finished – even if one of the uploads fails. This avoids
-        race-conditions by pausing *before* any heavy work begins so the
-        `DisplayPlayer` thread is idle during `display_driver.display_frame`
-        calls made from `show_message()`.
-        """
-
-        processed_files: List[Dict] = []
-        errors: List[Dict] = []
-
-        # ------------------------------------------------------------------
-        # Pause playback & show "Processing" splash
-        # ------------------------------------------------------------------
+    @app.post("/api/media", response_model=APIResponse)
+    async def upload_media(files: List[UploadFile] = File(...)):
+        """Upload and process media files."""
+        if not files:
+            raise HTTPException(status_code=400, detail="No files provided")
+        
+        processed_files = []
+        errors = []
+        
+        # Pause playback during processing
         playback_was_running = False
         if display_player and not display_player.is_paused():
             playback_was_running = True
@@ -205,69 +203,56 @@ def create_app(display_player: DisplayPlayer = None,
                 display_player.show_message("Processing media…", duration=0)
             except Exception as exc:
                 logger.warning(f"Failed to display processing splash: {exc}")
-
+        
         try:
-            # --------------------------------------------------------------
-            # Process every uploaded file serially for now (keeps memory low)
-            # --------------------------------------------------------------
             for file in files:
                 try:
-                    metadata = await process_and_index_file(file, converter, config)
+                    metadata = await process_media_file(file, converter, config)
                     processed_files.append(metadata)
                 except Exception as e:
                     logger.error(f"Upload failed for {file.filename}: {e}")
                     error_detail = e.detail if isinstance(e, HTTPException) else str(e)
                     errors.append({"filename": file.filename, "error": error_detail})
         finally:
-            # ------------------------------------------------------------------
-            # Always refresh the player/media-list, then resume playback
-            # ------------------------------------------------------------------
+            # Always refresh player and resume if needed
             if display_player:
                 try:
                     display_player.refresh_media_list()
-                except Exception as exc:
-                    logger.error(f"Failed to refresh media list: {exc}")
-
-                if playback_was_running:
-                    # Show quick "done" banner, then resume playback
-                    try:
+                    if playback_was_running:
                         display_player.show_message("Processing complete!", duration=2.0)
-                    except Exception:
-                        pass
-                    display_player.toggle_pause()  # Resume
-
-        # If *all* uploads failed, bubble an error back to the client
+                        display_player.toggle_pause()  # Resume
+                except Exception as exc:
+                    logger.error(f"Failed to refresh player: {exc}")
+        
         if not processed_files and errors:
             raise HTTPException(status_code=500, detail={"errors": errors})
-
-        return {
-            "success": True,
-            "processed_files": processed_files,
-            "errors": errors,
-        }
+        
+        return APIResponse(
+            success=True,
+            message=f"Processed {len(processed_files)} files",
+            data={"processed_files": processed_files},
+            errors=errors if errors else None
+        )
     
-    @app.post("/api/media/{slug}/activate")
+    @app.post("/api/media/{slug}/activate", response_model=APIResponse)
     async def activate_media(slug: str):
         """Set a media item as active."""
-        
         if not display_player:
             raise HTTPException(status_code=503, detail="Display player not available")
         
         try:
-            mindex.add_to_loop(slug)  # ensure in loop
+            mindex.add_to_loop(slug)  # Ensure in loop
             mindex.set_active(slug)
-            if display_player:
-                display_player.set_active_media(slug)
-            return {"success": True, "message": f"Activated media: {slug}"}
+            display_player.set_active_media(slug)
+            return APIResponse(success=True, message=f"Activated media: {slug}")
         except KeyError:
             raise HTTPException(status_code=404, detail="Media not found")
     
-    @app.delete("/api/media/{slug}")
+    @app.delete("/api/media/{slug}", response_model=APIResponse)
     async def delete_media(slug: str):
         """Delete a media item."""
-        
         try:
-            # Update media index first (this handles loop cleanup too)
+            # Update media index first
             mindex.remove_media(slug)
             
             # Remove from filesystem
@@ -282,77 +267,135 @@ def create_app(display_player: DisplayPlayer = None,
                 raw_file.unlink()
                 logger.info(f"Removed raw file: {raw_file}")
             
-            # Refresh player media list
+            # Refresh player
             if display_player:
                 display_player.refresh_media_list()
             
-            logger.info(f"Successfully deleted media: {slug}")
-            
-            return {"success": True, "message": f"Deleted media: {slug}"}
+            return APIResponse(success=True, message=f"Deleted media: {slug}")
             
         except Exception as e:
             logger.error(f"Failed to delete media {slug}: {e}")
             raise HTTPException(status_code=500, detail=str(e))
-
-    @app.post("/api/media/cleanup")
+    
+    @app.post("/api/media/cleanup", response_model=APIResponse)
     async def cleanup_orphaned_media():
-        """Clean up orphaned media files and index inconsistencies."""
+        """Clean up orphaned media files."""
         try:
             cleanup_count = mindex.cleanup_orphaned_files(media_raw_dir, media_processed_dir)
             
-            # Refresh player after cleanup
             if display_player:
                 display_player.refresh_media_list()
             
-            return {
-                "success": True, 
-                "message": f"Cleaned up {cleanup_count} orphaned files"
-            }
+            return APIResponse(
+                success=True,
+                message=f"Cleaned up {cleanup_count} orphaned files"
+            )
         except Exception as e:
             logger.error(f"Failed to cleanup media: {e}")
             raise HTTPException(status_code=500, detail=str(e))
     
-    @app.post("/api/player/pause")
-    async def toggle_pause():
-        """Toggle playback pause."""
+    # Loop Management API
+    
+    @app.get("/api/loop", response_model=APIResponse)
+    async def get_loop_queue():
+        """Get the current loop queue."""
+        return APIResponse(
+            success=True,
+            data={"loop": mindex.list_loop()}
+        )
+    
+    @app.post("/api/loop", response_model=APIResponse)
+    async def add_to_loop(payload: AddToLoopPayload):
+        """Add a media item to the loop queue."""
+        try:
+            mindex.add_to_loop(payload.slug)
+            if display_player:
+                display_player.refresh_media_list()
+            return APIResponse(
+                success=True,
+                message="Added to loop",
+                data={"loop": mindex.list_loop()}
+            )
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Media not found")
+    
+    @app.put("/api/loop", response_model=APIResponse)
+    async def reorder_loop(payload: LoopOrderPayload):
+        """Reorder the loop queue."""
+        mindex.reorder_loop(payload.loop)
+        if display_player:
+            display_player.refresh_media_list()
+        return APIResponse(
+            success=True,
+            message="Loop reordered",
+            data={"loop": mindex.list_loop()}
+        )
+    
+    @app.delete("/api/loop/{slug}", response_model=APIResponse)
+    async def remove_from_loop(slug: str):
+        """Remove a media item from the loop queue."""
+        mindex.remove_from_loop(slug)
+        if display_player:
+            display_player.refresh_media_list()
+        return APIResponse(
+            success=True,
+            message="Removed from loop",
+            data={"loop": mindex.list_loop()}
+        )
+    
+    # Playback Control API
+    
+    @app.post("/api/playback/toggle", response_model=APIResponse)
+    async def toggle_playback():
+        """Toggle playback pause/resume."""
         if not display_player:
             raise HTTPException(status_code=503, detail="Display player not available")
         
         display_player.toggle_pause()
         is_paused = display_player.is_paused()
         
-        return {"success": True, "paused": is_paused}
+        return APIResponse(
+            success=True,
+            message="Paused" if is_paused else "Resumed",
+            data={"paused": is_paused}
+        )
     
-    @app.post("/api/player/next")
+    @app.post("/api/playback/next", response_model=APIResponse)
     async def next_media():
         """Switch to next media."""
         if not display_player:
             raise HTTPException(status_code=503, detail="Display player not available")
         
         display_player.next_media()
-        return {"success": True, "message": "Switched to next media"}
+        return APIResponse(success=True, message="Switched to next media")
     
-    @app.post("/api/player/previous")
+    @app.post("/api/playback/previous", response_model=APIResponse)
     async def previous_media():
         """Switch to previous media."""
         if not display_player:
             raise HTTPException(status_code=503, detail="Display player not available")
         
         display_player.previous_media()
-        return {"success": True, "message": "Switched to previous media"}
+        return APIResponse(success=True, message="Switched to previous media")
     
-    @app.get("/api/wifi/scan")
+    # WiFi Management API
+    
+    @app.get("/api/wifi/scan", response_model=APIResponse)
     async def scan_wifi():
         """Scan for available WiFi networks."""
         if not wifi_manager:
             raise HTTPException(status_code=503, detail="WiFi manager not available")
         
         networks = wifi_manager.scan_networks()
-        return {"networks": networks}
+        return APIResponse(
+            success=True,
+            message="Networks scanned",
+            data={"networks": networks}
+        )
     
-    @app.post("/api/wifi/connect")
+    @app.post("/api/wifi/connect", response_model=APIResponse)
     async def connect_wifi(credentials: WiFiCredentials):
-        """Connect to WiFi network using JSON payload."""
+        """Connect to WiFi network."""
         if not wifi_manager:
             raise HTTPException(status_code=503, detail="WiFi manager not available")
         
@@ -365,11 +408,14 @@ def create_app(display_player: DisplayPlayer = None,
                 config.wifi.password = credentials.password
                 config.save()
             
-            return {"success": True, "message": f"Connected to {credentials.ssid}"}
+            return APIResponse(
+                success=True,
+                message=f"Connected to {credentials.ssid}"
+            )
         else:
             raise HTTPException(status_code=400, detail="Failed to connect to WiFi")
     
-    @app.post("/api/wifi/hotspot")
+    @app.post("/api/wifi/hotspot", response_model=APIResponse)
     async def toggle_hotspot():
         """Toggle WiFi hotspot."""
         if not wifi_manager:
@@ -377,143 +423,156 @@ def create_app(display_player: DisplayPlayer = None,
         
         if wifi_manager.hotspot_active:
             success = wifi_manager.stop_hotspot()
-            return {"success": success, "hotspot_active": False}
+            return APIResponse(
+                success=success,
+                message="Hotspot stopped" if success else "Failed to stop hotspot",
+                data={"hotspot_active": False}
+            )
         else:
             success = wifi_manager.start_hotspot()
-            return {"success": success, "hotspot_active": success}
+            return APIResponse(
+                success=success,
+                message="Hotspot started" if success else "Failed to start hotspot",
+                data={"hotspot_active": success}
+            )
     
-    @app.get("/api/updates/check")
+    # System Update API
+    
+    @app.get("/api/updates/check", response_model=APIResponse)
     async def check_updates():
         """Check for available updates."""
         if not updater:
             raise HTTPException(status_code=503, detail="Updater not available")
         
         update_sources = updater.check_all_sources()
-        return {"updates_available": update_sources}
+        return APIResponse(
+            success=True,
+            message="Updates checked",
+            data={"updates_available": update_sources}
+        )
     
-    @app.post("/api/updates/install")
+    @app.post("/api/updates/install", response_model=APIResponse)
     async def install_updates():
         """Install available updates."""
         if not updater:
             raise HTTPException(status_code=503, detail="Updater not available")
         
         success, message = updater.auto_update()
-        return {"success": success, "message": message}
+        return APIResponse(success=success, message=message)
     
-    @app.get("/api/media")
-    async def get_media():
-        """Return the media library and active item."""
-        return {
-            "media": mindex.list_media(),
-            "active": mindex.get_active(),
-            "last_updated": int(time.time()),
-        }
+    # Storage Information API
     
-    # Aliases for playback controls to match frontend expectations
-    @app.post("/api/playback/toggle")
-    async def playback_toggle():
-        return await toggle_pause()
-
-    @app.post("/api/playback/next")
-    async def playback_next():
-        return await next_media()
-
-    @app.post("/api/playback/previous")
-    async def playback_previous():
-        return await previous_media()
-    
-    # ------------------------------------------------------------------
-    # Loop queue management
-    # ------------------------------------------------------------------
-
-    @app.get("/api/loop")
-    async def get_loop_queue():
-        """Return the current loop queue as a list of slugs."""
-        return {"loop": mindex.list_loop()}
-
-    @app.post("/api/loop")
-    async def add_to_loop(payload: AddToLoopPayload):
-        """Append a slug to the loop queue (if not already present)."""
-        try:
-            mindex.add_to_loop(payload.slug)
-            if display_player:
-                display_player.refresh_media_list()
-            return {"success": True, "loop": mindex.list_loop()}
-        except KeyError:
-            raise HTTPException(status_code=404, detail="Media not found")
-
-    @app.delete("/api/loop/{slug}")
-    async def remove_from_loop(slug: str):
-        """Remove slug from loop queue."""
-        mindex.remove_from_loop(slug)
-        if display_player:
-            display_player.refresh_media_list()
-        return {"success": True, "loop": mindex.list_loop()}
-
-    # ------------------------------------------------------------
-    # Re-order loop list – replaces the entire array atomically
-    # ------------------------------------------------------------
-
-    class LoopOrderPayload(BaseModel):
-        loop: List[str]
-
-    @app.put("/api/loop")
-    async def reorder_loop(payload: LoopOrderPayload):
-        """Persist a new loop order supplied as a list of slugs."""
-        mindex.reorder_loop(payload.loop)
-        if display_player:
-            display_player.refresh_media_list()
-        return {"success": True, "loop": mindex.list_loop()}
-
-    @app.get("/api/storage")
+    @app.get("/api/storage", response_model=APIResponse)
     async def get_storage_info():
         """Get detailed storage usage information."""
         total, used, free = shutil.disk_usage("/")
         
         project_root = Path(__file__).resolve().parents[2]
-        
         media_path = project_root / "media"
         media_size = get_dir_size(media_path)
         
-        # App size is the total project size minus media
         total_project_size = get_dir_size(project_root)
         app_size = total_project_size - media_size
+        system_size = max(0, used - total_project_size)
         
-        # System size is what's left over
-        system_size = used - total_project_size
-        
-        return {
-            "total": total,
-            "used": used,
-            "free": free,
-            "system": system_size if system_size > 0 else 0,
-            "app": app_size,
-            "media": media_size,
-            "units": "bytes"
-        }
-
-    # --------------------------------------------------------------
-    # Dashboard endpoint – aggregate common polling data
-    # --------------------------------------------------------------
-
-    @app.get("/api/dashboard")
+        return APIResponse(
+            success=True,
+            data={
+                "total": total,
+                "used": used,
+                "free": free,
+                "system": system_size,
+                "app": app_size,
+                "media": media_size,
+                "units": "bytes"
+            }
+        )
+    
+    # Dashboard API - Optimized single endpoint
+    
+    @app.get("/api/dashboard", response_model=DashboardData)
     async def get_dashboard():
-        """Return status, media library and loop queue in one request."""
-        # Use the new optimized dashboard data function
+        """Get consolidated dashboard data in a single request."""
+        # Get status
+        device_status = await get_status()
+        
+        # Get media data
         dashboard_data = mindex.get_dashboard_data()
-        status_data = await get_status()
-
-        return {
-            "status": status_data,
-            "media": dashboard_data["media"],
-            "active": dashboard_data["active"],
-            "loop": dashboard_data["loop"],
-            "last_updated": dashboard_data["last_updated"]
-        }
-
+        
+        return DashboardData(
+            status=device_status,
+            media=dashboard_data["media"],
+            active=dashboard_data["active"],
+            loop=dashboard_data["loop"],
+            last_updated=dashboard_data["last_updated"]
+        )
+    
     logger.info("FastAPI application created successfully")
     return app
 
+async def process_media_file(file: UploadFile, converter: MediaConverter, config: Config) -> Dict[str, Any]:
+    """Process a single uploaded media file."""
+    # Validate file type and size
+    allowed_extensions = {".gif", ".mp4", ".avi", ".mov", ".png", ".jpg", ".jpeg"}
+    file_ext = Path(file.filename).suffix.lower()
+    if file_ext not in allowed_extensions:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type: {file.filename}",
+        )
+
+    max_size = (config.media.max_file_size_mb if config else 10) * 1024 * 1024
+    
+    # Save to temporary file
+    media_raw_dir = Path("media/raw")
+    try:
+        with tempfile.NamedTemporaryFile(
+            delete=False, suffix=file.filename, dir=media_raw_dir
+        ) as tmp:
+            content = await file.read()
+            if len(content) > max_size:
+                raise HTTPException(
+                    status_code=413, detail=f"File too large: {file.filename}"
+                )
+            tmp.write(content)
+            tmp_path = Path(tmp.name)
+
+        # Generate slug and output directory
+        slug = converter._generate_slug(tmp_path.name)
+        output_dir = Path("media/processed") / slug
+
+        # Convert media
+        metadata = converter.convert_media_file(tmp_path, output_dir)
+        if not metadata:
+            raise HTTPException(
+                status_code=500, detail=f"Failed to process {file.filename}"
+            )
+        
+        # Augment metadata for frontend
+        file_size = len(content)
+        uploaded_at_iso = datetime.utcnow().isoformat() + "Z"
+
+        metadata.update({
+            "filename": file.filename,
+            "type": file.content_type or metadata.get("type", "unknown"),
+            "size": file_size,
+            "uploadedAt": uploaded_at_iso,
+            "url": f"/media/raw/{slug}{Path(file.filename).suffix}",
+        })
+
+        # Add to media index
+        mindex.add_media(metadata, make_active=True)
+
+        # Save original for preview
+        dest_raw_path = media_raw_dir / f"{slug}{Path(file.filename).suffix}"
+        shutil.copy(tmp_path, dest_raw_path)
+
+        return metadata
+
+    finally:
+        # Clean up temp file
+        if "tmp_path" in locals() and tmp_path.exists():
+            tmp_path.unlink()
 
 # For development/testing
 if __name__ == "__main__":
