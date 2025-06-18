@@ -694,7 +694,14 @@ def create_app(
         )
     
     # Add middleware
-    app.add_middleware(CORSMiddleware)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],  # In production, specify exact origins
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+        max_age=3600,  # Cache preflight requests for 1 hour
+    )
     app.add_middleware(CacheControlMiddleware)
     
     logger.info("FastAPI application created successfully")

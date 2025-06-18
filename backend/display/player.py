@@ -145,14 +145,11 @@ class DisplayPlayer:
             next_index = (current_index + 1) % len(loop_slugs)
             next_slug = loop_slugs[next_index]
             
-            # Set as active and reload sequence
+            # Set as active - sequence will be loaded in main loop
             media_index.set_active(next_slug)
-            if self.load_current_sequence():
-                media_dict = media_index.get_media_dict()
-                media_name = media_dict.get(next_slug, {}).get('original_filename', 'Unknown')
-                self.logger.info(f"Switched to next media: {media_name}")
-            else:
-                self.logger.error("Failed to load next media sequence")
+            media_dict = media_index.get_media_dict()
+            media_name = media_dict.get(next_slug, {}).get('original_filename', 'Unknown')
+            self.logger.info(f"Switched to next media: {media_name}")
     
     def previous_media(self) -> None:
         """Switch to previous media."""
@@ -172,14 +169,11 @@ class DisplayPlayer:
             prev_index = (current_index - 1) % len(loop_slugs)
             prev_slug = loop_slugs[prev_index]
             
-            # Set as active and reload sequence
+            # Set as active - sequence will be loaded in main loop
             media_index.set_active(prev_slug)
-            if self.load_current_sequence():
-                media_dict = media_index.get_media_dict()
-                media_name = media_dict.get(prev_slug, {}).get('original_filename', 'Unknown')
-                self.logger.info(f"Switched to previous media: {media_name}")
-            else:
-                self.logger.error("Failed to load previous media sequence")
+            media_dict = media_index.get_media_dict()
+            media_name = media_dict.get(prev_slug, {}).get('original_filename', 'Unknown')
+            self.logger.info(f"Switched to previous media: {media_name}")
     
     def set_active_media(self, slug: str) -> bool:
         """Set the active media to the specified slug."""
@@ -190,15 +184,12 @@ class DisplayPlayer:
                 self.logger.warning(f"Media with slug '{slug}' not found")
                 return False
             
-            # Set as active and reload sequence
+            # Set as active and clear current sequence to trigger reload
             media_index.set_active(slug)
-            if self.load_current_sequence():
-                media_name = media_dict.get(slug, {}).get('original_filename', 'Unknown')
-                self.logger.info(f"Set active media: {media_name}")
-                return True
-            else:
-                self.logger.error(f"Failed to load sequence for media: {slug}")
-                return False
+            self.current_sequence = None  # Force reload on next cycle
+            media_name = media_dict.get(slug, {}).get('original_filename', 'Unknown')
+            self.logger.info(f"Set active media: {media_name}")
+            return True
     
     def toggle_pause(self) -> None:
         """Toggle playback pause state."""
@@ -539,21 +530,25 @@ class DisplayPlayer:
                     # Display static image for the configured duration
                     frame_data = self.current_sequence.get_frame_data(0)
                     if frame_data:
-                        self.logger.debug(f"Displaying static image for {self.static_image_display_time} seconds")
+                        self.logger.info(f"Displaying static image for {self.static_image_display_time} seconds")
                         self.display_driver.display_frame(frame_data)
                         
                         # Wait for the full duration (or until interrupted)
                         sleep_intervals = int(self.static_image_display_time * 10)  # 0.1s intervals
+                        actual_sleep_time = 0
                         for i in range(sleep_intervals):
                             if not self.running or self.showing_progress:
+                                self.logger.info(f"Static image interrupted after {actual_sleep_time:.1f}s")
                                 break
                             while self.paused and self.running and not self.showing_progress:
                                 time.sleep(0.1)
                             if not self.running or self.showing_progress:
+                                self.logger.info(f"Static image interrupted after {actual_sleep_time:.1f}s")
                                 break
                             time.sleep(0.1)
+                            actual_sleep_time += 0.1
                         
-                        self.logger.debug(f"Static image display completed")
+                        self.logger.info(f"Static image display completed after {actual_sleep_time:.1f}s")
                 else:
                     # Play all frames in animated sequence
                     sequence_completed = True
