@@ -523,6 +523,12 @@ class DisplayPlayer:
                     self.current_media_loops = 0
                 
                 # Play current media sequence
+                if not self.current_sequence:
+                    self.logger.warning("Current sequence is None, attempting to reload")
+                    if not self.load_current_sequence():
+                        time.sleep(1)
+                        continue
+                
                 frame_count = self.current_sequence.get_frame_count()
                 is_static_image = frame_count == 1 and self.current_sequence.get_frame_duration(0) == 0.0
                 
@@ -689,4 +695,11 @@ class DisplayPlayer:
         self.logger.info("Refreshing media list (clearing current sequence)")
         with self.lock:
             # Simply clear the current sequence to force reload on next cycle
-            self.current_sequence = None 
+            self.current_sequence = None
+            
+            # If no media exists, ensure we're in a clean state
+            loop_slugs = media_index.list_loop()
+            if not loop_slugs:
+                self.logger.info("No media in loop, clearing active media")
+                media_index.set_active(None)
+                self.current_media_loops = 0 
