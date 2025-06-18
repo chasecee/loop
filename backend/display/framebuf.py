@@ -178,6 +178,11 @@ class FrameSequence:
         frame_data = self._frame_cache.get(self.current_frame)
         
         if not frame_data:
+            self.logger.error(f"Frame {self.current_frame} not found in cache (cache has {len(self._frame_cache)} frames)")
+            return None
+            
+        if len(frame_data) == 0:
+            self.logger.error(f"Frame {self.current_frame} has zero length data")
             return None
             
         # Advance to next frame
@@ -207,7 +212,11 @@ class FrameSequence:
         """Load a frame from disk (only called during initialization)."""
         try:
             with open(frame_path, 'rb') as f:
-                return f.read()
+                data = f.read()
+                if len(data) == 0:
+                    self.logger.error(f"Frame file {frame_path} is empty")
+                    return None
+                return data
         except Exception as e:
             self.logger.error(f"Failed to load frame {frame_path}: {e}")
             return None 

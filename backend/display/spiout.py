@@ -174,7 +174,11 @@ class ILI9341Driver:
     
     def write_pixel_data(self, data: bytes) -> None:
         """Write pixel data to display with optimized chunking."""
-        if not SPI_AVAILABLE or not data:
+        if not SPI_AVAILABLE:
+            return
+            
+        if not data:
+            self.logger.error("write_pixel_data called with empty data")
             return
         
         GPIO.output(self.config.dc_pin, GPIO.HIGH)  # Data mode
@@ -183,15 +187,19 @@ class ILI9341Driver:
         # Aim for 2-4 chunks max to minimize SPI transaction overhead
         chunk_size = min(65536, len(data))  # 64KB chunks or full frame if smaller
         
-        if len(data) <= chunk_size:
-            # Single write for small frames - fastest path
-            self.spi.writebytes(data)
-        else:
-            # Chunked write for larger frames
-            for i in range(0, len(data), chunk_size):
-                chunk = data[i:i + chunk_size]
-                if chunk:  # Ensure chunk is not empty
-                    self.spi.writebytes(chunk)
+        try:
+            if len(data) <= chunk_size:
+                # Single write for small frames - fastest path
+                if data:  # Double-check before writing
+                    self.spi.writebytes(data)
+            else:
+                # Chunked write for larger frames
+                for i in range(0, len(data), chunk_size):
+                    chunk = data[i:i + chunk_size]
+                    if chunk:  # Ensure chunk is not empty
+                        self.spi.writebytes(chunk)
+        except Exception as e:
+            self.logger.error(f"SPI write failed: {e} (data length: {len(data)})")
     
     def fill_screen(self, color: int = 0x0000) -> None:
         """Fill entire screen with color (RGB565)."""
@@ -211,6 +219,11 @@ class ILI9341Driver:
         if not self.initialized:
             self.init()
         
+        # Validate frame data first
+        if not frame_data:
+            self.logger.error("Frame data is empty or None")
+            return
+            
         expected_size = self.config.width * self.config.height * 2  # 2 bytes per RGB565 pixel
         if len(frame_data) != expected_size:
             self.logger.error(f"Frame data size mismatch: got {len(frame_data)}, expected {expected_size}")
