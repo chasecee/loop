@@ -68,7 +68,15 @@ class ILI9341Driver:
         self.anti_tearing = getattr(self.config, 'anti_tearing', False)
         
         if self.double_buffer:
-            self.back_buffer = bytearray(self.config.width * self.config.height * 2)
+            # Account for rotation when calculating buffer size
+            # For 270° rotation, width/height are swapped in config vs actual display
+            if self.config.rotation in [90, 270]:
+                # Rotated: use height x width 
+                buffer_size = self.config.height * self.config.width * 2
+            else:
+                # Normal: use width x height
+                buffer_size = self.config.width * self.config.height * 2
+            self.back_buffer = bytearray(buffer_size)
         
         self.logger.info(f"SPI speed: {spi_speed/1000000:.1f}MHz, "
                         f"Double buffer: {self.double_buffer}, "
@@ -249,8 +257,9 @@ class ILI9341Driver:
         if not frame_data or len(frame_data) != expected_size:
             return
         
-        if hasattr(self, 'double_buffer') and self.double_buffer and hasattr(self, 'back_buffer'):
-            # Double buffering: prepare frame in back buffer first
+        if (hasattr(self, 'double_buffer') and self.double_buffer and 
+            hasattr(self, 'back_buffer') and len(self.back_buffer) == len(frame_data)):
+            # Double buffering: prepare frame in back buffer first (only if sizes match)
             self.back_buffer[:] = frame_data
             
             if hasattr(self, 'vsync_enabled') and self.vsync_enabled:
@@ -260,7 +269,7 @@ class ILI9341Driver:
             self.set_window(0, 0, self.config.width - 1, self.config.height - 1)
             self.write_pixel_data(bytes(self.back_buffer))
         else:
-            # Direct rendering (faster but potential tearing)
+            # Direct rendering (safe fallback)
             self.set_window(0, 0, self.config.width - 1, self.config.height - 1)
             self.write_pixel_data(frame_data)
     

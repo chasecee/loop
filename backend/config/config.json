@@ -17,9 +17,9 @@
     "show_progress": true,
     "progress_color": 1984,
     "spi_speed_hz": 32000000,
-    "double_buffer": true,
-    "vsync_enabled": true,
-    "anti_tearing": true
+    "double_buffer": false,
+    "vsync_enabled": false,
+    "anti_tearing": false
   },
   "wifi": {
     "ssid": "",
