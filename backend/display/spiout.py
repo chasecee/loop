@@ -74,11 +74,14 @@ class ILI9341Driver:
         if not SPI_AVAILABLE:
             return
         
-        GPIO.output(self.config.dc_pin, GPIO.HIGH)  # Data mode
+        # Validate data before writing
         if isinstance(data, int):
+            GPIO.output(self.config.dc_pin, GPIO.HIGH)  # Data mode
             self.spi.writebytes([data])
-        else:
+        elif data:  # Only write if data is not empty
+            GPIO.output(self.config.dc_pin, GPIO.HIGH)  # Data mode
             self.spi.writebytes(data)
+        # If data is empty, do nothing (no error)
     
     def _reset(self) -> None:
         """Hardware reset the display."""

@@ -12,11 +12,11 @@ Environment=PYTHONPATH=/home/pi/loop/backend
 ExecStart=/usr/bin/python3 /home/pi/loop/backend/main.py
 ExecReload=/bin/kill -USR1 $MAINPID
 
-# Restart policy - aggressive restart for Pi robustness
-Restart=always
-RestartSec=10
-StartLimitInterval=300
-StartLimitBurst=10
+# Restart policy - development mode (less aggressive)
+Restart=on-failure
+RestartSec=5
+StartLimitInterval=60
+StartLimitBurst=3
 
 # Special handling for exit code 42 (our restart request)
 RestartForceExitStatus=42
