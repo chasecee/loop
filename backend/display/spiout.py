@@ -171,7 +171,7 @@ class ILI9341Driver:
     
     def write_pixel_data(self, data: bytes) -> None:
         """Write pixel data to display with optimized chunking."""
-        if not SPI_AVAILABLE:
+        if not SPI_AVAILABLE or not data:
             return
         
         GPIO.output(self.config.dc_pin, GPIO.HIGH)  # Data mode
@@ -187,7 +187,8 @@ class ILI9341Driver:
             # Chunked write for larger frames
             for i in range(0, len(data), chunk_size):
                 chunk = data[i:i + chunk_size]
-                self.spi.writebytes(chunk)
+                if chunk:  # Ensure chunk is not empty
+                    self.spi.writebytes(chunk)
     
     def fill_screen(self, color: int = 0x0000) -> None:
         """Fill entire screen with color (RGB565)."""

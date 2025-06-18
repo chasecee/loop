@@ -195,8 +195,12 @@ class FrameSequence:
     
     def get_frame_duration(self, frame_idx: int) -> float:
         """Get duration for a specific frame."""
+        if not self.durations:
+            return 0.1  # Default 100ms if no durations
+        
         if 0 <= frame_idx < len(self.durations):
-            return self.durations[frame_idx]
+            duration = self.durations[frame_idx]
+            return max(0.01, duration)  # Minimum 10ms duration
         return 0.1  # Default 100ms
     
     def _load_frame(self, frame_path: Path) -> Optional[bytes]:

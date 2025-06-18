@@ -245,8 +245,12 @@ class DisplayPlayer:
             except:
                 font = None
             
-            # Calculate text position (center)
-            bbox = draw.textbbox((0, 0), message, font=font)
+            # Calculate text position (center) with proper font handling
+            try:
+                bbox = draw.textbbox((0, 0), message, font=font)
+            except Exception:
+                # Fallback for older PIL versions or font issues
+                bbox = (0, 0, len(message) * 8, 16)  # Approximate dimensions
             text_width = bbox[2] - bbox[0]
             text_height = bbox[3] - bbox[1]
             
@@ -310,26 +314,38 @@ class DisplayPlayer:
                 
                 # Get current frame if sequence loaded
                 if self.current_sequence:
-                    frame = self.current_sequence.get_frame()
-                    if frame:
-                        # Get frame duration BEFORE advancing frame index
-                        prev_frame_idx = (self.current_sequence.current_frame - 1) % self.current_sequence.frame_count
-                        frame_duration = self.current_sequence.get_frame_duration(prev_frame_idx)
-                        frame_duration = max(frame_duration, min_frame_time)
-                        
-                        # Calculate sleep time (single time.time() call)
-                        current_time = time.time()
-                        elapsed = current_time - last_frame_time
-                        
-                        # Sleep only if needed (non-blocking for fast frames)
-                        if elapsed < frame_duration:
-                            time.sleep(frame_duration - elapsed)
-                            last_frame_time = last_frame_time + frame_duration  # Precise timing
+                    try:
+                        frame = self.current_sequence.get_frame()
+                        if frame:
+                            # Get frame duration for the frame we just displayed
+                            # (current_frame was advanced by get_frame(), so we need the previous one)
+                            displayed_frame_idx = (self.current_sequence.current_frame - 1) % self.current_sequence.frame_count
+                            frame_duration = self.current_sequence.get_frame_duration(displayed_frame_idx)
+                            frame_duration = max(frame_duration, min_frame_time)
+                            
+                            # Calculate sleep time (single time.time() call)
+                            current_time = time.time()
+                            elapsed = current_time - last_frame_time
+                            
+                            # Sleep only if needed (non-blocking for fast frames)
+                            if elapsed < frame_duration:
+                                time.sleep(frame_duration - elapsed)
+                                last_frame_time = last_frame_time + frame_duration  # Precise timing
+                            else:
+                                last_frame_time = current_time  # Catch up timing
+                            
+                            # Display frame (the expensive operation)
+                            self.display_driver.display_frame(frame)
                         else:
-                            last_frame_time = current_time  # Catch up timing
-                        
-                        # Display frame (the expensive operation)
-                        self.display_driver.display_frame(frame)
+                            # Failed to get frame, skip to the next media
+                            self.logger.warning(f"Failed to get frame, skipping to next media")
+                            self.next_media()
+                            last_frame_time = time.time()
+                    except Exception as e:
+                        self.logger.error(f"Error during frame processing: {e}")
+                        # Try to recover by moving to next media
+                        self.next_media()
+                        last_frame_time = time.time()
                         
                         # Check if we've completed a loop
                         if self.current_sequence.is_complete():
