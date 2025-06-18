@@ -758,10 +758,12 @@ def _process_media_file_impl(filename: str, content: bytes, content_type: str, c
         # Convert media with progress tracking
         metadata = converter.convert_media_file(tmp_path, output_dir, job_id=job_id)
         if not metadata:
+            error_msg = f"Media conversion failed for {filename}. Check if ffmpeg is installed and file format is supported."
+            logger.error(error_msg)
             if job_id:
-                media_index.complete_processing_job(job_id, False, f"Failed to process {filename}")
+                media_index.complete_processing_job(job_id, False, error_msg)
             raise HTTPException(
-                status_code=500, detail=f"Failed to process {filename}"
+                status_code=500, detail=error_msg
             )
         
         # Augment metadata for frontend
