@@ -183,9 +183,9 @@ class ILI9341Driver:
         
         GPIO.output(self.config.dc_pin, GPIO.HIGH)  # Data mode
         
-        # Use smaller chunks to avoid Pi SPI buffer issues
-        # Pi SPI might have buffer limitations, so use conservative chunk size
-        chunk_size = min(4096, len(data))  # 4KB chunks for reliability
+        # Use optimized chunks for Pi SPI - 8KB seems to be the sweet spot
+        # Pi SPI buffer can handle this size while maintaining good performance
+        chunk_size = min(8192, len(data))  # 8KB chunks for optimal performance
         
         try:
             # Always use chunked approach for better reliability
