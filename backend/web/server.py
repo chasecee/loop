@@ -13,6 +13,10 @@ from fastapi import FastAPI, UploadFile, File, HTTPException, status
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.base import BaseHTTPMiddleware
+from fastapi.requests import Request
+from fastapi.responses import Response
 
 from config.schema import Config
 from display.player import DisplayPlayer
@@ -70,6 +74,20 @@ class APIResponse(BaseModel):
     message: Optional[str] = None
     data: Optional[Any] = None
     errors: Optional[List[Dict[str, str]]] = None
+
+class CacheControlMiddleware(BaseHTTPMiddleware):
+    """Add cache control headers for static media files."""
+    
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        
+        # Add cache headers for media files
+        if request.url.path.startswith("/media/raw/"):
+            # Cache media files for 1 hour
+            response.headers["Cache-Control"] = "public, max-age=3600"
+            response.headers["ETag"] = f'"{hash(request.url.path)}"'
+        
+        return response
 
 def get_dir_size(path: Path) -> int:
     """Recursively get the size of a directory."""
@@ -527,6 +545,10 @@ def create_app(
             loop=dashboard_data["loop"],
             last_updated=dashboard_data["last_updated"]
         )
+    
+    # Add middleware
+    app.add_middleware(CORSMiddleware)
+    app.add_middleware(CacheControlMiddleware)
     
     logger.info("FastAPI application created successfully")
     return app
