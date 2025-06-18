@@ -38,6 +38,10 @@ class DisplayPlayer:
         self.loop_count = media_config.loop_count
         self.loop_mode = "all"  # "all" or "one"
         
+        # Per-media loop tracking
+        self.current_media_loops = 0  # How many times current media has looped
+        self.static_image_display_time = float(media_config.static_image_duration_sec)  # Configurable static image duration
+        
         # Processing progress display
         self.showing_progress = False
         self.progress_thread: Optional[threading.Thread] = None
@@ -496,8 +500,8 @@ class DisplayPlayer:
         self.show_message("No media loaded", duration=0, color=0x07E0)  # Green text
     
     def run(self) -> None:
-        """Main playback loop - SIMPLIFIED."""
-        self.logger.info("Starting simplified playback loop")
+        """Main playback loop - FIXED to respect loop counts and proper timing."""
+        self.logger.info("Starting fixed playback loop")
         
         while self.running:
             try:
@@ -524,23 +528,23 @@ class DisplayPlayer:
                         else:
                             time.sleep(1)
                         continue
+                    # Reset loop counter when loading new media
+                    self.current_media_loops = 0
                 
                 # Play current media sequence
-                # For loop mode behavior, we only play the media once, then decide what to do next
                 frame_count = self.current_sequence.get_frame_count()
-                
-                # For static images, display for a minimum time
                 is_static_image = frame_count == 1 and self.current_sequence.get_frame_duration(0) == 0.0
                 
                 if is_static_image:
-                    # Display static image for 3 seconds before moving to next
+                    # Display static image for the configured duration
                     frame_data = self.current_sequence.get_frame_data(0)
                     if frame_data:
-                        self.logger.debug(f"Displaying static image for 3 seconds")
+                        self.logger.debug(f"Displaying static image for {self.static_image_display_time} seconds")
                         self.display_driver.display_frame(frame_data)
                         
-                        # Wait 3 seconds for static images (or until interrupted)
-                        for i in range(30):  # 30 * 0.1s = 3 seconds
+                        # Wait for the full duration (or until interrupted)
+                        sleep_intervals = int(self.static_image_display_time * 10)  # 0.1s intervals
+                        for i in range(sleep_intervals):
                             if not self.running or self.showing_progress:
                                 break
                             while self.paused and self.running and not self.showing_progress:
@@ -548,15 +552,19 @@ class DisplayPlayer:
                             if not self.running or self.showing_progress:
                                 break
                             time.sleep(0.1)
+                        
                         self.logger.debug(f"Static image display completed")
                 else:
                     # Play all frames in animated sequence
+                    sequence_completed = True
                     for frame_idx in range(frame_count):
                         if not self.running:
+                            sequence_completed = False
                             break
                         
                         # Don't interfere with processing display
                         if self.showing_progress:
+                            sequence_completed = False
                             break
                         
                         # Handle pause
@@ -564,6 +572,7 @@ class DisplayPlayer:
                             time.sleep(0.1)
                         
                         if not self.running or self.showing_progress:
+                            sequence_completed = False
                             break
                         
                         # Get frame data and duration
@@ -572,6 +581,7 @@ class DisplayPlayer:
                         
                         if frame_data is None:
                             self.logger.error(f"Failed to get frame {frame_idx}")
+                            sequence_completed = False
                             break
                         
                         # Display frame
@@ -585,20 +595,58 @@ class DisplayPlayer:
                         
                         if sleep_time > 0:
                             time.sleep(sleep_time)
+                    
+                    if not sequence_completed:
+                        continue  # Skip loop logic if sequence was interrupted
                 
-                # Handle loop mode behavior after playing sequence
-                current_loop_slugs = media_index.list_loop()  # Re-check in case it changed
+                # Increment loop counter after completing one full playthrough
+                self.current_media_loops += 1
+                self.logger.info(f"Completed loop {self.current_media_loops}/{self.loop_count if self.loop_count > 0 else '∞'} of current media")
+                
+                # Decide what to do next based on loop configuration
+                should_continue_current_media = True
+                
                 if self.loop_mode == "one":
-                    # Loop one mode - keep playing same media (restart from beginning)
-                    continue
-                elif len(current_loop_slugs) > 1:
-                    # Loop all mode with multiple items - move to next
+                    # Loop one mode - check if we should keep looping this media
+                    if self.loop_count > 0 and self.current_media_loops >= self.loop_count:
+                        # Finished required loops for this media, but stay on it
+                        self.current_media_loops = 0  # Reset for next round
+                    # Always continue with same media in "one" mode
+                    should_continue_current_media = True
+                else:
+                    # Loop all mode - check if we should move to next media
+                    current_loop_slugs = media_index.list_loop()  # Re-check in case it changed
+                    
+                    if len(current_loop_slugs) <= 1:
+                        # Only one media item - keep looping it
+                        if self.loop_count > 0 and self.current_media_loops >= self.loop_count:
+                            self.current_media_loops = 0  # Reset for next round
+                        should_continue_current_media = True
+                                         else:
+                         # Multiple media items - check if we should switch
+                         if not self.media_config.auto_advance_enabled:
+                             # Auto-advance disabled - stay on current media
+                             should_continue_current_media = True
+                         elif self.loop_count <= 0:
+                             # Infinite loops - play each media once then move to next
+                             should_continue_current_media = False
+                         elif self.current_media_loops >= self.loop_count:
+                             # Completed required loops - move to next
+                             should_continue_current_media = False
+                         else:
+                             # Still need more loops of current media
+                             should_continue_current_media = True
+                
+                if not should_continue_current_media:
+                    # Time to switch to next media
+                    self.logger.info(f"Switching to next media (mode: {self.loop_mode}, loops completed: {self.current_media_loops})")
                     self.next_media()
                     # Clear current sequence to force reload of next media
                     self.current_sequence = None
+                    self.current_media_loops = 0
                 else:
-                    # Single media item in loop all mode - just replay it
-                    continue
+                    # Continue with same media - just loop again (no sequence reload needed)
+                    self.logger.debug(f"Continuing current media loop (mode: {self.loop_mode})")
                 
             except Exception as e:
                 self.logger.error(f"Error in playback loop: {e}")

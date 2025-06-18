@@ -48,7 +48,9 @@ class MediaConfig:
     """Media configuration."""
     max_file_size_mb: int = 10
     active_media: Optional[str] = None
-    loop_count: int = -1
+    loop_count: int = 3  # Loop each media 3 times before advancing (was -1)
+    static_image_duration_sec: int = 10  # How long to display static images
+    auto_advance_enabled: bool = True  # Whether to auto-advance to next media in loop mode
 
 
 @dataclass

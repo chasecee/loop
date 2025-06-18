@@ -33,7 +33,9 @@
   "media": {
     "max_file_size_mb": 25,
     "active_media": null,
-    "loop_count": -1
+    "loop_count": 3,
+    "static_image_duration_sec": 10,
+    "auto_advance_enabled": true
   },
   "sync": {
     "enabled": false,
