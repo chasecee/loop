@@ -626,11 +626,20 @@ def create_app(
     @app.get("/api/media/progress", response_model=APIResponse)
     async def get_all_processing_progress():
         """Get all current processing jobs."""
-        jobs = media_index.list_processing_jobs()
-        return APIResponse(
-            success=True,
-            data={"jobs": jobs}
-        )
+        try:
+            jobs = media_index.list_processing_jobs()
+            return APIResponse(
+                success=True,
+                data={"jobs": jobs}
+            )
+        except Exception as e:
+            logger.error(f"Failed to get processing progress: {e}")
+            # Return empty jobs instead of error to prevent frontend polling issues
+            return APIResponse(
+                success=True,
+                data={"jobs": {}},
+                message="Progress data temporarily unavailable"
+            )
     
     @app.delete("/api/media/progress/{job_id}", response_model=APIResponse)
     async def clear_processing_job(job_id: str):
