@@ -11,7 +11,17 @@ DisplayPlayer can share a single canonical schema:
     },
     "loop": ["slug1", "slug2", ...],
     "active": "slug1",            # optional currently-playing slug
-    "last_updated": 1700000000
+    "last_updated": 1700000000,
+    "processing": {              # track processing jobs
+        "<job_id>": {
+            "filename": "...",
+            "status": "processing|completed|error",
+            "progress": 0-100,
+            "stage": "...",
+            "message": "...",
+            "timestamp": 1700000000
+        }
+    }
 }
 """
 from __future__ import annotations
@@ -44,10 +54,22 @@ class MediaMetadata:
     width: Optional[int] = None
     height: Optional[int] = None
     frame_count: Optional[int] = None
+    processing_status: Optional[str] = None  # "pending", "processing", "completed", "error"
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {k: v for k, v in asdict(self).items() if v is not None}
+
+@dataclass
+class ProcessingJob:
+    """Type-safe processing job structure."""
+    job_id: str
+    filename: str
+    status: str  # "processing", "completed", "error"
+    progress: float
+    stage: str
+    message: str
+    timestamp: float
 
 @dataclass
 class MediaIndex:
@@ -56,6 +78,7 @@ class MediaIndex:
     loop: List[str]
     active: Optional[str]
     last_updated: Optional[int]
+    processing: Dict[str, Dict[str, Any]]  # job_id -> processing info
     
     @classmethod
     def empty(cls) -> 'MediaIndex':
@@ -64,7 +87,8 @@ class MediaIndex:
             media={},
             loop=[],
             active=None,
-            last_updated=None
+            last_updated=None,
+            processing={}
         )
     
     def to_dict(self) -> Dict[str, Any]:
@@ -73,7 +97,8 @@ class MediaIndex:
             "media": self.media,
             "loop": self.loop,
             "active": self.active,
-            "last_updated": self.last_updated or int(time.time())
+            "last_updated": self.last_updated or int(time.time()),
+            "processing": self.processing
         }
 
 class MediaIndexManager:
@@ -110,7 +135,8 @@ class MediaIndexManager:
                 media=data.get("media", {}),
                 loop=data.get("loop", []),
                 active=data.get("active"),
-                last_updated=data.get("last_updated")
+                last_updated=data.get("last_updated"),
+                processing=data.get("processing", {})
             )
 
             # Validate data integrity
@@ -128,6 +154,19 @@ class MediaIndexManager:
             if index.active and index.active not in valid_slugs:
                 LOGGER.info(f"Clearing invalid active slug: {index.active}")
                 index.active = index.loop[0] if index.loop else None
+                self._write_raw(index)
+
+            # Clean up old processing jobs (older than 1 hour)
+            current_time = time.time()
+            old_jobs = [
+                job_id for job_id, job_data in index.processing.items()
+                if current_time - job_data.get("timestamp", 0) > 3600
+            ]
+            for job_id in old_jobs:
+                del index.processing[job_id]
+            
+            if old_jobs:
+                LOGGER.info(f"Cleaned up {len(old_jobs)} old processing jobs")
                 self._write_raw(index)
 
             return index
@@ -151,6 +190,10 @@ class MediaIndexManager:
                 LOGGER.error("Invalid loop format for writing")
                 return
 
+            if not isinstance(index.processing, dict):
+                LOGGER.error("Invalid processing format for writing")
+                return
+
             # Write to temporary file first for atomic operation
             temp_file = self.index_path.with_suffix('.json.tmp')
             
@@ -165,7 +208,7 @@ class MediaIndexManager:
 
             # Atomic rename
             shutil.move(str(temp_file), str(self.index_path))
-            LOGGER.debug(f"Media index written successfully ({len(index.media)} items, {len(index.loop)} in loop)")
+            LOGGER.debug(f"Media index written successfully ({len(index.media)} items, {len(index.loop)} in loop, {len(index.processing)} processing)")
 
         except Exception as exc:
             LOGGER.error(f"Failed to write media index: {exc}")
@@ -185,7 +228,8 @@ class MediaIndexManager:
             "media": list(index.media.values()),
             "loop": index.loop,
             "active": index.active,
-            "last_updated": index.last_updated
+            "last_updated": index.last_updated,
+            "processing": index.processing
         }
     
     def list_media(self) -> List[Dict[str, Any]]:
@@ -211,6 +255,66 @@ class MediaIndexManager:
             return None
         
         return index.active
+
+    # Processing job management
+    
+    def add_processing_job(self, job_id: str, filename: str) -> None:
+        """Add a processing job to track conversion progress."""
+        index = self._read_raw()
+        index.processing[job_id] = {
+            "job_id": job_id,
+            "filename": filename,
+            "status": "processing",
+            "progress": 0,
+            "stage": "starting",
+            "message": "Initializing conversion...",
+            "timestamp": time.time()
+        }
+        self._write_raw(index)
+        LOGGER.info(f"Added processing job: {job_id} for {filename}")
+
+    def update_processing_job(self, job_id: str, progress: float, stage: str, message: str) -> None:
+        """Update processing job progress."""
+        index = self._read_raw()
+        if job_id in index.processing:
+            index.processing[job_id].update({
+                "progress": min(100, max(0, progress)),
+                "stage": stage,
+                "message": message,
+                "timestamp": time.time()
+            })
+            self._write_raw(index)
+
+    def complete_processing_job(self, job_id: str, success: bool, error: str = "") -> None:
+        """Mark a processing job as completed."""
+        index = self._read_raw()
+        if job_id in index.processing:
+            index.processing[job_id].update({
+                "progress": 100,
+                "stage": "completed" if success else "error",
+                "message": "Conversion completed" if success else f"Error: {error}",
+                "status": "completed" if success else "error",
+                "timestamp": time.time()
+            })
+            self._write_raw(index)
+            LOGGER.info(f"Completed processing job: {job_id} (success: {success})")
+
+    def get_processing_job(self, job_id: str) -> Optional[Dict[str, Any]]:
+        """Get processing job status."""
+        index = self._read_raw()
+        return index.processing.get(job_id)
+
+    def remove_processing_job(self, job_id: str) -> None:
+        """Remove a processing job from tracking."""
+        index = self._read_raw()
+        if job_id in index.processing:
+            del index.processing[job_id]
+            self._write_raw(index)
+            LOGGER.info(f"Removed processing job: {job_id}")
+
+    def list_processing_jobs(self) -> Dict[str, Dict[str, Any]]:
+        """Return all processing jobs."""
+        return self._read_raw().processing.copy()
 
     def add_media(self, metadata: Union[Dict[str, Any], MediaMetadata], make_active: bool = True) -> None:
         """Add a media item to the index."""

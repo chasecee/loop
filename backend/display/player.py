@@ -38,6 +38,11 @@ class DisplayPlayer:
         self.loop_count = media_config.loop_count
         self.loop_mode = "all"  # "all" or "one"
         
+        # Processing progress display
+        self.showing_progress = False
+        self.progress_thread: Optional[threading.Thread] = None
+        self.progress_stop_event = threading.Event()
+        
         # Threading
         self.playback_thread: Optional[threading.Thread] = None
         self.lock = threading.Lock()
@@ -284,6 +289,191 @@ class DisplayPlayer:
         except Exception as e:
             self.logger.error(f"Failed to show message: {e}")
     
+    def show_progress_bar(self, title: str, subtitle: str, progress: float, color: int = 0x07E0) -> None:
+        """Display a progress bar with title and subtitle."""
+        try:
+            # Create image
+            image = Image.new('RGB', (self.display_config.width, self.display_config.height), (0, 0, 0))
+            draw = ImageDraw.Draw(image)
+            
+            # Try to load fonts
+            try:
+                title_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 20)
+                subtitle_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 14)
+            except (OSError, IOError):
+                try:
+                    title_font = ImageFont.load_default()
+                    subtitle_font = ImageFont.load_default()
+                except:
+                    title_font = None
+                    subtitle_font = None
+            
+            # Convert RGB565 color to RGB888
+            if isinstance(color, int):
+                r = (color >> 11) << 3
+                g = ((color >> 5) & 0x3F) << 2
+                b = (color & 0x1F) << 3
+                rgb_color = (r, g, b)
+            else:
+                rgb_color = color
+            
+            # Draw title
+            if title_font:
+                bbox = draw.textbbox((0, 0), title, font=title_font)
+                title_width = bbox[2] - bbox[0]
+                title_x = (self.display_config.width - title_width) // 2
+                title_y = 40
+                draw.text((title_x, title_y), title, fill=(255, 255, 255), font=title_font)
+            
+            # Draw subtitle
+            if subtitle_font and subtitle:
+                bbox = draw.textbbox((0, 0), subtitle, font=subtitle_font)
+                subtitle_width = bbox[2] - bbox[0]
+                subtitle_x = (self.display_config.width - subtitle_width) // 2
+                subtitle_y = 80
+                draw.text((subtitle_x, subtitle_y), subtitle, fill=(200, 200, 200), font=subtitle_font)
+            
+            # Draw progress bar
+            bar_width = 180
+            bar_height = 20
+            bar_x = (self.display_config.width - bar_width) // 2
+            bar_y = 140
+            
+            # Progress bar background
+            draw.rectangle([bar_x, bar_y, bar_x + bar_width, bar_y + bar_height], 
+                         outline=(100, 100, 100), fill=(30, 30, 30))
+            
+            # Progress bar fill
+            fill_width = int((progress / 100.0) * bar_width)
+            if fill_width > 0:
+                draw.rectangle([bar_x, bar_y, bar_x + fill_width, bar_y + bar_height], 
+                             fill=rgb_color)
+            
+            # Progress percentage
+            progress_text = f"{int(progress)}%"
+            if title_font:
+                bbox = draw.textbbox((0, 0), progress_text, font=title_font)
+                progress_width = bbox[2] - bbox[0]
+                progress_x = (self.display_config.width - progress_width) // 2
+                progress_y = 180
+                draw.text((progress_x, progress_y), progress_text, fill=(255, 255, 255), font=title_font)
+            
+            # Convert to RGB565 format
+            decoder = FrameDecoder(self.display_config.width, self.display_config.height)
+            buffer = io.BytesIO()
+            image.save(buffer, format='PNG')
+            buffer.seek(0)
+            frame_data = decoder.decode_image_bytes(buffer.getvalue())
+            buffer.close()
+            
+            if frame_data:
+                self.display_driver.display_frame(frame_data)
+            
+        except Exception as e:
+            self.logger.error(f"Failed to show progress bar: {e}")
+    
+    def start_processing_display(self, job_ids: List[str]) -> None:
+        """Start displaying processing progress for given job IDs."""
+        if self.showing_progress:
+            self.stop_processing_display()
+        
+        self.showing_progress = True
+        self.progress_stop_event.clear()
+        
+        self.progress_thread = threading.Thread(
+            target=self._processing_display_loop, 
+            args=(job_ids,),
+            daemon=True
+        )
+        self.progress_thread.start()
+        self.logger.info(f"Started processing display for {len(job_ids)} jobs")
+    
+    def stop_processing_display(self) -> None:
+        """Stop displaying processing progress."""
+        if self.showing_progress:
+            self.showing_progress = False
+            self.progress_stop_event.set()
+            
+            if self.progress_thread:
+                self.progress_thread.join(timeout=2)
+                if self.progress_thread.is_alive():
+                    self.logger.warning("Processing display thread did not stop gracefully")
+            
+            self.logger.info("Stopped processing display")
+    
+    def _processing_display_loop(self, job_ids: List[str]) -> None:
+        """Loop that displays processing progress."""
+        try:
+            while not self.progress_stop_event.is_set():
+                # Get processing jobs
+                processing_jobs = media_index.list_processing_jobs()
+                
+                # Filter to our job IDs
+                relevant_jobs = {
+                    job_id: job_data for job_id, job_data in processing_jobs.items()
+                    if job_id in job_ids
+                }
+                
+                if not relevant_jobs:
+                    # No jobs found, maybe they're completed
+                    break
+                
+                # Calculate overall progress
+                total_jobs = len(job_ids)
+                completed_jobs = sum(1 for job in relevant_jobs.values() 
+                                   if job.get('status') in ['completed', 'error'])
+                
+                if total_jobs > 0:
+                    overall_progress = (completed_jobs / total_jobs) * 100
+                else:
+                    overall_progress = 100
+                
+                # Find an active job for current status
+                active_job = None
+                for job in relevant_jobs.values():
+                    if job.get('status') == 'processing':
+                        active_job = job
+                        break
+                
+                if active_job:
+                    # Show individual job progress
+                    title = "Processing Media"
+                    subtitle = f"{active_job.get('stage', 'Processing')}"
+                    if 'message' in active_job and active_job['message']:
+                        subtitle = active_job['message'][:30] + "..." if len(active_job['message']) > 30 else active_job['message']
+                    
+                    job_progress = active_job.get('progress', 0)
+                    self.show_progress_bar(title, subtitle, job_progress)
+                else:
+                    # Show overall progress
+                    title = "Processing Media"
+                    subtitle = f"Completed {completed_jobs}/{total_jobs} files"
+                    self.show_progress_bar(title, subtitle, overall_progress)
+                
+                # Check if all jobs are completed
+                all_completed = all(
+                    job.get('status') in ['completed', 'error'] 
+                    for job in relevant_jobs.values()
+                )
+                
+                if all_completed:
+                    # Show completion message briefly
+                    self.show_progress_bar("Processing Complete", 
+                                         f"Processed {total_jobs} files", 100)
+                    time.sleep(2)
+                    break
+                
+                # Wait before next update
+                if not self.progress_stop_event.wait(1.0):  # 1 second update interval
+                    continue
+                else:
+                    break
+                    
+        except Exception as e:
+            self.logger.error(f"Error in processing display loop: {e}")
+        finally:
+            self.showing_progress = False
+    
     def show_no_media_message(self) -> None:
         """Show a message when no media is available."""
         self.show_message("No media loaded", duration=0, color=0x07E0)  # Green text
@@ -294,6 +484,11 @@ class DisplayPlayer:
         
         while self.running:
             try:
+                # Don't interfere with processing display
+                if self.showing_progress:
+                    time.sleep(0.5)
+                    continue
+                
                 # Get current loop state fresh every cycle
                 loop_slugs = media_index.list_loop()
                 
@@ -322,11 +517,15 @@ class DisplayPlayer:
                     if not self.running:
                         break
                     
+                    # Don't interfere with processing display
+                    if self.showing_progress:
+                        break
+                    
                     # Handle pause
-                    while self.paused and self.running:
+                    while self.paused and self.running and not self.showing_progress:
                         time.sleep(0.1)
                     
-                    if not self.running:
+                    if not self.running or self.showing_progress:
                         break
                     
                     # Get frame data and duration
@@ -381,6 +580,7 @@ class DisplayPlayer:
         """Stop the display player."""
         if self.running:
             self.running = False
+            self.stop_processing_display()  # Stop progress display too
             if self.playback_thread:
                 self.playback_thread.join(timeout=5)
                 if self.playback_thread.is_alive():
@@ -399,7 +599,8 @@ class DisplayPlayer:
             "loop_index": current_index,
             "total_media": len(loop_slugs),
             "frame_rate": self.frame_rate,
-            "loop_mode": self.loop_mode
+            "loop_mode": self.loop_mode,
+            "showing_progress": self.showing_progress
         }
     
     def refresh_media_list(self) -> None:

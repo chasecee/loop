@@ -5,6 +5,7 @@ import os
 import shutil
 import tempfile
 import time
+import uuid
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 from datetime import datetime
@@ -51,6 +52,16 @@ class MediaItem(BaseModel):
     height: Optional[int] = None
     frame_count: Optional[int] = None
 
+class ProcessingJobResponse(BaseModel):
+    """Processing job status response."""
+    job_id: str
+    filename: str
+    status: str
+    progress: float
+    stage: str
+    message: str
+    timestamp: float
+
 class DeviceStatus(BaseModel):
     """Device status matching frontend expectations."""
     system: str = "LOOP v1.0.0"
@@ -67,6 +78,7 @@ class DashboardData(BaseModel):
     active: Optional[str]
     loop: List[str]
     last_updated: Optional[int]
+    processing: Optional[Dict[str, Any]] = None
 
 class APIResponse(BaseModel):
     """Standard API response format."""
@@ -211,6 +223,7 @@ def create_app(
         
         processed_files = []
         errors = []
+        job_ids = []
         
         # Pause playback during processing
         playback_was_running = False
@@ -218,19 +231,33 @@ def create_app(
             playback_was_running = True
             try:
                 display_player.toggle_pause()
-                display_player.show_message("Processing media…", duration=0)
             except Exception as exc:
-                logger.warning(f"Failed to display processing splash: {exc}")
+                logger.warning(f"Failed to pause playback: {exc}")
         
         try:
             for file in files:
                 try:
-                    metadata = await process_media_file(file, converter, config)
+                    # Generate job ID for this file
+                    job_id = str(uuid.uuid4())
+                    job_ids.append(job_id)
+                    
+                    # Add processing job to index
+                    media_index.add_processing_job(job_id, file.filename)
+                    
+                    metadata = await process_media_file(file, converter, config, job_id)
                     processed_files.append(metadata)
                 except Exception as e:
                     logger.error(f"Upload failed for {file.filename}: {e}")
                     error_detail = e.detail if isinstance(e, HTTPException) else str(e)
                     errors.append({"filename": file.filename, "error": error_detail})
+            
+            # Start display progress tracking if we have jobs and display player
+            if job_ids and display_player:
+                try:
+                    display_player.start_processing_display(job_ids)
+                except Exception as exc:
+                    logger.warning(f"Failed to start processing display: {exc}")
+            
         finally:
             # Always refresh player and resume if needed
             if display_player:
@@ -244,8 +271,8 @@ def create_app(
                             display_player.set_active_media(last_uploaded_slug)
                             logger.info(f"Activated newly uploaded media: {last_uploaded_slug}")
                     
+                    # Resume playback
                     if playback_was_running:
-                        display_player.show_message("Processing complete!", duration=2.0)
                         display_player.toggle_pause()  # Resume
                 except Exception as exc:
                     logger.error(f"Failed to refresh/activate player: {exc}")
@@ -256,7 +283,7 @@ def create_app(
         return APIResponse(
             success=True,
             message=f"Processed {len(processed_files)} files",
-            data={"processed_files": processed_files},
+            data={"processed_files": processed_files, "job_ids": job_ids},
             errors=errors if errors else None
         )
     
@@ -546,6 +573,42 @@ def create_app(
             last_updated=dashboard_data["last_updated"]
         )
     
+    # Processing Progress API
+    
+    @app.get("/api/media/progress/{job_id}", response_model=APIResponse)
+    async def get_processing_progress(job_id: str):
+        """Get processing progress for a specific job."""
+        job_data = media_index.get_processing_job(job_id)
+        if not job_data:
+            raise HTTPException(status_code=404, detail="Processing job not found")
+        
+        return APIResponse(
+            success=True,
+            data=job_data
+        )
+    
+    @app.get("/api/media/progress", response_model=APIResponse)
+    async def get_all_processing_progress():
+        """Get all current processing jobs."""
+        jobs = media_index.list_processing_jobs()
+        return APIResponse(
+            success=True,
+            data={"jobs": jobs}
+        )
+    
+    @app.delete("/api/media/progress/{job_id}", response_model=APIResponse)
+    async def clear_processing_job(job_id: str):
+        """Clear a completed processing job."""
+        job_data = media_index.get_processing_job(job_id)
+        if not job_data:
+            raise HTTPException(status_code=404, detail="Processing job not found")
+        
+        media_index.remove_processing_job(job_id)
+        return APIResponse(
+            success=True,
+            message="Processing job cleared"
+        )
+    
     # Add middleware
     app.add_middleware(CORSMiddleware)
     app.add_middleware(CacheControlMiddleware)
@@ -553,12 +616,14 @@ def create_app(
     logger.info("FastAPI application created successfully")
     return app
 
-async def process_media_file(file: UploadFile, converter: MediaConverter, config: Config) -> Dict[str, Any]:
+async def process_media_file(file: UploadFile, converter: MediaConverter, config: Config, job_id: str = None) -> Dict[str, Any]:
     """Process a single uploaded media file."""
     # Validate file type and size
     allowed_extensions = {".gif", ".mp4", ".avi", ".mov", ".png", ".jpg", ".jpeg"}
     file_ext = Path(file.filename).suffix.lower()
     if file_ext not in allowed_extensions:
+        if job_id:
+            media_index.complete_processing_job(job_id, False, f"Unsupported file type: {file.filename}")
         raise HTTPException(
             status_code=400,
             detail=f"Unsupported file type: {file.filename}",
@@ -569,11 +634,16 @@ async def process_media_file(file: UploadFile, converter: MediaConverter, config
     # Save to temporary file
     media_raw_dir = Path("media/raw")
     try:
+        if job_id:
+            media_index.update_processing_job(job_id, 5, "uploading", "Saving uploaded file...")
+        
         with tempfile.NamedTemporaryFile(
             delete=False, suffix=file.filename, dir=media_raw_dir
         ) as tmp:
             content = await file.read()
             if len(content) > max_size:
+                if job_id:
+                    media_index.complete_processing_job(job_id, False, f"File too large: {file.filename}")
                 raise HTTPException(
                     status_code=413, detail=f"File too large: {file.filename}"
                 )
@@ -584,9 +654,14 @@ async def process_media_file(file: UploadFile, converter: MediaConverter, config
         slug = converter._generate_slug(tmp_path.name)
         output_dir = Path("media/processed") / slug
 
-        # Convert media
-        metadata = converter.convert_media_file(tmp_path, output_dir)
+        if job_id:
+            media_index.update_processing_job(job_id, 10, "converting", "Starting media conversion...")
+        
+        # Convert media with progress tracking
+        metadata = converter.convert_media_file(tmp_path, output_dir, job_id=job_id)
         if not metadata:
+            if job_id:
+                media_index.complete_processing_job(job_id, False, f"Failed to process {file.filename}")
             raise HTTPException(
                 status_code=500, detail=f"Failed to process {file.filename}"
             )
@@ -610,8 +685,15 @@ async def process_media_file(file: UploadFile, converter: MediaConverter, config
         dest_raw_path = media_raw_dir / f"{slug}{Path(file.filename).suffix}"
         shutil.copy(tmp_path, dest_raw_path)
 
+        if job_id:
+            media_index.complete_processing_job(job_id, True)
+
         return metadata
 
+    except Exception as e:
+        if job_id:
+            media_index.complete_processing_job(job_id, False, str(e))
+        raise
     finally:
         # Clean up temp file
         if "tmp_path" in locals() and tmp_path.exists():

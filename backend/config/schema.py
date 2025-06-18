@@ -50,6 +50,14 @@ class MediaConfig:
 
 
 @dataclass
+class ProcessingConfig:
+    """Media processing configuration."""
+    progress_update_interval_ms: int = 500  # How often to update progress in convert.py
+    job_cleanup_hours: int = 1  # Clean up old processing jobs after this many hours
+    max_concurrent_jobs: int = 3  # Maximum concurrent conversion jobs
+
+
+@dataclass
 class SyncConfig:
     """Sync configuration."""
     enabled: bool = False
@@ -81,6 +89,7 @@ class Config:
     wifi: WiFiConfig
     encoder: EncoderConfig
     media: MediaConfig
+    processing: ProcessingConfig
     sync: SyncConfig
     web: WebConfig
 
@@ -105,6 +114,7 @@ class Config:
             wifi=WiFiConfig(**data.get('wifi', {})),
             encoder=EncoderConfig(**data.get('encoder', {})),
             media=MediaConfig(**data.get('media', {})),
+            processing=ProcessingConfig(**data.get('processing', {})),
             sync=SyncConfig(**data.get('sync', {})),
             web=WebConfig(**data.get('web', {}))
         )
@@ -128,6 +138,7 @@ class Config:
             wifi=WiFiConfig(),
             encoder=EncoderConfig(),
             media=MediaConfig(),
+            processing=ProcessingConfig(),
             sync=SyncConfig(),
             web=WebConfig()
         )

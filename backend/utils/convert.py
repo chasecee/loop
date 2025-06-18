@@ -4,8 +4,11 @@ import json
 import struct
 import subprocess
 import shutil
+import threading
+import uuid
+import time
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union, Callable
 from PIL import Image, ImageSequence, ImageOps
 import tempfile
 import hashlib
@@ -29,6 +32,18 @@ class MediaConverter:
         if not self.ffmpeg_available:
             self.logger.warning("ffmpeg not found - video conversion will be limited")
     
+    def _update_progress(self, job_id: str, progress: float, stage: str, message: str = ""):
+        """Update progress for a job using media_index."""
+        if job_id:
+            from utils.media_index import media_index
+            media_index.update_processing_job(job_id, progress, stage, message)
+    
+    def _complete_job(self, job_id: str, success: bool, error: str = "") -> None:
+        """Mark a job as completed using media_index."""
+        if job_id:
+            from utils.media_index import media_index
+            media_index.complete_processing_job(job_id, success, error)
+    
     def _generate_slug(self, filename: str) -> str:
         """Generate URL-safe slug from filename."""
         # Remove extension and create hash-based slug
@@ -36,15 +51,23 @@ class MediaConverter:
         hash_part = hashlib.md5(filename.encode()).hexdigest()[:8]
         return f"{name}_{hash_part}".lower().replace(' ', '_').replace('-', '_')
     
-    def convert_gif(self, gif_path: Path, output_dir: Path, format_type: str = "rgb565") -> Optional[Dict]:
+    def convert_gif(self, gif_path: Path, output_dir: Path, format_type: str = "rgb565", job_id: str = None) -> Optional[Dict]:
         """Convert GIF to frame sequence."""
         try:
+            if job_id:
+                self._update_progress(job_id, 10, "analyzing", "Analyzing GIF structure...")
+            
             self.logger.info(f"Converting GIF: {gif_path}")
             
             with Image.open(gif_path) as img:
                 if not hasattr(img, 'is_animated') or not img.is_animated:
                     self.logger.error("File is not an animated GIF")
+                    if job_id:
+                        self._complete_job(job_id, False, "File is not an animated GIF")
                     return None
+                
+                if job_id:
+                    self._update_progress(job_id, 20, "preparing", "Preparing frame extraction...")
                 
                 frames = []
                 durations = []
@@ -53,13 +76,20 @@ class MediaConverter:
                 frames_dir = output_dir / "frames"
                 frames_dir.mkdir(exist_ok=True)
                 
-                frame_count = 0
+                frame_count = getattr(img, 'n_frames', 0)
+                self.logger.info(f"Processing {frame_count} frames")
+                
+                processed_frames = 0
                 for frame in ImageSequence.Iterator(img):
+                    if job_id:
+                        progress = 20 + (processed_frames / frame_count) * 60  # 20-80% for frame processing
+                        self._update_progress(job_id, progress, "processing", f"Processing frame {processed_frames + 1}/{frame_count}")
+                    
                     # Resize & crop frame to fill the display (proper aspect ratio handling)
                     frame = self._resize_and_crop(frame)
                     
                     # Save frame
-                    frame_path = self._save_frame(frame, frames_dir, frame_count, format_type)
+                    frame_path = self._save_frame(frame, frames_dir, processed_frames, format_type)
                     if frame_path:
                         frames.append(frame_path.name)
                         
@@ -67,11 +97,16 @@ class MediaConverter:
                         duration = frame.info.get('duration', 100) / 1000.0
                         durations.append(duration)
                         
-                        frame_count += 1
+                        processed_frames += 1
                 
                 if not frames:
                     self.logger.error("No frames were converted")
+                    if job_id:
+                        self._complete_job(job_id, False, "No frames were converted")
                     return None
+                
+                if job_id:
+                    self._update_progress(job_id, 90, "finalizing", "Generating metadata...")
                 
                 # Generate metadata
                 metadata = {
@@ -80,7 +115,7 @@ class MediaConverter:
                     "original_filename": gif_path.name,
                     "width": self.target_width,
                     "height": self.target_height,
-                    "frame_count": frame_count,
+                    "frame_count": processed_frames,
                     "frames": frames,
                     "durations": durations,
                     "format": format_type,
@@ -92,25 +127,39 @@ class MediaConverter:
                 with open(metadata_path, 'w') as f:
                     json.dump(metadata, f, indent=2)
                 
-                self.logger.info(f"Converted GIF to {frame_count} frames")
+                self.logger.info(f"Converted GIF to {processed_frames} frames")
+                
+                if job_id:
+                    self._complete_job(job_id, True)
+                
                 return metadata
                 
         except Exception as e:
             self.logger.error(f"Failed to convert GIF {gif_path}: {e}")
+            if job_id:
+                self._complete_job(job_id, False, str(e))
             return None
     
-    def convert_video(self, video_path: Path, output_dir: Path, format_type: str = "rgb565", fps: float = 10.0) -> Optional[Dict]:
+    def convert_video(self, video_path: Path, output_dir: Path, format_type: str = "rgb565", fps: float = 10.0, job_id: str = None) -> Optional[Dict]:
         """Convert video to frame sequence using ffmpeg with proper aspect ratio handling."""
         if not self.ffmpeg_available:
             self.logger.error("ffmpeg not available for video conversion")
+            if job_id:
+                self._complete_job(job_id, False, "ffmpeg not available for video conversion")
             return None
         
         try:
+            if job_id:
+                self._update_progress(job_id, 10, "analyzing", "Analyzing video...")
+            
             self.logger.info(f"Converting video: {video_path}")
             
             output_dir.mkdir(parents=True, exist_ok=True)
             frames_dir = output_dir / "frames"
             frames_dir.mkdir(exist_ok=True)
+            
+            if job_id:
+                self._update_progress(job_id, 20, "extracting", "Extracting frames with ffmpeg...")
             
             if format_type == "rgb565":
                 # Direct RGB565 conversion with proper aspect ratio handling
@@ -131,12 +180,19 @@ class MediaConverter:
                 result = subprocess.run(cmd, capture_output=True, text=True)
                 if result.returncode != 0:
                     self.logger.error(f"ffmpeg failed: {result.stderr}")
+                    if job_id:
+                        self._complete_job(job_id, False, f"ffmpeg failed: {result.stderr}")
                     return None
+                
+                if job_id:
+                    self._update_progress(job_id, 60, "processing", "Processing extracted frames...")
                 
                 # Split the raw video into individual frame files
                 raw_file = frames_dir / 'frames.raw'
                 if not raw_file.exists():
                     self.logger.error("No raw video data generated")
+                    if job_id:
+                        self._complete_job(job_id, False, "No raw video data generated")
                     return None
                 
                 frame_size = self.target_width * self.target_height * 2  # RGB565 = 2 bytes per pixel
@@ -145,11 +201,18 @@ class MediaConverter:
                 frame_duration = 1.0 / fps
                 frame_index = 0
                 
+                raw_file_size = raw_file.stat().st_size
+                estimated_frames = raw_file_size // frame_size
+                
                 with open(raw_file, 'rb') as f:
                     while True:
                         frame_data = f.read(frame_size)
                         if len(frame_data) != frame_size:
                             break
+                        
+                        if job_id and estimated_frames > 0:
+                            progress = 60 + (frame_index / estimated_frames) * 20  # 60-80% for frame processing
+                            self._update_progress(job_id, progress, "processing", f"Processing frame {frame_index + 1}/{estimated_frames}")
                         
                         # Save individual frame
                         frame_path = frames_dir / f"frame_{frame_index:06d}.rgb565"
@@ -183,12 +246,19 @@ class MediaConverter:
                     result = subprocess.run(cmd, capture_output=True, text=True)
                     if result.returncode != 0:
                         self.logger.error(f"ffmpeg failed: {result.stderr}")
+                        if job_id:
+                            self._complete_job(job_id, False, f"ffmpeg failed: {result.stderr}")
                         return None
+                    
+                    if job_id:
+                        self._update_progress(job_id, 60, "processing", "Converting extracted frames...")
                     
                     # Convert extracted frames (no need for _resize_and_crop since ffmpeg did it)
                     frame_files = sorted(temp_path.glob('frame_*.png'))
                     if not frame_files:
                         self.logger.error("No frames extracted from video")
+                        if job_id:
+                            self._complete_job(job_id, False, "No frames extracted from video")
                         return None
                     
                     frames = []
@@ -196,6 +266,10 @@ class MediaConverter:
                     frame_duration = 1.0 / fps
                     
                     for i, frame_file in enumerate(frame_files):
+                        if job_id:
+                            progress = 60 + (i / len(frame_files)) * 20  # 60-80% for frame processing
+                            self._update_progress(job_id, progress, "processing", f"Processing frame {i + 1}/{len(frame_files)}")
+                        
                         with Image.open(frame_file) as img:
                             # Convert to RGB if needed (no resizing needed!)
                             if img.mode != 'RGB':
@@ -209,7 +283,12 @@ class MediaConverter:
             
             if not frames:
                 self.logger.error("No frames were converted")
+                if job_id:
+                    self._complete_job(job_id, False, "No frames were converted")
                 return None
+            
+            if job_id:
+                self._update_progress(job_id, 90, "finalizing", "Generating metadata...")
             
             # Generate metadata
             metadata = {
@@ -232,18 +311,30 @@ class MediaConverter:
                 json.dump(metadata, f, indent=2)
             
             self.logger.info(f"Converted video to {len(frames)} frames at {fps} FPS")
+            
+            if job_id:
+                self._complete_job(job_id, True)
+            
             return metadata
             
         except Exception as e:
             self.logger.error(f"Failed to convert video {video_path}: {e}")
+            if job_id:
+                self._complete_job(job_id, False, str(e))
             return None
     
-    def convert_image(self, image_path: Path, output_dir: Path, format_type: str = "rgb565") -> Optional[Dict]:
+    def convert_image(self, image_path: Path, output_dir: Path, format_type: str = "rgb565", job_id: str = None) -> Optional[Dict]:
         """Convert static image to single frame."""
         try:
+            if job_id:
+                self._update_progress(job_id, 10, "analyzing", "Analyzing image...")
+            
             self.logger.info(f"Converting image: {image_path}")
             
             with Image.open(image_path) as img:
+                if job_id:
+                    self._update_progress(job_id, 30, "processing", "Resizing and cropping...")
+                
                 # Resize & crop image
                 img = self._resize_and_crop(img)
                 
@@ -252,10 +343,18 @@ class MediaConverter:
                 frames_dir = output_dir / "frames"
                 frames_dir.mkdir(exist_ok=True)
                 
+                if job_id:
+                    self._update_progress(job_id, 60, "saving", "Saving processed frame...")
+                
                 # Save single frame
                 frame_path = self._save_frame(img, frames_dir, 0, format_type)
                 if not frame_path:
+                    if job_id:
+                        self._complete_job(job_id, False, "Failed to save frame")
                     return None
+                
+                if job_id:
+                    self._update_progress(job_id, 90, "finalizing", "Generating metadata...")
                 
                 # Generate metadata
                 metadata = {
@@ -277,10 +376,16 @@ class MediaConverter:
                     json.dump(metadata, f, indent=2)
                 
                 self.logger.info("Converted image to single frame")
+                
+                if job_id:
+                    self._complete_job(job_id, True)
+                
                 return metadata
                 
         except Exception as e:
             self.logger.error(f"Failed to convert image {image_path}: {e}")
+            if job_id:
+                self._complete_job(job_id, False, str(e))
             return None
     
     def _save_frame(self, frame: Image.Image, frames_dir: Path, frame_index: int, format_type: str) -> Optional[Path]:
@@ -328,24 +433,28 @@ class MediaConverter:
             self.logger.error(f"Failed to save frame {frame_index}: {e}")
             return None
     
-    def convert_media_file(self, input_path: Path, output_dir: Path, format_type: str = "rgb565", **kwargs) -> Optional[Dict]:
-        """Auto-detect and convert media file."""
+    def convert_media_file(self, input_path: Path, output_dir: Path, format_type: str = "rgb565", job_id: str = None, **kwargs) -> Optional[Dict]:
+        """Auto-detect and convert media file with optional progress tracking."""
         if not input_path.exists():
             self.logger.error(f"Input file does not exist: {input_path}")
+            if job_id:
+                self._complete_job(job_id, False, f"Input file does not exist: {input_path}")
             return None
         
         # Determine file type by extension
         ext = input_path.suffix.lower()
         
         if ext == '.gif':
-            return self.convert_gif(input_path, output_dir, format_type)
+            return self.convert_gif(input_path, output_dir, format_type, job_id)
         elif ext in ['.mp4', '.avi', '.mov', '.mkv', '.webm']:
             fps = kwargs.get('fps', 10.0)
-            return self.convert_video(input_path, output_dir, format_type, fps)
+            return self.convert_video(input_path, output_dir, format_type, fps, job_id)
         elif ext in ['.png', '.jpg', '.jpeg', '.bmp', '.tiff']:
-            return self.convert_image(input_path, output_dir, format_type)
+            return self.convert_image(input_path, output_dir, format_type, job_id)
         else:
             self.logger.error(f"Unsupported file type: {ext}")
+            if job_id:
+                self._complete_job(job_id, False, f"Unsupported file type: {ext}")
             return None
     
     # ---------------------------------------------------------------------
