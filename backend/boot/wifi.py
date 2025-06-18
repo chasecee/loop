@@ -245,11 +245,44 @@ class WiFiManager:
         try:
             self.logger.info("Starting WiFi hotspot mode")
             
-            # Stop any existing WiFi connection
-            subprocess.run(['sudo', 'systemctl', 'stop', 'wpa_supplicant'])
+            # Check if we have write permissions to system files
+            import os
+            hostapd_dir = os.path.dirname(self.hostapd_conf)
+            if not os.access(hostapd_dir, os.W_OK):
+                self.logger.warning("Cannot write to hostapd config directory - hotspot may not work properly")
+                # Continue anyway - might be running in development
             
-            # Configure hostapd
-            hostapd_config = f"""interface=wlan0
+            # Try using the helper script first
+            try:
+                result = subprocess.run([
+                    'sudo', str(Path(__file__).parent / 'hotspot.sh'), 
+                    'start', 
+                    self.config.hotspot_ssid, 
+                    self.config.hotspot_password
+                ], capture_output=True, text=True, timeout=30)
+                
+                if result.returncode == 0:
+                    self.hotspot_active = True
+                    self.connected = False
+                    self.current_ssid = None
+                    self.ip_address = "192.168.4.1"
+                    self.logger.info(f"Hotspot started: {self.config.hotspot_ssid}")
+                    return True
+                else:
+                    self.logger.warning(f"Helper script failed: {result.stderr}")
+                    # Fall back to manual configuration
+            
+            except (subprocess.TimeoutExpired, FileNotFoundError, PermissionError) as e:
+                self.logger.warning(f"Cannot use helper script ({e}), trying manual configuration")
+            
+            # Manual hotspot configuration (fallback)
+            # Stop any existing WiFi connection
+            subprocess.run(['sudo', 'systemctl', 'stop', 'wpa_supplicant'], 
+                         capture_output=True, timeout=10)
+            
+            # Configure hostapd (only if writable)
+            try:
+                hostapd_config = f"""interface=wlan0
 driver=nl80211
 ssid={self.config.hotspot_ssid}
 hw_mode=g
@@ -264,29 +297,40 @@ wpa_key_mgmt=WPA-PSK
 wpa_pairwise=TKIP
 rsn_pairwise=CCMP
 """
-            
-            with open(self.hostapd_conf, 'w') as f:
-                f.write(hostapd_config)
-            
-            # Configure dnsmasq
-            dnsmasq_config = """interface=wlan0
+                
+                with open(self.hostapd_conf, 'w') as f:
+                    f.write(hostapd_config)
+                
+                # Configure dnsmasq
+                dnsmasq_config = """interface=wlan0
 dhcp-range=192.168.4.2,192.168.4.20,255.255.255.0,24h
 """
-            
-            with open(self.dnsmasq_conf, 'w') as f:
-                f.write(dnsmasq_config)
+                
+                with open(self.dnsmasq_conf, 'w') as f:
+                    f.write(dnsmasq_config)
+                
+            except (PermissionError, OSError) as e:
+                self.logger.error(f"Cannot write configuration files: {e}")
+                self.logger.info("Hotspot configuration failed - check file permissions")
+                return False
             
             # Set up network interface
-            subprocess.run(['sudo', 'ip', 'addr', 'flush', 'dev', 'wlan0'])
-            subprocess.run(['sudo', 'ip', 'addr', 'add', '192.168.4.1/24', 'dev', 'wlan0'])
-            subprocess.run(['sudo', 'ip', 'link', 'set', 'wlan0', 'up'])
+            subprocess.run(['sudo', 'ip', 'addr', 'flush', 'dev', 'wlan0'], 
+                         capture_output=True, timeout=5)
+            subprocess.run(['sudo', 'ip', 'addr', 'add', '192.168.4.1/24', 'dev', 'wlan0'], 
+                         capture_output=True, timeout=5)
+            subprocess.run(['sudo', 'ip', 'link', 'set', 'wlan0', 'up'], 
+                         capture_output=True, timeout=5)
             
             # Start services
-            subprocess.run(['sudo', 'systemctl', 'start', 'hostapd'])
-            subprocess.run(['sudo', 'systemctl', 'start', 'dnsmasq'])
+            subprocess.run(['sudo', 'systemctl', 'start', 'hostapd'], 
+                         capture_output=True, timeout=10)
+            subprocess.run(['sudo', 'systemctl', 'start', 'dnsmasq'], 
+                         capture_output=True, timeout=10)
             
             # Enable IP forwarding for captive portal
-            subprocess.run(['sudo', 'sysctl', 'net.ipv4.ip_forward=1'])
+            subprocess.run(['sudo', 'sysctl', 'net.ipv4.ip_forward=1'], 
+                         capture_output=True, timeout=5)
             
             self.hotspot_active = True
             self.connected = False

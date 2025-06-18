@@ -4,47 +4,38 @@ After=network.target
 Wants=network.target
 
 [Service]
-Type=simple
+Type=notify
 User=pi
 Group=pi
 WorkingDirectory=/home/pi/loop/backend
 Environment=PYTHONPATH=/home/pi/loop/backend
-ExecStart=/usr/bin/python3 /home/pi/loop/backend/main.py
-ExecReload=/bin/kill -USR1 $MAINPID
-
-# Restart policy - development mode (less aggressive)
+Environment=LOOP_ENV=production
+ExecStart=/home/pi/loop/backend/venv/bin/python main.py
 Restart=on-failure
-RestartSec=5
-StartLimitInterval=60
+RestartSec=10
+StartLimitInterval=300
 StartLimitBurst=3
 
-# Special handling for exit code 42 (our restart request)
-RestartForceExitStatus=42
+# Permissions for GPIO and system control
+SupplementaryGroups=gpio spi i2c dialout video audio plugdev netdev
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN
 
-# Resource limits to prevent Pi freeze
-MemoryLimit=512M
-CPUQuota=80%
+# Allow sudo for hotspot management (careful with this)
+NoNewPrivileges=false
 
-# Watchdog configuration
+# Systemd integration
 WatchdogSec=60
-NotifyAccess=none
+NotifyAccess=main
 
 # Logging
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=loop
 
-# Security hardening
-NoNewPrivileges=true
+# Security (balanced with functionality)
 PrivateTmp=true
+ProtectSystem=false
 ProtectHome=false
-ProtectSystem=strict
-ReadWritePaths=/home/pi/loop/backend/media /tmp
-
-# Additional restart conditions
-RestartKillSignal=SIGTERM
-TimeoutStopSec=30
-KillMode=mixed
 
 [Install]
 WantedBy=multi-user.target 

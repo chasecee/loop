@@ -345,20 +345,8 @@ class LOOPApplication:
             return False
         
         try:
-            def run_player():
-                try:
-                    self.display_player.run()
-                except Exception as e:
-                    self.logger.error(f"Display player crashed: {e}")
-                    self.component_manager.mark_failure("display_player")
-            
-            player_thread = threading.Thread(
-                target=run_player,
-                name="DisplayPlayer",
-                daemon=True
-            )
-            player_thread.start()
-            
+            # Use the player's built-in start() method instead of calling run() directly
+            self.display_player.start()
             self.logger.info("Display player started")
             return True
             

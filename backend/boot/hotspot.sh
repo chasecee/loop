@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# LOOP WiFi Hotspot Management Script
-# This script manages the WiFi hotspot functionality
+# LOOP hotspot management script
+# This script manages WiFi hotspot functionality
 
 set -e
 
@@ -21,6 +21,13 @@ DHCP_RANGE="192.168.4.2,192.168.4.20"
 
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
+}
+
+# Function to check if filesystem is writable
+is_writable() {
+    local file="$1"
+    local dir=$(dirname "$file")
+    [ -w "$dir" ] && return 0 || return 1
 }
 
 create_hostapd_config() {
@@ -84,13 +91,20 @@ restore_configs() {
     fi
 }
 
+# Function to start hotspot
 start_hotspot() {
-    local ssid="${1:-$DEFAULT_SSID}"
-    local password="${2:-$DEFAULT_PASSWORD}"
+    local ssid="$1"
+    local password="$2"
     
-    log "Starting LOOP WiFi hotspot: $ssid"
+    echo "Starting WiFi hotspot: $ssid"
     
-    # Stop any existing WiFi connections
+    # Check if we can write to system files
+    if ! is_writable "$HOSTAPD_CONF"; then
+        echo "Error: Cannot write to $HOSTAPD_CONF (read-only filesystem)"
+        exit 1
+    fi
+    
+    # Stop existing services
     systemctl stop wpa_supplicant 2>/dev/null || true
     
     # Backup original configurations
@@ -104,9 +118,9 @@ start_hotspot() {
     cp "$HOSTAPD_CONF_LOOP" "$HOSTAPD_CONF"
     cp "$DNSMASQ_CONF_LOOP" "$DNSMASQ_CONF"
     
-    # Configure network interface
-    ip addr flush dev wlan0 2>/dev/null || true
-    ip addr add ${HOTSPOT_IP}/24 dev wlan0
+    # Set up network interface
+    ip addr flush dev wlan0
+    ip addr add $HOTSPOT_IP/24 dev wlan0
     ip link set wlan0 up
     
     # Enable IP forwarding
@@ -137,20 +151,15 @@ start_hotspot() {
     fi
 }
 
+# Function to stop hotspot
 stop_hotspot() {
-    log "Stopping LOOP WiFi hotspot"
+    echo "Stopping WiFi hotspot"
     
-    # Stop services
     systemctl stop hostapd 2>/dev/null || true
     systemctl stop dnsmasq 2>/dev/null || true
     
-    # Clear iptables rules (best effort)
-    iptables -t nat -D POSTROUTING -o eth0 -j MASQUERADE 2>/dev/null || true
-    iptables -D FORWARD -i eth0 -o wlan0 -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
-    iptables -D FORWARD -i wlan0 -o eth0 -j ACCEPT 2>/dev/null || true
-    
-    # Reset network interface
-    ip addr flush dev wlan0 2>/dev/null || true
+    # Clean up network interface
+    ip addr flush dev wlan0
     
     # Restore original configurations
     restore_configs
@@ -158,7 +167,7 @@ stop_hotspot() {
     # Restart networking services
     systemctl restart dhcpcd 2>/dev/null || true
     
-    log "✅ Hotspot stopped"
+    echo "Hotspot stopped"
 }
 
 status() {

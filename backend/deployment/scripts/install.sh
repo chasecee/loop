@@ -182,33 +182,55 @@ if [ ! -f "${BACKEND_DIR}/config/config.json" ]; then
     exit 1
 fi
 
-# Create systemd service if needed
-if ! check_service; then
-    echo "🔄 Creating systemd service..."
-    sudo tee /etc/systemd/system/${SERVICE_NAME}.service > /dev/null << EOF
+# Create or update systemd service
+echo "🔄 Setting up systemd service..."
+sudo tee /etc/systemd/system/${SERVICE_NAME}.service > /dev/null << EOF
 [Unit]
 Description=LOOP - Little Optical Output Pal
 After=network.target
+Wants=network.target
 
 [Service]
-Type=simple
+Type=notify
 User=${USER}
 Group=${USER}
 WorkingDirectory=${BACKEND_DIR}
 Environment=PYTHONPATH=${BACKEND_DIR}
+Environment=LOOP_ENV=production
 ExecStart=${VENV_DIR}/bin/python ${BACKEND_DIR}/main.py
 Restart=on-failure
 RestartSec=10
-StartLimitIntervalSec=60
+StartLimitInterval=300
 StartLimitBurst=3
+
+# Permissions for GPIO and system control
+SupplementaryGroups=gpio spi i2c dialout video audio plugdev netdev
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN
+
+# Allow sudo for hotspot management (careful with this)
+NoNewPrivileges=false
+
+# Systemd integration
+WatchdogSec=60
+NotifyAccess=main
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=loop
+
+# Security (balanced with functionality)
+PrivateTmp=true
+ProtectSystem=false
+ProtectHome=false
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-    # Set up log rotation
-    echo "📋 Setting up log rotation..."
-    sudo tee /etc/logrotate.d/loop > /dev/null << EOF
+# Set up log rotation
+echo "📋 Setting up log rotation..."
+sudo tee /etc/logrotate.d/loop > /dev/null << EOF
 /home/${USER}/.loop/logs/*.log {
     daily
     rotate 7
@@ -219,7 +241,6 @@ EOF
     create 644 ${USER} ${USER}
 }
 EOF
-fi
 
 # Set permissions
 echo "🔒 Setting file permissions..."
