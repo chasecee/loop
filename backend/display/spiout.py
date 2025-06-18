@@ -206,6 +206,9 @@ class ILI9341Driver:
                             self.spi.writebytes(chunk)
                         except:
                             self.spi.writebytes(list(chunk))
+            except Exception:
+                # Final fallback - completely silent failure for performance
+                pass
     
     def fill_screen(self, color: int = 0x0000) -> None:
         """Fill entire screen with color (RGB565)."""
