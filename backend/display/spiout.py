@@ -183,27 +183,28 @@ class ILI9341Driver:
         
         GPIO.output(self.config.dc_pin, GPIO.HIGH)  # Data mode
         
-        # Use larger chunks for better SPI performance (320*240*2 = 153,600 bytes total)
-        # Aim for 2-4 chunks max to minimize SPI transaction overhead
-        chunk_size = min(65536, len(data))  # 64KB chunks or full frame if smaller
+        # Use smaller chunks to avoid Pi SPI buffer issues
+        # Pi SPI might have buffer limitations, so use conservative chunk size
+        chunk_size = min(4096, len(data))  # 4KB chunks for reliability
         
         try:
-            if len(data) <= chunk_size:
-                # Single write for small frames - fastest path
-                if data:  # Double-check before writing
-                    # Ensure data is bytes (not bytearray) for spidev
-                    if isinstance(data, bytearray):
-                        data = bytes(data)
-                    self.spi.writebytes(data)
-            else:
-                # Chunked write for larger frames
-                for i in range(0, len(data), chunk_size):
-                    chunk = data[i:i + chunk_size]
-                    if chunk:  # Ensure chunk is not empty
-                        # Ensure chunk is bytes (not bytearray) for spidev
+            # Always use chunked approach for better reliability
+            for i in range(0, len(data), chunk_size):
+                chunk = data[i:i + chunk_size]
+                if chunk:  # Ensure chunk is not empty
+                    try:
+                        # Try bytes first (preferred)
                         if isinstance(chunk, bytearray):
                             chunk = bytes(chunk)
                         self.spi.writebytes(chunk)
+                    except Exception as bytes_error:
+                        # Fallback: convert to list of integers
+                        try:
+                            chunk_list = list(chunk)
+                            self.spi.writebytes(chunk_list)
+                        except Exception as list_error:
+                            self.logger.error(f"SPI write failed both ways - bytes: {bytes_error}, list: {list_error}")
+                            raise list_error
         except Exception as e:
             self.logger.error(f"SPI write failed: {e} (data length: {len(data)}, data type: {type(data)})")
     
