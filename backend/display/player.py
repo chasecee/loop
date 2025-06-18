@@ -314,76 +314,54 @@ class DisplayPlayer:
                         continue
                 
                 # Play current media sequence
-                sequence_loops = 0
-                infinite_loop = (self.loop_count <= 0)  # -1 or 0 means infinite
+                # For loop mode behavior, we only play the media once, then decide what to do next
+                frame_count = self.current_sequence.get_frame_count()
                 
-                # Keep playing until we hit the loop limit or it's infinite
-                while self.running:
-                    frame_count = self.current_sequence.get_frame_count()
-                    
-                    # Play all frames in the sequence
-                    for frame_idx in range(frame_count):
-                        if not self.running:
-                            break
-                        
-                        # Handle pause
-                        while self.paused and self.running:
-                            time.sleep(0.1)
-                        
-                        if not self.running:
-                            break
-                        
-                        # Get frame data and duration
-                        frame_data = self.current_sequence.get_frame_data(frame_idx)
-                        frame_duration = self.current_sequence.get_frame_duration(frame_idx)
-                        
-                        if frame_data is None:
-                            self.logger.error(f"Failed to get frame {frame_idx}")
-                            break
-                        
-                        # Display frame
-                        start_time = time.time()
-                        self.display_driver.display_frame(frame_data)
-                        
-                        # Calculate sleep time to maintain frame rate
-                        display_time = time.time() - start_time
-                        target_duration = frame_duration if frame_duration > 0 else (1.0 / self.frame_rate)
-                        sleep_time = max(0, target_duration - display_time)
-                        
-                        if sleep_time > 0:
-                            time.sleep(sleep_time)
-                    
-                    # Completed one sequence loop
-                    sequence_loops += 1
-                    
-                    # Check if we should stop looping this sequence
-                    if not infinite_loop and sequence_loops >= self.loop_count:
+                # Play all frames in the sequence
+                for frame_idx in range(frame_count):
+                    if not self.running:
                         break
+                    
+                    # Handle pause
+                    while self.paused and self.running:
+                        time.sleep(0.1)
+                    
+                    if not self.running:
+                        break
+                    
+                    # Get frame data and duration
+                    frame_data = self.current_sequence.get_frame_data(frame_idx)
+                    frame_duration = self.current_sequence.get_frame_duration(frame_idx)
+                    
+                    if frame_data is None:
+                        self.logger.error(f"Failed to get frame {frame_idx}")
+                        break
+                    
+                    # Display frame
+                    start_time = time.time()
+                    self.display_driver.display_frame(frame_data)
+                    
+                    # Calculate sleep time to maintain frame rate
+                    display_time = time.time() - start_time
+                    target_duration = frame_duration if frame_duration > 0 else (1.0 / self.frame_rate)
+                    sleep_time = max(0, target_duration - display_time)
+                    
+                    if sleep_time > 0:
+                        time.sleep(sleep_time)
                 
                 # Handle loop mode behavior
                 current_loop_slugs = media_index.list_loop()  # Re-check in case it changed
                 if self.loop_mode == "one":
-                    # Loop one mode - keep playing same media
-                    if infinite_loop:
-                        continue  # Just replay the same media
-                    else:
-                        # Finite loops - we're done, just wait
-                        self.logger.info("Finished playing all loops, waiting...")
-                        time.sleep(2)
+                    # Loop one mode - keep playing same media (just continue to reload same sequence)
+                    continue
                 elif len(current_loop_slugs) > 1:
                     # Loop all mode with multiple items - move to next
                     self.next_media()
                     # Clear current sequence to force reload of next media
                     self.current_sequence = None
                 else:
-                    # Single media item in loop all mode - if infinite loop, continue playing
-                    if infinite_loop:
-                        # Just continue the outer while loop to replay
-                        continue
-                    else:
-                        # Finite loops - we're done, just wait
-                        self.logger.info("Finished playing all loops, waiting...")
-                        time.sleep(2)
+                    # Single media item in loop all mode - just replay it
+                    continue
                 
             except Exception as e:
                 self.logger.error(f"Error in playback loop: {e}")
