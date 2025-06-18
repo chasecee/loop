@@ -191,15 +191,21 @@ class ILI9341Driver:
             if len(data) <= chunk_size:
                 # Single write for small frames - fastest path
                 if data:  # Double-check before writing
+                    # Ensure data is bytes (not bytearray) for spidev
+                    if isinstance(data, bytearray):
+                        data = bytes(data)
                     self.spi.writebytes(data)
             else:
                 # Chunked write for larger frames
                 for i in range(0, len(data), chunk_size):
                     chunk = data[i:i + chunk_size]
                     if chunk:  # Ensure chunk is not empty
+                        # Ensure chunk is bytes (not bytearray) for spidev
+                        if isinstance(chunk, bytearray):
+                            chunk = bytes(chunk)
                         self.spi.writebytes(chunk)
         except Exception as e:
-            self.logger.error(f"SPI write failed: {e} (data length: {len(data)})")
+            self.logger.error(f"SPI write failed: {e} (data length: {len(data)}, data type: {type(data)})")
     
     def fill_screen(self, color: int = 0x0000) -> None:
         """Fill entire screen with color (RGB565)."""
