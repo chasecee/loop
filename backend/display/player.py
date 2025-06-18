@@ -287,6 +287,14 @@ class DisplayPlayer:
         
         while self.running:
             try:
+                # Check for media list changes at the start of each cycle
+                with self.lock:
+                    if self.media_list_changed:
+                        self.media_list_changed = False
+                        self.logger.info("Media list changed - reloading index immediately")
+                        self.load_media_index()
+                        self.current_sequence = None  # Force reload
+                
                 # Check if we have media to play
                 if not self.loop_media:
                     self.load_media_index()
@@ -310,7 +318,8 @@ class DisplayPlayer:
                 infinite_loop = (self.loop_count <= 0)  # -1 or 0 means infinite
                 
                 # Keep playing until we hit the loop limit or it's infinite
-                while self.running:
+                sequence_interrupted = False
+                while self.running and not sequence_interrupted:
                     frame_count = self.current_sequence.get_frame_count()
                     
                     # Play all frames in the sequence
@@ -325,12 +334,11 @@ class DisplayPlayer:
                         if not self.running:
                             break
                         
-                        # Check if media list changed (new media added)
+                        # Check if media list changed - if so, break immediately
                         with self.lock:
                             if self.media_list_changed:
-                                self.media_list_changed = False
-                                self.logger.info("Media list changed - interrupting playback to cycle through items")
-                                # Break out of both loops to restart with new media list
+                                self.logger.info("Media list changed - interrupting playback")
+                                sequence_interrupted = True
                                 break
                         
                         # Get frame data and duration
@@ -353,12 +361,9 @@ class DisplayPlayer:
                         if sleep_time > 0:
                             time.sleep(sleep_time)
                     
-                    # Check if we broke out due to media list change
-                    with self.lock:
-                        if self.media_list_changed:
-                            self.media_list_changed = False
-                            self.logger.info("Breaking out of sequence loop due to media list change")
-                            break
+                    # If interrupted by media list change, restart main loop
+                    if sequence_interrupted:
+                        break
                     
                     # Completed one sequence loop
                     sequence_loops += 1
@@ -366,10 +371,10 @@ class DisplayPlayer:
                     # Check if we should stop looping this sequence
                     if not infinite_loop and sequence_loops >= self.loop_count:
                         break
-                    
-                    # If not running anymore, break
-                    if not self.running:
-                        break
+                
+                # If interrupted by media list change, restart main loop immediately
+                if sequence_interrupted:
+                    continue
                 
                 # Move to next media in the loop if we have multiple items
                 if len(self.loop_media) > 1:
@@ -377,20 +382,6 @@ class DisplayPlayer:
                     # Reset current_sequence to None so it reloads the next media
                     self.current_sequence = None
                 else:
-                    # Check if media list changed - if so, reload before deciding what to do
-                    with self.lock:
-                        if self.media_list_changed:
-                            self.media_list_changed = False
-                            self.logger.info("Reloading media index due to pending changes")
-                            self.load_media_index()
-                            
-                            # Now check again with fresh data
-                            if len(self.loop_media) > 1:
-                                self.logger.info("Found multiple items after reload - starting multi-item cycle")
-                                self.next_media()
-                                self.current_sequence = None
-                                continue
-                    
                     # Single media item - if infinite loop, continue playing
                     if infinite_loop:
                         # Just continue the outer while loop to replay
