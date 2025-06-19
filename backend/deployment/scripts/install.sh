@@ -444,9 +444,6 @@ if [ ! -f "$CONFIG_FILE" ]; then
     exit 1
 fi
 
-# Remove old fbcp-related settings if they exist
-sed -i '/fbcp/d' /etc/rc.local
-
 # Add DRM overlay for the 2.4" screen
 # This tells the kernel to drive the SPI display directly.
 sudo cat >> "$CONFIG_FILE" <<EOF
