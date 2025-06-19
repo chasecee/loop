@@ -16,6 +16,7 @@ import numpy as np
 
 from utils.logger import get_logger
 from display.framebuf import FrameBuffer
+from config.schema import get_config
 
 
 class MediaConverter:
@@ -167,12 +168,14 @@ class MediaConverter:
                 # This is MUCH faster than PNG intermediate files
                 cmd = [
                     'ffmpeg', '-i', str(video_path),
-                                        '-vf', (
+                    '-vf', (
                         f'fps={fps},'
                         f'scale={self.target_width}:{self.target_height}:force_original_aspect_ratio=increase,'
                         f'crop={self.target_width}:{self.target_height},'
                         f'format=rgb565be'
                     ),
+                    '-preset', 'ultrafast',  # Prioritize speed
+                    '-threads', '2',  # Use 2 threads for encoding
                     '-f', 'rawvideo',
                     '-y',  # Overwrite output files
                     str(frames_dir / 'frames.raw')
@@ -448,10 +451,13 @@ class MediaConverter:
         # Determine file type by extension
         ext = input_path.suffix.lower()
         
+        # Get framerate from config for videos
+        config = get_config()
+        
         if ext == '.gif':
             return self.convert_gif(input_path, output_dir, format_type, job_id)
         elif ext in ['.mp4', '.avi', '.mov', '.mkv', '.webm']:
-            fps = kwargs.get('fps', 10.0)
+            fps = kwargs.get('fps', config.display.framerate)
             return self.convert_video(input_path, output_dir, format_type, fps, job_id)
         elif ext in ['.png', '.jpg', '.jpeg', '.bmp', '.tiff']:
             return self.convert_image(input_path, output_dir, format_type, job_id)
