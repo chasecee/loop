@@ -119,6 +119,15 @@ EOF
 fi
 
 # For fresh install, continue with full setup...
+# Stop service if it is running to ensure clean installation
+if systemctl list-unit-files | grep -q "^${SERVICE_NAME}.service"; then
+    if systemctl is-active --quiet ${SERVICE_NAME}; then
+        echo "🛑 Stopping running LOOP service before installation..."
+        sudo systemctl stop ${SERVICE_NAME}
+        echo "✅ Service stopped."
+    fi
+fi
+
 # Check if running on Raspberry Pi
 if ! grep -q "Raspberry Pi" /proc/cpuinfo 2>/dev/null; then
     echo "⚠️  Warning: This doesn't appear to be a Raspberry Pi"
@@ -444,17 +453,20 @@ if [ ! -f "$CONFIG_FILE" ]; then
     exit 1
 fi
 
-# Add DRM overlay for the 2.4" screen
-# This tells the kernel to drive the SPI display directly.
-sudo cat >> "$CONFIG_FILE" <<EOF
+# Add DRM overlay for the 2.4" screen if not already present
+if ! grep -q -E "^dtoverlay=waveshare24b" "$CONFIG_FILE"; then
+    echo "   Display overlay not found. Adding now..."
+    sudo tee -a "$CONFIG_FILE" <<EOF
 
 # LOOP Display Configuration (ILI9341)
 dtoverlay=vc4-kms-v3d
 dtoverlay=waveshare24b,speed=48000000,fps=60
 EOF
-
-echo "✅ DRM display overlay configured in $CONFIG_FILE."
-echo "⚠️  A reboot is required for display changes to take effect."
+    echo "✅ DRM display overlay configured in $CONFIG_FILE."
+    echo "⚠️  A reboot is required for display changes to take effect."
+else
+    echo "✅ DRM display overlay already configured."
+fi
 
 # -----------------------------------------------------------------------------
 # Install Python dependencies
