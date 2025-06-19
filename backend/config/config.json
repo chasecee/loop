@@ -16,7 +16,7 @@
     "framerate": 25,
     "show_progress": true,
     "progress_color": 1984,
-    "spi_chunk_size": 4096
+    "spi_chunk_size": 8096
   },
   "wifi": {
     "ssid": "",
