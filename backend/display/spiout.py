@@ -1,259 +1,112 @@
-"""ILI9341 SPI display driver for Waveshare 2.4" LCD."""
+"""Framebuffer display driver using Pygame."""
 
-import time
-from typing import Optional, Tuple
-try:
-    import spidev
-    import RPi.GPIO as GPIO
-    SPI_AVAILABLE = True
-except ImportError:
-    SPI_AVAILABLE = False
+import os
+import pygame
+import numpy as np
+from typing import Optional
 
 from config.schema import DisplayConfig
 from utils.logger import get_logger
 
-
 class ILI9341Driver:
-    """ILI9341 display driver."""
-    
-    # ILI9341 Commands
-    ILI9341_SWRESET = 0x01
-    ILI9341_SLPOUT = 0x11
-    ILI9341_DISPOFF = 0x28
-    ILI9341_DISPON = 0x29
-    ILI9341_CASET = 0x2A
-    ILI9341_PASET = 0x2B
-    ILI9341_RAMWR = 0x2C
-    ILI9341_MADCTL = 0x36
-    ILI9341_COLMOD = 0x3A
-    ILI9341_PWCTR1 = 0xC0
-    ILI9341_PWCTR2 = 0xC1
-    ILI9341_VMCTR1 = 0xC5
-    ILI9341_VMCTR2 = 0xC7
-    ILI9341_GMCTRP1 = 0xE0
-    ILI9341_GMCTRN1 = 0xE1
+    """A display driver that writes to the system framebuffer using Pygame."""
     
     def __init__(self, config: DisplayConfig):
-        """Initialize the display driver."""
+        """Initialize the Pygame display driver."""
         self.config = config
         self.logger = get_logger("display")
-        self.spi: Optional[spidev.SpiDev] = None
+        self.screen: Optional[pygame.Surface] = None
         self.initialized = False
-        self.spi_speed = config.spi_speed_hz  # Use configured SPI speed
         
-        if not SPI_AVAILABLE:
-            self.logger.warning("SPI libraries not available - running in simulation mode")
-            return
+        # Point to the primary framebuffer
+        os.putenv('SDL_FBDEV', '/dev/fb0')
+        os.putenv('SDL_VIDEODRIVER', 'fbcon')
         
-        # Initialize GPIO
-        GPIO.setmode(GPIO.BCM)
-        GPIO.setwarnings(False)
-        
-        # Setup pins
-        GPIO.setup(self.config.dc_pin, GPIO.OUT)
-        GPIO.setup(self.config.rst_pin, GPIO.OUT)
-        GPIO.setup(self.config.bl_pin, GPIO.OUT)
-        
-        # Initialize SPI with configured speed
-        self.spi = spidev.SpiDev()
-        self.spi.open(self.config.spi_bus, self.config.spi_device)
-        self.spi.max_speed_hz = self.spi_speed
-        self.spi.mode = 0
-        
-        self.logger.info(f"Initialized ILI9341 driver: {self.config.width}x{self.config.height} @ {self.spi_speed/1000000:.1f}MHz")
-    
-
-    
-    def _write_command(self, cmd: int) -> None:
-        """Write command to display."""
-        if not SPI_AVAILABLE:
-            return
-        
-        GPIO.output(self.config.dc_pin, GPIO.LOW)  # Command mode
-        self.spi.xfer2([cmd])
-    
-    def _write_data(self, data) -> None:
-        """Write data to display."""
-        if not SPI_AVAILABLE:
-            return
-        
-        # Validate data before writing
-        if isinstance(data, int):
-            GPIO.output(self.config.dc_pin, GPIO.HIGH)  # Data mode
-            self.spi.xfer2([data])
-        elif data:  # Only write if data is not empty
-            GPIO.output(self.config.dc_pin, GPIO.HIGH)  # Data mode
-            self.spi.xfer2(list(data))
-        # If data is empty, do nothing (no error)
-    
-    def _reset(self) -> None:
-        """Hardware reset the display."""
-        if not SPI_AVAILABLE:
-            return
-        
-        GPIO.output(self.config.rst_pin, GPIO.LOW)
-        time.sleep(0.1)
-        GPIO.output(self.config.rst_pin, GPIO.HIGH)
-        time.sleep(0.1)
+        self.logger.info(f"Initializing framebuffer driver for /dev/fb0")
     
     def init(self) -> None:
-        """Initialize the display."""
-        if not SPI_AVAILABLE:
-            self.logger.warning("Cannot initialize display - SPI not available")
-            return
-        
+        """Initialize the Pygame display."""
         if self.initialized:
             return
         
-        self.logger.info("Initializing ILI9341 display...")
-        
-        # Reset display
-        self._reset()
-        
-        # Initialize sequence
-        self._write_command(self.ILI9341_SWRESET)
-        time.sleep(0.15)
-        
-        self._write_command(self.ILI9341_SLPOUT)
-        time.sleep(0.15)
-        
-        # Power control
-        self._write_command(self.ILI9341_PWCTR1)
-        self._write_data([0x23])
-        
-        self._write_command(self.ILI9341_PWCTR2)
-        self._write_data([0x10])
-        
-        # VCOM control
-        self._write_command(self.ILI9341_VMCTR1)
-        self._write_data([0x3e, 0x28])
-        
-        self._write_command(self.ILI9341_VMCTR2)
-        self._write_data([0x86])
-        
-        # Memory access control (rotation)
-        self._write_command(self.ILI9341_MADCTL)
-        rotation_values = {0: 0x48, 90: 0x28, 180: 0x88, 270: 0xE8}
-        self._write_data([rotation_values.get(self.config.rotation, 0x48)])
-        
-        # Pixel format (RGB565)
-        self._write_command(self.ILI9341_COLMOD)
-        self._write_data([0x55])
-        
-        # Gamma correction
-        self._write_command(self.ILI9341_GMCTRP1)
-        self._write_data([0x0F, 0x31, 0x2B, 0x0C, 0x0E, 0x08, 0x4E, 0xF1,
-                         0x37, 0x07, 0x10, 0x03, 0x0E, 0x09, 0x00])
-        
-        self._write_command(self.ILI9341_GMCTRN1)
-        self._write_data([0x00, 0x0E, 0x14, 0x03, 0x11, 0x07, 0x31, 0xC1,
-                         0x48, 0x08, 0x0F, 0x0C, 0x31, 0x36, 0x0F])
-        
-        # Display on
-        self._write_command(self.ILI9341_DISPON)
-        time.sleep(0.1)
-        
-        # Turn on backlight
-        GPIO.output(self.config.bl_pin, GPIO.HIGH)
-        
-        self.initialized = True
-        self.logger.info("ILI9341 display initialized successfully")
-    
-    def set_window(self, x0: int, y0: int, x1: int, y1: int) -> None:
-        """Set drawing window."""
-        if not SPI_AVAILABLE:
-            return
-        
-        # Column address
-        self._write_command(self.ILI9341_CASET)
-        self._write_data([x0 >> 8, x0 & 0xFF, x1 >> 8, x1 & 0xFF])
-        
-        # Page address
-        self._write_command(self.ILI9341_PASET)
-        self._write_data([y0 >> 8, y0 & 0xFF, y1 >> 8, y1 & 0xFF])
-        
-        # Write to RAM
-        self._write_command(self.ILI9341_RAMWR)
-    
-    def write_pixel_data(self, data: bytes) -> None:
-        """Write pixel data to display with conservative chunking to avoid SPI buffer limits."""
-        if not SPI_AVAILABLE or not data:
-            return
-        
-        # Set data mode ONCE at the start - major optimization
-        GPIO.output(self.config.dc_pin, GPIO.HIGH)
-        
-        chunk_size = self.config.spi_chunk_size
-        
+        self.logger.info("Initializing Pygame for framebuffer...")
         try:
-            # Use writebytes2 for direct, fast writing of byte data
-            # This is significantly faster than xfer2(list(chunk))
-            if hasattr(self.spi, 'writebytes2'):
-                for i in range(0, len(data), chunk_size):
-                    self.spi.writebytes2(data[i:i + chunk_size])
-            else:
-                # Fallback for older spidev versions
-                for i in range(0, len(data), chunk_size):
-                    chunk = data[i:i + chunk_size]
-                    self.spi.xfer2(list(chunk))
-                
-        except Exception as e:
-            self.logger.error(f"SPI write failed with {chunk_size}-byte chunks: {e}")
-            raise
-    
-    def fill_screen(self, color: int = 0x0000) -> None:
-        """Fill entire screen with color (RGB565)."""
-        if not self.initialized:
-            self.init()
-        
-        self.set_window(0, 0, self.config.width - 1, self.config.height - 1)
-        
-        # Convert 16-bit color to bytes
-        color_bytes = [(color >> 8) & 0xFF, color & 0xFF]
-        pixel_data = color_bytes * (self.config.width * self.config.height)
-        
-        self.write_pixel_data(bytes(pixel_data))
-    
+            pygame.init()
+            pygame.mouse.set_visible(False)
+            
+            # Use display dimensions from config
+            self.screen = pygame.display.set_mode(
+                (self.config.width, self.config.height), 
+                pygame.NOFRAME
+            )
+            
+            self.initialized = True
+            self.logger.info("Pygame framebuffer initialized successfully")
+        except pygame.error as e:
+            self.logger.error(f"Failed to initialize Pygame framebuffer: {e}")
+            self.initialized = False
+            # Exit if display cannot be initialized, as it's critical
+            raise RuntimeError("Could not initialize framebuffer display") from e
+
     def display_frame(self, frame_data: bytes) -> None:
-        """Display a frame of RGB565 pixel data with anti-tearing optimizations."""
+        """Display a frame of RGB565 pixel data."""
         if not self.initialized:
             self.init()
         
-        # Quick validation without logging for performance
-        expected_size = self.config.width * self.config.height * 2  # 2 bytes per RGB565 pixel
+        if not self.screen:
+            self.logger.error("Display screen not initialized, cannot display frame.")
+            return
+
+        expected_size = self.config.width * self.config.height * 2
         if not frame_data or len(frame_data) != expected_size:
             return
-        
-        # ANTI-TEARING OPTIMIZATION: Set window and write data in one atomic operation
-        # This minimizes the time between setting the window and writing data
-        
-        # Set window once for entire frame
-        self.set_window(0, 0, self.config.width - 1, self.config.height - 1)
-        
-        # Write all pixel data in optimized chunks
-        self.write_pixel_data(frame_data)
-    
+
+        try:
+            # Convert RGB565 bytes to an RGB888 surface that Pygame can display
+            # 1. Create a NumPy array from the raw bytes
+            frame_array = np.frombuffer(frame_data, dtype=np.uint16)
+            
+            # 2. Reshape to the screen dimensions
+            frame_array = frame_array.reshape((self.config.height, self.config.width))
+
+            # 3. Efficiently convert RGB565 to RGB888 using bitwise operations
+            r = ((frame_array >> 11) & 0x1F) << 3
+            g = ((frame_array >> 5) & 0x3F) << 2
+            b = (frame_array & 0x1F) << 3
+            
+            # 4. Stack the channels to create a 3D RGB888 array
+            rgb888_array = np.dstack((r, g, b)).astype(np.uint8)
+            
+            # 5. Create a Pygame surface from the RGB888 array (no memory copy)
+            surface = pygame.surfarray.make_surface(rgb888_array)
+            
+            # 6. Blit the surface to the screen and update the display
+            self.screen.blit(surface, (0, 0))
+            pygame.display.update()
+            
+        except Exception as e:
+            self.logger.error(f"Failed to display frame: {e}")
+
+    def fill_screen(self, color: int = 0x0000) -> None:
+        """Fill the screen with a color (not implemented for fbcp)."""
+        # This is less relevant when using fbcp, but can be used for blanking.
+        if self.screen:
+            # Convert RGB565 to RGB888 for Pygame
+            r = ((color >> 11) & 0x1F) << 3
+            g = ((color >> 5) & 0x3F) << 2
+            b = (color & 0x1F) << 3
+            self.screen.fill((r, g, b))
+            pygame.display.update()
+
     def set_backlight(self, enabled: bool) -> None:
-        """Control backlight."""
-        if not SPI_AVAILABLE:
-            return
-        
-        GPIO.output(self.config.bl_pin, GPIO.HIGH if enabled else GPIO.LOW)
-    
+        """Control backlight (not implemented, fbcp handles this)."""
+        # fbcp-ili9341 handles backlight control via its own configuration
+        self.logger.debug("Backlight control is handled by the fbcp service.")
+        pass
+
     def cleanup(self) -> None:
         """Clean up resources."""
-        if not SPI_AVAILABLE:
-            return
-        
-        if self.spi:
-            self.spi.close()
-        
-        # Turn off backlight
-        try:
-            GPIO.output(self.config.bl_pin, GPIO.LOW)
-        except (RuntimeError, ValueError) as e:
-            # GPIO cleanup can fail if already cleaned up or pins unavailable
-            self.logger.debug(f"GPIO backlight cleanup failed (expected): {e}")
-        
-        GPIO.cleanup()
-        self.logger.info("Display driver cleaned up") 
+        if self.initialized:
+            pygame.quit()
+            self.initialized = False
+            self.logger.info("Pygame display driver cleaned up") 

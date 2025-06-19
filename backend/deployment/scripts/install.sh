@@ -454,4 +454,81 @@ with open('$INDEX_FILE', 'w') as f:
         
         echo "✅ Default media index created with $(ls -1d "$BACKEND_DIR/media/processed"/*/ 2>/dev/null | wc -l) items"
     fi
-fi 
+fi
+
+# -----------------------------------------------------------------------------
+# Install display dependencies
+# -----------------------------------------------------------------------------
+echo "Installing display dependencies..."
+if ! apt-get install -y libjpeg-dev libopenjp2-7 libtiff5; then
+    echo "❌ Failed to install display dependencies."
+    exit 1
+fi
+
+# -----------------------------------------------------------------------------
+# Configure FBCP (Framebuffer Copy) for high-performance display mirroring
+# -----------------------------------------------------------------------------
+echo "Configuring FBCP for ILI9341 display..."
+
+# Install cmake for building
+if ! apt-get -y install cmake; then
+    echo "❌ Failed to install cmake."
+    exit 1
+fi
+
+# Download and build fbcp-ili9341
+FBCP_DIR="/home/$SUDO_USER/fbcp-ili9341"
+if [ -d "$FBCP_DIR" ]; then
+    echo "FBCP directory already exists, skipping download."
+else
+    echo "Downloading fbcp-ili9341..."
+    if ! git clone https://github.com/juj/fbcp-ili9341.git "$FBCP_DIR"; then
+        echo "❌ Failed to clone fbcp-ili9341 repository."
+        exit 1
+    fi
+fi
+
+cd "$FBCP_DIR"
+mkdir -p build
+cd build
+
+# Configure cmake for Waveshare 2.4" display
+echo "Configuring FBCP build..."
+if ! cmake -DWAVESHARE_2INCH4_LCD=ON -DSPI_BUS_CLOCK_DIVISOR=20 -DBACKLIGHT_CONTROL=ON -DSTATISTICS=0 ..; then
+    echo "❌ CMake configuration for FBCP failed."
+    exit 1
+fi
+
+# Build and install
+echo "Building and installing FBCP..."
+if ! make -j$(nproc); then
+    echo "❌ Failed to build FBCP."
+    exit 1
+fi
+if ! install fbcp /usr/local/bin/fbcp; then
+    echo "❌ Failed to install FBCP."
+    exit 1
+fi
+
+# Configure system to run FBCP on boot
+echo "Configuring FBCP to run on boot..."
+if ! grep -q "fbcp &" /etc/rc.local; then
+    # Add fbcp to rc.local if it's not already there
+    sed -i -e '$i \/usr/local/bin/fbcp &\n' /etc/rc.local
+    echo "FBCP added to /etc/rc.local."
+else
+    echo "FBCP already configured in /etc/rc.local."
+fi
+
+# Disable default KMS driver which conflicts with FBCP
+echo "Disabling default KMS video driver..."
+CONFIG_FILE="/boot/config.txt"
+sed -i 's/dtoverlay=vc4-kms-v3d/#dtoverlay=vc4-kms-v3d/g' "$CONFIG_FILE"
+
+# -----------------------------------------------------------------------------
+# Install Python dependencies
+# -----------------------------------------------------------------------------
+# Go back to project root
+cd "$PROJECT_DIR"
+
+# ... existing code ... 

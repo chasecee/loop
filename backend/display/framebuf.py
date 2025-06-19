@@ -181,12 +181,17 @@ class FrameSequence:
             frame_path = self.frame_paths[frame_idx]
             frame_data = self._load_frame(frame_path)
             
-            if frame_data:
-                # This will block if the queue is full, providing back-pressure
-                self.frame_queue.put(frame_data)
-            else:
-                # If a frame fails to load, put a placeholder to not hang the consumer
-                self.frame_queue.put(b'')
+            # Use a timeout on put() to prevent deadlocking if the consumer stops reading.
+            try:
+                if frame_data:
+                    self.frame_queue.put(frame_data, timeout=1)
+                else:
+                    # If a frame fails to load, put a placeholder to not hang the consumer
+                    self.frame_queue.put(b'', timeout=1)
+            except queue.Full:
+                # This is okay. It means the consumer is paused or slow.
+                # Continue to the next loop iteration to check _stop_event.
+                continue
 
             frame_idx = (frame_idx + 1) % self.frame_count
             

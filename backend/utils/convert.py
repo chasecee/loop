@@ -171,9 +171,9 @@ class MediaConverter:
                     '-vf', (
                         f'fps={fps},'
                         f'scale={self.target_width}:{self.target_height}:force_original_aspect_ratio=increase,'
-                        f'crop={self.target_width}:{self.target_height},'
-                        f'format=rgb565be'
+                        f'crop={self.target_width}:{self.target_height}'
                     ),
+                    '-pix_fmt', 'rgb24', # Use standard 24-bit RGB
                     '-preset', 'ultrafast',  # Prioritize speed
                     '-threads', '2',  # Use 2 threads for encoding
                     '-f', 'rawvideo',
@@ -202,7 +202,7 @@ class MediaConverter:
                         self._complete_job(job_id, False, "No raw video data generated")
                     return None
                 
-                frame_size = self.target_width * self.target_height * 2  # RGB565 = 2 bytes per pixel
+                frame_size = self.target_width * self.target_height * 3  # RGB24 = 3 bytes per pixel
                 frames = []
                 durations = []
                 frame_duration = 1.0 / fps
@@ -221,13 +221,16 @@ class MediaConverter:
                             progress = 60 + (frame_index / estimated_frames) * 20  # 60-80% for frame processing
                             self._update_progress(job_id, progress, "processing", f"Processing frame {frame_index + 1}/{estimated_frames}")
                         
-                        # Save individual frame
-                        frame_path = frames_dir / f"frame_{frame_index:06d}.rgb565"
-                        with open(frame_path, 'wb') as frame_file:
-                            frame_file.write(frame_data)
+                        # Create PIL image from raw RGB24 data
+                        img = Image.frombytes('RGB', (self.target_width, self.target_height), frame_data)
                         
-                        frames.append(frame_path.name)
-                        durations.append(frame_duration)
+                        # Save individual frame using the reliable _save_frame method
+                        frame_path = self._save_frame(img, frames_dir, frame_index, format_type)
+                        
+                        if frame_path:
+                            frames.append(frame_path.name)
+                            durations.append(frame_duration)
+                        
                         frame_index += 1
                 
                 # Clean up raw file
@@ -246,6 +249,10 @@ class MediaConverter:
                             f'scale={self.target_width}:{self.target_height}:force_original_aspect_ratio=increase,'
                             f'crop={self.target_width}:{self.target_height}'
                         ),
+                        '-pix_fmt', 'rgb565le', # Use little-endian as we will swap bytes
+                        '-preset', 'ultrafast',  # Prioritize speed
+                        '-threads', '2',  # Use 2 threads for encoding
+                        '-f', 'rawvideo',
                         '-y',  # Overwrite output files
                         str(temp_path / 'frame_%06d.png')
                     ]
