@@ -427,7 +427,7 @@ fi
 # Install display dependencies and configure DRM
 # -----------------------------------------------------------------------------
 echo "📦 Installing display dependencies..."
-if ! apt-get install -y libjpeg-dev libopenjp2-7 libtiff5; then
+if ! sudo apt-get install -y libjpeg-dev libopenjp2-7 libtiff5; then
     echo "❌ Failed to install display dependencies."
     exit 1
 fi
@@ -446,7 +446,7 @@ sed -i '/fbcp/d' /etc/rc.local
 
 # Add DRM overlay for the 2.4" screen
 # This tells the kernel to drive the SPI display directly.
-cat >> "$CONFIG_FILE" <<EOF
+sudo cat >> "$CONFIG_FILE" <<EOF
 
 # LOOP Display Configuration (ILI9341)
 dtoverlay=vc4-kms-v3d

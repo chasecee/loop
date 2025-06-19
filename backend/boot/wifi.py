@@ -276,7 +276,7 @@ class WiFiManager:
                     self.hotspot_active = True
                     self.connected = False
                     self.current_ssid = None
-                    self.ip_address = "192.168.4.1"
+                    self.ip_address = "192.168.24.1"
                     self.logger.info(f"Hotspot started: {self.config.hotspot_ssid}")
                     return True
                 else:
@@ -328,7 +328,7 @@ dhcp-range=192.168.4.2,192.168.4.20,255.255.255.0,24h
             # Set up network interface
             subprocess.run(['sudo', 'ip', 'addr', 'flush', 'dev', 'wlan0'], 
                          capture_output=True, timeout=5)
-            subprocess.run(['sudo', 'ip', 'addr', 'add', '192.168.4.1/24', 'dev', 'wlan0'], 
+            subprocess.run(['sudo', 'ip', 'addr', 'add', '192.168.24.1/24', 'dev', 'wlan0'], 
                          capture_output=True, timeout=5)
             subprocess.run(['sudo', 'ip', 'link', 'set', 'wlan0', 'up'], 
                          capture_output=True, timeout=5)
@@ -346,7 +346,7 @@ dhcp-range=192.168.4.2,192.168.4.20,255.255.255.0,24h
             self.hotspot_active = True
             self.connected = False
             self.current_ssid = None
-            self.ip_address = "192.168.4.1"
+            self.ip_address = "192.168.24.1"
             
             self.logger.info(f"Hotspot started: {self.config.hotspot_ssid}")
             return True

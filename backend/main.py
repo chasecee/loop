@@ -301,11 +301,18 @@ class LOOPApplication:
                 if self.wifi_manager.connect():
                     self.logger.info(f"Connected to WiFi: {self.config.wifi.ssid}")
                 else:
-                    self.logger.warning("Failed to connect to configured WiFi, starting hotspot")
-                    self.wifi_manager.start_hotspot()
+                    self.logger.warning("Failed to connect to configured WiFi.")
+                    if self.config.wifi.hotspot_enabled:
+                        self.logger.info("Starting hotspot as fallback.")
+                        self.wifi_manager.start_hotspot()
+                    else:
+                        self.logger.info("Hotspot is disabled, will not start.")
             else:
-                self.logger.info("No WiFi configured, starting hotspot")
-                self.wifi_manager.start_hotspot()
+                if self.config.wifi.hotspot_enabled:
+                    self.logger.info("No WiFi configured, starting hotspot.")
+                    self.wifi_manager.start_hotspot()
+                else:
+                    self.logger.info("No WiFi configured and hotspot is disabled.")
             
             return True
             

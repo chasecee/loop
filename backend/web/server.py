@@ -570,6 +570,9 @@ def create_app(
                 data={"hotspot_active": False}
             )
         else:
+            if config and not config.wifi.hotspot_enabled:
+                raise HTTPException(status_code=403, detail="Hotspot functionality is disabled in the configuration.")
+            
             success = wifi_manager.start_hotspot()
             return APIResponse(
                 success=success,
