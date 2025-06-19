@@ -39,7 +39,7 @@ class ILI9341Driver:
         self.logger = get_logger("display")
         self.spi: Optional[spidev.SpiDev] = None
         self.initialized = False
-        self.spi_speed = 16000000  # Start with 16MHz, will try to optimize
+        self.spi_speed = config.spi_speed_hz  # Use configured SPI speed
         
         if not SPI_AVAILABLE:
             self.logger.warning("SPI libraries not available - running in simulation mode")
@@ -54,35 +54,15 @@ class ILI9341Driver:
         GPIO.setup(self.config.rst_pin, GPIO.OUT)
         GPIO.setup(self.config.bl_pin, GPIO.OUT)
         
-        # Initialize SPI with speed optimization
+        # Initialize SPI with configured speed
         self.spi = spidev.SpiDev()
         self.spi.open(self.config.spi_bus, self.config.spi_device)
-        self._optimize_spi_speed()
+        self.spi.max_speed_hz = self.spi_speed
         self.spi.mode = 0
         
         self.logger.info(f"Initialized ILI9341 driver: {self.config.width}x{self.config.height} @ {self.spi_speed/1000000:.1f}MHz")
     
-    def _optimize_spi_speed(self) -> None:
-        """Try to find the optimal SPI speed with fallback."""
-        # Try speeds from fastest to slowest (aggressive optimization)
-        test_speeds = [24000000, 20000000, 18000000, 16000000, 12000000]
-        
-        for speed in test_speeds:
-            try:
-                self.spi.max_speed_hz = speed
-                # Test with a small write to validate speed
-                self.spi.xfer2([0x00])  # Dummy write to test
-                self.spi_speed = speed
-                self.logger.info(f"SPI speed optimized to {speed/1000000:.1f}MHz")
-                return
-            except Exception as e:
-                self.logger.debug(f"SPI speed {speed/1000000:.1f}MHz failed: {e}")
-                continue
-        
-        # Fallback to conservative speed
-        self.spi_speed = 16000000
-        self.spi.max_speed_hz = self.spi_speed
-        self.logger.warning("Using fallback SPI speed: 16MHz")
+
     
     def _write_command(self, cmd: int) -> None:
         """Write command to display."""

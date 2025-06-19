@@ -22,7 +22,8 @@ class DisplayConfig:
     framerate: int = 25
     show_progress: bool = True  # Enable processing progress display
     progress_color: int = 0x07E0  # Green progress bar color (RGB565)
-    spi_chunk_size: int = 8096  # SPI chunk size (bytes) - optimized for 8192 kernel buffer
+    spi_chunk_size: int = 4096  # SPI chunk size (bytes) - safe Pi hardware limit
+    spi_speed_hz: int = 24000000  # SPI speed in Hz (24MHz - safe max for Pi)
 
 
 @dataclass
