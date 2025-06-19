@@ -758,8 +758,9 @@ def _process_media_file_impl(filename: str, content: bytes, content_type: str, c
         if job_id:
             media_index.update_processing_job(job_id, 10, "converting", "Starting media conversion...")
         
-        # Convert media with progress tracking
-        metadata = converter.convert_media_file(tmp_path, output_dir, job_id=job_id, fps=25.0)
+        # Convert media with progress tracking, using framerate from config
+        framerate = config.display.framerate if config and config.display else 25.0
+        metadata = converter.convert_media_file(tmp_path, output_dir, job_id=job_id, fps=framerate)
         if not metadata:
             error_msg = f"Media conversion failed for {filename}. Check if ffmpeg is installed and file format is supported."
             logger.error(error_msg)

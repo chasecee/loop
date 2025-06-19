@@ -463,13 +463,11 @@ class MediaConverter:
         # Determine file type by extension
         ext = input_path.suffix.lower()
         
-        # Get framerate from config for videos
-        config = get_config()
-        
+        # Get framerate from kwargs for videos
         if ext == '.gif':
             return self.convert_gif(input_path, output_dir, format_type, job_id)
         elif ext in ['.mp4', '.avi', '.mov', '.mkv', '.webm']:
-            fps = kwargs.get('fps', config.display.framerate)
+            fps = kwargs.get('fps', 25.0) # Default to 25.0 if not provided
             return self.convert_video(input_path, output_dir, format_type, fps, job_id)
         elif ext in ['.png', '.jpg', '.jpeg', '.bmp', '.tiff']:
             return self.convert_image(input_path, output_dir, format_type, job_id)
