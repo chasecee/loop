@@ -4,6 +4,13 @@ import os
 import pygame
 import numpy as np
 from typing import Optional
+import time
+
+try:
+    import RPi.GPIO as GPIO
+    IS_RPI = True
+except (ImportError, RuntimeError):
+    IS_RPI = False
 
 from config.schema import DisplayConfig
 from utils.logger import get_logger
@@ -18,17 +25,44 @@ class ILI9341Driver:
         self.screen: Optional[pygame.Surface] = None
         self.initialized = False
         
+        if IS_RPI:
+            self._setup_gpio()
+
         # Point to the primary framebuffer
         os.putenv('SDL_FBDEV', '/dev/fb0')
         os.putenv('SDL_VIDEODRIVER', 'fbcon')
         
         self.logger.info(f"Initializing framebuffer driver for /dev/fb0")
     
+    def _setup_gpio(self):
+        """Set up GPIO pins for display control."""
+        self.logger.info(f"Setting up GPIO: DC={self.config.dc_pin}, RST={self.config.rst_pin}")
+        GPIO.setwarnings(False)
+        GPIO.setmode(GPIO.BCM)
+        GPIO.setup(self.config.dc_pin, GPIO.OUT)
+        GPIO.setup(self.config.rst_pin, GPIO.OUT)
+        
+    def _reset_display(self):
+        """Perform a hardware reset of the display."""
+        if not IS_RPI:
+            self.logger.warning("Not on a Raspberry Pi, skipping hardware reset.")
+            return
+            
+        self.logger.info("Performing hardware reset...")
+        GPIO.output(self.config.rst_pin, GPIO.HIGH)
+        time.sleep(0.1)
+        GPIO.output(self.config.rst_pin, GPIO.LOW)
+        time.sleep(0.1)
+        GPIO.output(self.config.rst_pin, GPIO.HIGH)
+        time.sleep(0.1)
+
     def init(self) -> None:
         """Initialize the Pygame display."""
         if self.initialized:
             return
         
+        self._reset_display()
+
         self.logger.info("Initializing Pygame for framebuffer...")
         try:
             pygame.init()
@@ -108,5 +142,7 @@ class ILI9341Driver:
         """Clean up resources."""
         if self.initialized:
             pygame.quit()
+            if IS_RPI:
+                GPIO.cleanup([self.config.dc_pin, self.config.rst_pin])
             self.initialized = False
             self.logger.info("Pygame display driver cleaned up") 
