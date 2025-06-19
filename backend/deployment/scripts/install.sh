@@ -448,35 +448,11 @@ fi
 # -----------------------------------------------------------------------------
 # Install display dependencies and configure DRM
 # -----------------------------------------------------------------------------
-echo "📦 Installing display dependencies..."
-if ! sudo apt-get install -y libjpeg-dev libopenjp2-7 libtiff6; then
-    echo "❌ Failed to install display dependencies."
-    exit 1
-fi
-
-echo "⚙️ Configuring DRM for ILI9341 display (Bookworm method)..."
-CONFIG_FILE="/boot/firmware/config.txt"
-
-# Ensure config file exists
-if [ ! -f "$CONFIG_FILE" ]; then
-    echo "❌ $CONFIG_FILE not found. This script is intended for Raspberry Pi OS."
-    exit 1
-fi
-
-# Add DRM overlay for the 2.4" screen if not already present
-if ! grep -q -E "^dtoverlay=waveshare24b" "$CONFIG_FILE"; then
-    echo "   Display overlay not found. Adding now..."
-    sudo tee -a "$CONFIG_FILE" <<EOF
-
-# LOOP Display Configuration (ILI9341)
-dtoverlay=vc4-kms-v3d
-dtoverlay=waveshare24b,speed=48000000,fps=60
-EOF
-    echo "✅ DRM display overlay configured in $CONFIG_FILE."
-    echo "⚠️  A reboot is required for display changes to take effect."
-else
-    echo "✅ DRM display overlay already configured."
-fi
+# This entire section is now obsolete and has been removed.
+# The application now uses a self-contained, user-space Python driver from the 
+# 'waveshare' directory that communicates directly with the hardware via SPI.
+# This approach removes the need for a kernel framebuffer driver (DRM/dtoverlay)
+# and resolves issues related to the missing 'waveshare24b.dtbo' overlay file.
 
 # -----------------------------------------------------------------------------
 # Install Python dependencies

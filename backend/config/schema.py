@@ -17,13 +17,6 @@ class DisplayConfig:
     framerate: int = 25
     show_progress: bool = True  # Enable processing progress display
     progress_color: int = 0x07E0  # Green progress bar color (RGB565)
-    spi_bus: int = 0
-    spi_device: int = 0
-    dc_pin: int = 25
-    rst_pin: int = 27
-    bl_pin: int = 18
-    spi_chunk_size: int = 4096
-    spi_speed_hz: int = 48000000
 
 
 @dataclass
