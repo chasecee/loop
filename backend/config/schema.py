@@ -26,6 +26,7 @@ class WiFiConfig:
     password: str = ""
     hotspot_ssid: str = "LOOP-Setup"
     hotspot_password: str = "loop123"
+    hotspot_channel: int = 11
     timeout: int = 10
 
 

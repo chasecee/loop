@@ -137,6 +137,13 @@ class WiFiManager:
     def connect_to_network(self, ssid: str, password: str = "") -> bool:
         """Connect to a specific WiFi network."""
         try:
+            # First, ensure hotspot is stopped
+            if self.hotspot_active:
+                self.logger.info("Hotspot is active, stopping it first.")
+                if not self.stop_hotspot():
+                    self.logger.warning("Failed to stop hotspot, connection may fail.")
+                    # Even if stopping fails, we should proceed with connection attempt
+            
             self.logger.info(f"Attempting to connect to {ssid}")
             
             # Update wpa_supplicant configuration
@@ -261,7 +268,8 @@ class WiFiManager:
                     'sudo', str(Path(__file__).parent / 'hotspot.sh'), 
                     'start', 
                     self.config.hotspot_ssid, 
-                    self.config.hotspot_password
+                    self.config.hotspot_password,
+                    str(self.config.hotspot_channel)
                 ], capture_output=True, text=True, timeout=30)
                 
                 if result.returncode == 0:
@@ -351,21 +359,32 @@ dhcp-range=192.168.4.2,192.168.4.20,255.255.255.0,24h
         """Stop WiFi hotspot mode."""
         try:
             self.logger.info("Stopping WiFi hotspot")
-            
-            # Stop services
-            subprocess.run(['sudo', 'systemctl', 'stop', 'hostapd'])
-            subprocess.run(['sudo', 'systemctl', 'stop', 'dnsmasq'])
-            
-            # Reset network interface
-            subprocess.run(['sudo', 'ip', 'addr', 'flush', 'dev', 'wlan0'])
-            
-            self.hotspot_active = False
-            
-            self.logger.info("Hotspot stopped")
-            return True
-            
-        except Exception as e:
+
+            script_path = str(Path(__file__).parent / 'hotspot.sh')
+            result = subprocess.run(
+                ['sudo', script_path, 'stop'],
+                capture_output=True, text=True, timeout=30
+            )
+
+            if result.returncode == 0:
+                self.hotspot_active = False
+                self.logger.info("Hotspot stopped successfully via script")
+                # Attempt to restart dhcpcd to get back on a normal network
+                subprocess.run(['sudo', 'systemctl', 'restart', 'dhcpcd'], 
+                             capture_output=True, timeout=10)
+                return True
+            else:
+                self.logger.warning(f"Hotspot script failed: {result.stderr}. Falling back to manual stop.")
+                # Fallback to original manual method if script fails
+                subprocess.run(['sudo', 'systemctl', 'stop', 'hostapd'], check=True)
+                subprocess.run(['sudo', 'systemctl', 'stop', 'dnsmasq'], check=True)
+                subprocess.run(['sudo', 'ip', 'addr', 'flush', 'dev', 'wlan0'], check=True)
+                self.hotspot_active = False
+                return False
+
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError) as e:
             self.logger.error(f"Failed to stop hotspot: {e}")
+            self.hotspot_active = False # Assume it's stopped even on error
             return False
     
     def get_status(self) -> Dict:
