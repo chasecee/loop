@@ -71,7 +71,7 @@ class ILI9341Driver:
             try:
                 self.spi.max_speed_hz = speed
                 # Test with a small write to validate speed
-                self.spi.writebytes([0x00])  # Dummy write to test
+                self.spi.xfer2([0x00])  # Dummy write to test
                 self.spi_speed = speed
                 self.logger.info(f"SPI speed optimized to {speed/1000000:.1f}MHz")
                 return
@@ -90,7 +90,7 @@ class ILI9341Driver:
             return
         
         GPIO.output(self.config.dc_pin, GPIO.LOW)  # Command mode
-        self.spi.writebytes([cmd])
+        self.spi.xfer2([cmd])
     
     def _write_data(self, data) -> None:
         """Write data to display."""
@@ -100,10 +100,10 @@ class ILI9341Driver:
         # Validate data before writing
         if isinstance(data, int):
             GPIO.output(self.config.dc_pin, GPIO.HIGH)  # Data mode
-            self.spi.writebytes([data])
+            self.spi.xfer2([data])
         elif data:  # Only write if data is not empty
             GPIO.output(self.config.dc_pin, GPIO.HIGH)  # Data mode
-            self.spi.writebytes(data)
+            self.spi.xfer2(list(data))
         # If data is empty, do nothing (no error)
     
     def _reset(self) -> None:
@@ -196,44 +196,26 @@ class ILI9341Driver:
         self._write_command(self.ILI9341_RAMWR)
     
     def write_pixel_data(self, data: bytes) -> None:
-        """Write pixel data to display with maximum performance optimization."""
+        """Write pixel data to display with conservative chunking to avoid SPI buffer limits."""
         if not SPI_AVAILABLE or not data:
             return
         
         # Set data mode ONCE at the start - major optimization
         GPIO.output(self.config.dc_pin, GPIO.HIGH)
         
-        # AGGRESSIVE OPTIMIZATION: Try larger chunk sizes for better performance
-        # The Pi Zero 2 W might handle larger chunks than 4KB
-        chunk_sizes = [8192, 6144, 4096]  # Try 8KB, 6KB, then fallback to 4KB
+        # Use xfer2() with fixed chunk size - your kernel supports 8KB chunks
+        # Always chunk the data regardless of size to respect SPI buffer limits
+        chunk_size = self.config.spi_chunk_size
         
-        for chunk_size in chunk_sizes:
-            try:
-                if len(data) <= chunk_size:
-                    # Single write for small data - fastest path
-                    self.spi.writebytes(data)
-                    return
-                else:
-                    # Chunked write - minimize overhead
-                    chunks_written = 0
-                    for i in range(0, len(data), chunk_size):
-                        chunk = data[i:i + chunk_size]
-                        self.spi.writebytes(chunk)
-                        chunks_written += 1
-                    
-                    # If we got here without exception, this chunk size works
-                    return
-                    
-            except (OSError, IOError) as e:
-                # This chunk size failed, try smaller
-                if chunk_size == 4096:  # Last resort failed
-                    self.logger.warning(f"SPI write failed even with 4KB chunks: {e}")
-                    return
-                continue
-            except Exception as e:
-                # Unexpected error - log and exit
-                self.logger.error(f"Unexpected display error: {e}")
-                raise
+        try:
+            # Always chunked write - no "single write" fallback
+            for i in range(0, len(data), chunk_size):
+                chunk = data[i:i + chunk_size]
+                self.spi.xfer2(list(chunk))
+                
+        except Exception as e:
+            self.logger.error(f"SPI write failed with {chunk_size}-byte chunks: {e}")
+            raise
     
     def fill_screen(self, color: int = 0x0000) -> None:
         """Fill entire screen with color (RGB565)."""

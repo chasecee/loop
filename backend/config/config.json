@@ -15,7 +15,8 @@
     "rotation": 270,
     "framerate": 25,
     "show_progress": true,
-    "progress_color": 1984
+    "progress_color": 1984,
+    "spi_chunk_size": 4096
   },
   "wifi": {
     "ssid": "",
