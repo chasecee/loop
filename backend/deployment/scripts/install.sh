@@ -295,15 +295,25 @@ sleep 2
 if sudo systemctl is-active --quiet ${SERVICE_NAME}; then
     echo "✅ LOOP service is running!"
     
-    # Get the local IP address
-    IP_ADDR=$(hostname -I | awk '{print $1}')
+    # Wait for a valid IP address
+    echo "⌛ Waiting for network connection..."
+    IP_ADDR=""
+    for i in {1..15}; do
+        IP_ADDR=$(hostname -I | awk '{print $1}')
+        if [[ -n "$IP_ADDR" && "$IP_ADDR" != "192.168.24.1" ]]; then
+            echo "✅ Network connected."
+            break
+        fi
+        sleep 1
+    done
+
     echo ""
-    echo "🌐 LOOP is accessible at:"
-    echo "   http://${IP_ADDR}:8080"
-    echo ""
-    echo "📱 If WiFi setup is needed, connect to:"
-    echo "   SSID: LOOP-Setup"
-    echo "   Password: loop123"
+    if [[ -n "$IP_ADDR" && "$IP_ADDR" != "192.168.24.1" ]]; then
+        echo "🌐 LOOP is accessible at: http://${IP_ADDR}:8080"
+    else
+        echo "⚠️  Could not determine IP address. Please check your network or connect to the hotspot if enabled."
+        echo "   Default Hotspot SSID: LOOP-Setup"
+    fi
     echo ""
 else
     echo "❌ Failed to start LOOP service"

@@ -182,13 +182,18 @@ class MediaConverter:
                 ]
                 
                 self.logger.info(f"Running ffmpeg command: {' '.join(cmd)}")
-                result = subprocess.run(cmd, capture_output=True, text=True)
+                result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+                
+                # Check for errors and provide detailed logging
                 if result.returncode != 0:
-                    error_msg = f"ffmpeg failed (return code {result.returncode}): {result.stderr}"
+                    error_msg = (
+                        f"ffmpeg failed with exit code {result.returncode}.\n"
+                        f"Stderr: {result.stderr.strip() if result.stderr else 'N/A'}\n"
+                        f"Stdout: {result.stdout.strip() if result.stdout else 'N/A'}"
+                    )
                     self.logger.error(error_msg)
-                    self.logger.error(f"ffmpeg stdout: {result.stdout}")
                     if job_id:
-                        self._complete_job(job_id, False, error_msg)
+                        self._complete_job(job_id, False, f"ffmpeg error: {result.stderr.strip()}")
                     return None
                 
                 if job_id:

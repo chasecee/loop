@@ -280,79 +280,16 @@ class WiFiManager:
                     self.logger.info(f"Hotspot started: {self.config.hotspot_ssid}")
                     return True
                 else:
-                    self.logger.warning(f"Helper script failed: {result.stderr}")
-                    # Fall back to manual configuration
+                    self.logger.error(f"Hotspot helper script failed with exit code {result.returncode}")
+                    self.logger.error(f"Stderr: {result.stderr.strip()}")
+                    return False
             
             except (subprocess.TimeoutExpired, FileNotFoundError, PermissionError) as e:
-                self.logger.warning(f"Cannot use helper script ({e}), trying manual configuration")
-            
-            # Manual hotspot configuration (fallback)
-            # Stop any existing WiFi connection
-            subprocess.run(['sudo', 'systemctl', 'stop', 'wpa_supplicant'], 
-                         capture_output=True, timeout=10)
-            
-            # Configure hostapd (only if writable)
-            try:
-                hostapd_config = f"""interface=wlan0
-driver=nl80211
-ssid={self.config.hotspot_ssid}
-hw_mode=g
-channel=7
-wmm_enabled=0
-macaddr_acl=0
-auth_algs=1
-ignore_broadcast_ssid=0
-wpa=2
-wpa_passphrase={self.config.hotspot_password}
-wpa_key_mgmt=WPA-PSK
-wpa_pairwise=TKIP
-rsn_pairwise=CCMP
-"""
-                
-                with open(self.hostapd_conf, 'w') as f:
-                    f.write(hostapd_config)
-                
-                # Configure dnsmasq
-                dnsmasq_config = """interface=wlan0
-dhcp-range=192.168.4.2,192.168.4.20,255.255.255.0,24h
-"""
-                
-                with open(self.dnsmasq_conf, 'w') as f:
-                    f.write(dnsmasq_config)
-                
-            except (PermissionError, OSError) as e:
-                self.logger.error(f"Cannot write configuration files: {e}")
-                self.logger.info("Hotspot configuration failed - check file permissions")
+                self.logger.error(f"Failed to execute hotspot helper script: {e}")
                 return False
-            
-            # Set up network interface
-            subprocess.run(['sudo', 'ip', 'addr', 'flush', 'dev', 'wlan0'], 
-                         capture_output=True, timeout=5)
-            subprocess.run(['sudo', 'ip', 'addr', 'add', '192.168.24.1/24', 'dev', 'wlan0'], 
-                         capture_output=True, timeout=5)
-            subprocess.run(['sudo', 'ip', 'link', 'set', 'wlan0', 'up'], 
-                         capture_output=True, timeout=5)
-            
-            # Start services
-            subprocess.run(['sudo', 'systemctl', 'start', 'hostapd'], 
-                         capture_output=True, timeout=10)
-            subprocess.run(['sudo', 'systemctl', 'start', 'dnsmasq'], 
-                         capture_output=True, timeout=10)
-            
-            # Enable IP forwarding for captive portal
-            subprocess.run(['sudo', 'sysctl', 'net.ipv4.ip_forward=1'], 
-                         capture_output=True, timeout=5)
-            
-            self.hotspot_active = True
-            self.connected = False
-            self.current_ssid = None
-            self.ip_address = "192.168.24.1"
-            
-            self.logger.info(f"Hotspot started: {self.config.hotspot_ssid}")
-            return True
-            
+
         except Exception as e:
-            self.logger.error(f"Failed to start hotspot: {e}")
+            self.logger.error(f"An unexpected error occurred while starting hotspot: {e}")
             return False
     
     def stop_hotspot(self) -> bool:
