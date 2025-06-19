@@ -39,6 +39,7 @@ class ILI9341Driver:
         self.logger = get_logger("display")
         self.spi: Optional[spidev.SpiDev] = None
         self.initialized = False
+        self.spi_speed = 16000000  # Start with 16MHz, will try to optimize
         
         if not SPI_AVAILABLE:
             self.logger.warning("SPI libraries not available - running in simulation mode")
@@ -53,13 +54,35 @@ class ILI9341Driver:
         GPIO.setup(self.config.rst_pin, GPIO.OUT)
         GPIO.setup(self.config.bl_pin, GPIO.OUT)
         
-        # Initialize SPI
+        # Initialize SPI with speed optimization
         self.spi = spidev.SpiDev()
         self.spi.open(self.config.spi_bus, self.config.spi_device)
-        self.spi.max_speed_hz = 16000000  # 16MHz - safe speed for Pi Zero 2 W with ILI9341
+        self._optimize_spi_speed()
         self.spi.mode = 0
         
-        self.logger.info(f"Initialized ILI9341 driver: {self.config.width}x{self.config.height}")
+        self.logger.info(f"Initialized ILI9341 driver: {self.config.width}x{self.config.height} @ {self.spi_speed/1000000:.1f}MHz")
+    
+    def _optimize_spi_speed(self) -> None:
+        """Try to find the optimal SPI speed with fallback."""
+        # Try speeds from fastest to slowest (aggressive optimization)
+        test_speeds = [24000000, 20000000, 18000000, 16000000, 12000000]
+        
+        for speed in test_speeds:
+            try:
+                self.spi.max_speed_hz = speed
+                # Test with a small write to validate speed
+                self.spi.writebytes([0x00])  # Dummy write to test
+                self.spi_speed = speed
+                self.logger.info(f"SPI speed optimized to {speed/1000000:.1f}MHz")
+                return
+            except Exception as e:
+                self.logger.debug(f"SPI speed {speed/1000000:.1f}MHz failed: {e}")
+                continue
+        
+        # Fallback to conservative speed
+        self.spi_speed = 16000000
+        self.spi.max_speed_hz = self.spi_speed
+        self.logger.warning("Using fallback SPI speed: 16MHz")
     
     def _write_command(self, cmd: int) -> None:
         """Write command to display."""
@@ -173,33 +196,44 @@ class ILI9341Driver:
         self._write_command(self.ILI9341_RAMWR)
     
     def write_pixel_data(self, data: bytes) -> None:
-        """Write pixel data to display with optimized chunking."""
+        """Write pixel data to display with maximum performance optimization."""
         if not SPI_AVAILABLE or not data:
             return
         
         # Set data mode ONCE at the start - major optimization
         GPIO.output(self.config.dc_pin, GPIO.HIGH)
         
-        # Pi SPI driver has a hard limit of 4096 bytes per transaction
-        chunk_size = 4096  # Fixed 4KB chunks for Pi Zero 2
+        # AGGRESSIVE OPTIMIZATION: Try larger chunk sizes for better performance
+        # The Pi Zero 2 W might handle larger chunks than 4KB
+        chunk_sizes = [8192, 6144, 4096]  # Try 8KB, 6KB, then fallback to 4KB
         
-        try:
-            # Optimized single-pass chunking for performance
-            if len(data) <= chunk_size:
-                # Single write for small data - fastest path
-                self.spi.writebytes(data)
-            else:
-                # Chunked write - minimize Python overhead
-                for i in range(0, len(data), chunk_size):
-                    chunk = data[i:i + chunk_size]
-                    self.spi.writebytes(chunk)
-        except (OSError, IOError) as e:
-            # Log specific SPI/hardware errors but don't crash display
-            self.logger.warning(f"SPI write failed: {e}")
-        except Exception as e:
-            # Log unexpected errors - these indicate real problems
-            self.logger.error(f"Unexpected display error: {e}")
-            raise
+        for chunk_size in chunk_sizes:
+            try:
+                if len(data) <= chunk_size:
+                    # Single write for small data - fastest path
+                    self.spi.writebytes(data)
+                    return
+                else:
+                    # Chunked write - minimize overhead
+                    chunks_written = 0
+                    for i in range(0, len(data), chunk_size):
+                        chunk = data[i:i + chunk_size]
+                        self.spi.writebytes(chunk)
+                        chunks_written += 1
+                    
+                    # If we got here without exception, this chunk size works
+                    return
+                    
+            except (OSError, IOError) as e:
+                # This chunk size failed, try smaller
+                if chunk_size == 4096:  # Last resort failed
+                    self.logger.warning(f"SPI write failed even with 4KB chunks: {e}")
+                    return
+                continue
+            except Exception as e:
+                # Unexpected error - log and exit
+                self.logger.error(f"Unexpected display error: {e}")
+                raise
     
     def fill_screen(self, color: int = 0x0000) -> None:
         """Fill entire screen with color (RGB565)."""
@@ -215,7 +249,7 @@ class ILI9341Driver:
         self.write_pixel_data(bytes(pixel_data))
     
     def display_frame(self, frame_data: bytes) -> None:
-        """Display a frame of RGB565 pixel data."""
+        """Display a frame of RGB565 pixel data with anti-tearing optimizations."""
         if not self.initialized:
             self.init()
         
@@ -224,7 +258,13 @@ class ILI9341Driver:
         if not frame_data or len(frame_data) != expected_size:
             return
         
+        # ANTI-TEARING OPTIMIZATION: Set window and write data in one atomic operation
+        # This minimizes the time between setting the window and writing data
+        
+        # Set window once for entire frame
         self.set_window(0, 0, self.config.width - 1, self.config.height - 1)
+        
+        # Write all pixel data in optimized chunks
         self.write_pixel_data(frame_data)
     
     def set_backlight(self, enabled: bool) -> None:

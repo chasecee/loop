@@ -183,7 +183,7 @@ class LOOPApplication:
                     slug = converter._generate_slug(media_file.name)
                     out_dir = processed_dir / slug
                     try:
-                        meta = converter.convert_media_file(media_file, out_dir)
+                        meta = converter.convert_media_file(media_file, out_dir, fps=25.0)
                         if meta:
                             media_items[slug] = meta
                             loop_order.append(slug)

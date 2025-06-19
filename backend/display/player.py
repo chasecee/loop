@@ -612,7 +612,11 @@ class DisplayPlayer:
                 else:
                     # Play all frames in animated sequence
                     sequence_completed = True
+                    frame_times = []  # Track frame performance for diagnostics
+                    
                     for frame_idx in range(frame_count):
+                        frame_start = time.time()
+                        
                         if not self.running:
                             sequence_completed = False
                             break
@@ -639,17 +643,36 @@ class DisplayPlayer:
                             sequence_completed = False
                             break
                         
-                        # Display frame
-                        start_time = time.time()
+                        # CRITICAL PATH: Display frame as fast as possible
+                        display_start = time.time()
                         self.display_driver.display_frame(frame_data)
+                        display_time = time.time() - display_start
                         
-                        # Calculate sleep time to maintain frame rate
-                        display_time = time.time() - start_time
-                        target_duration = frame_duration if frame_duration > 0 else (1.0 / self.frame_rate)
-                        sleep_time = max(0, target_duration - display_time)
+                        # FRAME TIMING: Use the most restrictive timing (either media duration or framerate)
+                        if frame_duration > 0:
+                            # Media has specific timing (GIF frames)
+                            target_frame_time = frame_duration
+                        else:
+                            # Use configured framerate
+                            target_frame_time = 1.0 / self.frame_rate
+                        
+                        # Calculate remaining sleep time after display
+                        sleep_time = max(0, target_frame_time - display_time)
                         
                         if sleep_time > 0:
                             time.sleep(sleep_time)
+                        
+                        # Performance tracking
+                        total_frame_time = time.time() - frame_start
+                        frame_times.append((display_time, total_frame_time))
+                        
+                        # Log performance every 30 frames for diagnostics
+                        if len(frame_times) >= 30:
+                            avg_display = sum(times[0] for times in frame_times) / len(frame_times)
+                            avg_total = sum(times[1] for times in frame_times) / len(frame_times)
+                            actual_fps = 1.0 / avg_total if avg_total > 0 else 0
+                            self.logger.info(f"Frame performance: {actual_fps:.1f} FPS (display: {avg_display*1000:.1f}ms, total: {avg_total*1000:.1f}ms)")
+                            frame_times = []  # Reset for next batch
                     
                     if not sequence_completed:
                         continue  # Skip loop logic if sequence was interrupted

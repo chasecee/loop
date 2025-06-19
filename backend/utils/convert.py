@@ -140,7 +140,7 @@ class MediaConverter:
                 self._complete_job(job_id, False, str(e))
             return None
     
-    def convert_video(self, video_path: Path, output_dir: Path, format_type: str = "rgb565", fps: float = 10.0, job_id: str = None) -> Optional[Dict]:
+    def convert_video(self, video_path: Path, output_dir: Path, format_type: str = "rgb565", fps: float = 25.0, job_id: str = None) -> Optional[Dict]:
         """Convert video to frame sequence using ffmpeg with proper aspect ratio handling."""
         if not self.ffmpeg_available:
             error_msg = "ffmpeg not available for video conversion. Install with: sudo apt-get install ffmpeg"
