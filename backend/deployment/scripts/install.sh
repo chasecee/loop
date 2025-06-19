@@ -44,15 +44,6 @@ install_missing_packages() {
     fi
 }
 
-# Function to check if SPI is enabled
-check_spi() {
-    if grep -q "^dtparam=spi=on" /boot/config.txt || lsmod | grep -q "^spi_"; then
-        echo "✅ SPI already enabled"
-        return 0
-    fi
-    return 1
-}
-
 # Function to check Python venv
 check_venv() {
     if [ -f "${VENV_DIR}/bin/python" ] && [ -f "${VENV_DIR}/bin/pip" ]; then
@@ -164,10 +155,22 @@ install_missing_packages \
     libopenjp2-7 \
     libtiff-dev
 
+# Set Boot Config path based on OS version
+if [ -f /boot/firmware/config.txt ]; then
+    BOOT_CONFIG_FILE="/boot/firmware/config.txt"
+else
+    BOOT_CONFIG_FILE="/boot/config.txt"
+fi
+
 # Enable SPI interface if needed
-if ! check_spi; then
-    echo "🔌 Enabling SPI interface..."
-    sudo raspi-config nonint do_spi 0
+echo "🔌 Checking SPI interface..."
+if ! grep -q -E "^dtparam=spi=on" "$BOOT_CONFIG_FILE"; then
+    echo "   SPI not enabled. Enabling now..."
+    echo "# Enable SPI for LOOP hardware" | sudo tee -a "$BOOT_CONFIG_FILE"
+    echo "dtparam=spi=on" | sudo tee -a "$BOOT_CONFIG_FILE"
+    echo "✅ SPI enabled. A reboot will be required."
+else
+    echo "✅ SPI is already enabled in $BOOT_CONFIG_FILE."
 fi
 
 # Create virtual environment if needed
@@ -427,7 +430,7 @@ fi
 # Install display dependencies and configure DRM
 # -----------------------------------------------------------------------------
 echo "📦 Installing display dependencies..."
-if ! sudo apt-get install -y libjpeg-dev libopenjp2-7 libtiff5; then
+if ! sudo apt-get install -y libjpeg-dev libopenjp2-7 libtiff6; then
     echo "❌ Failed to install display dependencies."
     exit 1
 fi
