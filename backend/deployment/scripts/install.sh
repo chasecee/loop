@@ -127,39 +127,6 @@ EOF
     echo "Continuing with fresh installation..."
 fi
 
-# Check if this is a reinstall
-if [ -f "$CONFIG_FLAG" ]; then
-    if check_venv; then
-        echo "🔄 Detected previous installation"
-        echo "Performing quick update..."
-        
-        # Just update Python packages and restart service
-        if [ -f "${BACKEND_DIR}/requirements.txt" ]; then
-            echo "📚 Updating Python dependencies..."
-            source "${VENV_DIR}/bin/activate"
-            pip install -r "${BACKEND_DIR}/requirements.txt"
-        fi
-        
-        # Restart service if it exists
-        if check_service; then
-            echo "🔄 Restarting service..."
-            sudo systemctl restart ${SERVICE_NAME}
-            
-            # Show IP and exit
-            IP_ADDR=$(hostname -I | awk '{print $1}')
-            echo ""
-            echo "🌐 LOOP is accessible at:"
-            echo "   http://${IP_ADDR}:8080"
-        fi
-        
-        echo "✨ Quick update complete!"
-        exit 0
-    else
-        echo "⚠️  Previous install flag found but virtualenv missing – performing fresh install..."
-        rm -f "$CONFIG_FLAG"
-    fi
-fi
-
 # For fresh install, continue with full setup...
 # Check if running on Raspberry Pi
 if ! grep -q "Raspberry Pi" /proc/cpuinfo 2>/dev/null; then
@@ -457,73 +424,37 @@ with open('$INDEX_FILE', 'w') as f:
 fi
 
 # -----------------------------------------------------------------------------
-# Install display dependencies
+# Install display dependencies and configure DRM
 # -----------------------------------------------------------------------------
-echo "Installing display dependencies..."
+echo "📦 Installing display dependencies..."
 if ! apt-get install -y libjpeg-dev libopenjp2-7 libtiff5; then
     echo "❌ Failed to install display dependencies."
     exit 1
 fi
 
-# -----------------------------------------------------------------------------
-# Configure FBCP (Framebuffer Copy) for high-performance display mirroring
-# -----------------------------------------------------------------------------
-echo "Configuring FBCP for ILI9341 display..."
+echo "⚙️  Configuring DRM for ILI9341 display (Bookworm method)..."
+CONFIG_FILE="/boot/firmware/config.txt"
 
-# Install cmake for building
-if ! apt-get -y install cmake; then
-    echo "❌ Failed to install cmake."
+# Ensure config file exists
+if [ ! -f "$CONFIG_FILE" ]; then
+    echo "❌ $CONFIG_FILE not found. This script is intended for Raspberry Pi OS."
     exit 1
 fi
 
-# Download and build fbcp-ili9341
-FBCP_DIR="/home/$SUDO_USER/fbcp-ili9341"
-if [ -d "$FBCP_DIR" ]; then
-    echo "FBCP directory already exists, skipping download."
-else
-    echo "Downloading fbcp-ili9341..."
-    if ! git clone https://github.com/juj/fbcp-ili9341.git "$FBCP_DIR"; then
-        echo "❌ Failed to clone fbcp-ili9341 repository."
-        exit 1
-    fi
-fi
+# Remove old fbcp-related settings if they exist
+sed -i '/fbcp/d' /etc/rc.local
 
-cd "$FBCP_DIR"
-mkdir -p build
-cd build
+# Add DRM overlay for the 2.4" screen
+# This tells the kernel to drive the SPI display directly.
+cat >> "$CONFIG_FILE" <<EOF
 
-# Configure cmake for Waveshare 2.4" display
-echo "Configuring FBCP build..."
-if ! cmake -DWAVESHARE_2INCH4_LCD=ON -DSPI_BUS_CLOCK_DIVISOR=20 -DBACKLIGHT_CONTROL=ON -DSTATISTICS=0 ..; then
-    echo "❌ CMake configuration for FBCP failed."
-    exit 1
-fi
+# LOOP Display Configuration (ILI9341)
+dtoverlay=vc4-kms-v3d
+dtoverlay=waveshare24b,speed=48000000,fps=60
+EOF
 
-# Build and install
-echo "Building and installing FBCP..."
-if ! make -j$(nproc); then
-    echo "❌ Failed to build FBCP."
-    exit 1
-fi
-if ! install fbcp /usr/local/bin/fbcp; then
-    echo "❌ Failed to install FBCP."
-    exit 1
-fi
-
-# Configure system to run FBCP on boot
-echo "Configuring FBCP to run on boot..."
-if ! grep -q "fbcp &" /etc/rc.local; then
-    # Add fbcp to rc.local if it's not already there
-    sed -i -e '$i \/usr/local/bin/fbcp &\n' /etc/rc.local
-    echo "FBCP added to /etc/rc.local."
-else
-    echo "FBCP already configured in /etc/rc.local."
-fi
-
-# Disable default KMS driver which conflicts with FBCP
-echo "Disabling default KMS video driver..."
-CONFIG_FILE="/boot/config.txt"
-sed -i 's/dtoverlay=vc4-kms-v3d/#dtoverlay=vc4-kms-v3d/g' "$CONFIG_FILE"
+echo "✅ DRM display overlay configured in $CONFIG_FILE."
+echo "⚠️  A reboot is required for display changes to take effect."
 
 # -----------------------------------------------------------------------------
 # Install Python dependencies

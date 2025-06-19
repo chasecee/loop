@@ -39,21 +39,33 @@ class GitUpdater:
             return False
         
         try:
-            # Fetch latest from remote
-            subprocess.run(['git', 'fetch'], cwd=self.repo_path, check=True, capture_output=True)
-            
+            # Fetch latest from remote. Don't treat failure as a critical error,
+            # as the device may simply be offline.
+            fetch_result = subprocess.run(
+                ['git', 'fetch'],
+                cwd=self.repo_path,
+                capture_output=True,
+                text=True,
+                timeout=30 # Add a timeout to prevent hangs
+            )
+
+            if fetch_result.returncode != 0:
+                # Log non-critical failure to fetch.
+                self.logger.warning(f"Git fetch failed (maybe offline?): {fetch_result.stderr.strip()}")
+                return False
+
             # Check if local is behind remote
-            result = subprocess.run(
+            status_result = subprocess.run(
                 ['git', 'status', '-uno', '--porcelain=v1'],
                 cwd=self.repo_path,
                 capture_output=True,
                 text=True
             )
             
-            return 'behind' in result.stdout
+            return 'behind' in status_result.stdout
             
-        except subprocess.CalledProcessError as e:
-            self.logger.error(f"Git fetch failed: {e}")
+        except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+            self.logger.error(f"Git update check failed: {e}")
             return False
     
     def update(self) -> bool:
