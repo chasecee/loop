@@ -6,6 +6,9 @@ from typing import List, Optional, Tuple, Union
 from PIL import Image
 import io
 import numpy as np
+import queue
+import threading
+import time
 
 from utils.logger import get_logger
 
@@ -149,7 +152,7 @@ class FrameDecoder:
 
 
 class FrameSequence:
-    """Manages a sequence of frames for playback with on-demand loading."""
+    """Manages a sequence of frames for playback using a producer-consumer queue."""
     
     def __init__(self, frames_dir: Path, frames: List[str], durations: List[float]):
         self.frames_dir = frames_dir
@@ -157,14 +160,62 @@ class FrameSequence:
         self.durations = durations
         self.frame_count = len(frames)
         self.logger = get_logger("framebuf")
-        self.logger.info(f"Initialized sequence with {self.frame_count} frames (on-demand loading)")
-    
-    def get_frame_data(self, frame_idx: int) -> Optional[bytes]:
-        """Get frame data by index by loading from disk."""
-        if 0 <= frame_idx < self.frame_count:
-            return self._load_frame(self.frame_paths[frame_idx])
-        return None
-    
+
+        # Bounded queue to hold pre-loaded frames
+        # Buffer ~1 second of frames @ 30fps, or 30 frames.
+        self.frame_queue = queue.Queue(maxsize=30)
+        self._stop_event = threading.Event()
+        self._producer_thread = threading.Thread(target=self._produce_frames, daemon=True)
+        self._producer_thread.start()
+        
+        self.logger.info(f"Initialized sequence with {self.frame_count} frames (producer-consumer buffer)")
+
+    def _produce_frames(self):
+        """Producer thread: loads frames from disk and puts them in the queue."""
+        frame_idx = 0
+        while not self._stop_event.is_set():
+            if self.frame_count == 0:
+                time.sleep(0.1)
+                continue
+
+            frame_path = self.frame_paths[frame_idx]
+            frame_data = self._load_frame(frame_path)
+            
+            if frame_data:
+                # This will block if the queue is full, providing back-pressure
+                self.frame_queue.put(frame_data)
+            else:
+                # If a frame fails to load, put a placeholder to not hang the consumer
+                self.frame_queue.put(b'')
+
+            frame_idx = (frame_idx + 1) % self.frame_count
+            
+    def get_next_frame(self, timeout=1.0) -> Optional[bytes]:
+        """Get the next frame from the queue."""
+        try:
+            return self.frame_queue.get(timeout=timeout)
+        except queue.Empty:
+            self.logger.warning("Frame queue was empty")
+            return None
+
+    def stop(self):
+        """Stop the producer thread."""
+        self.logger.debug("Stopping frame producer thread...")
+        self._stop_event.set()
+        
+        # Clear the queue to unblock the producer if it's waiting on a full queue
+        while not self.frame_queue.empty():
+            try:
+                self.frame_queue.get_nowait()
+            except queue.Empty:
+                break
+        
+        if self._producer_thread and self._producer_thread.is_alive():
+            self._producer_thread.join(timeout=1.0)
+            if self._producer_thread.is_alive():
+                self.logger.warning("Frame producer thread did not stop gracefully.")
+        self.logger.debug("Frame producer thread stopped.")
+
     def get_frame_count(self) -> int:
         """Get total number of frames."""
         return self.frame_count

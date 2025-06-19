@@ -188,6 +188,11 @@ class DisplayPlayer:
     
     def load_current_sequence(self) -> bool:
         """Load the current media sequence."""
+        # Stop previous sequence's producer thread before starting a new one
+        if self.current_sequence:
+            self.current_sequence.stop()
+            self.current_sequence = None
+
         loop_media = self.get_current_loop_media()
         current_index = self.get_current_media_index()
         
@@ -238,6 +243,11 @@ class DisplayPlayer:
     def next_media(self) -> None:
         """Switch to next media."""
         with self.lock:
+            # Stop the producer thread of the current sequence
+            if self.current_sequence:
+                self.current_sequence.stop()
+                self.current_sequence = None
+
             loop_slugs = media_index.list_loop()
             
             if len(loop_slugs) <= 1:
@@ -262,6 +272,11 @@ class DisplayPlayer:
     def previous_media(self) -> None:
         """Switch to previous media."""
         with self.lock:
+            # Stop the producer thread of the current sequence
+            if self.current_sequence:
+                self.current_sequence.stop()
+                self.current_sequence = None
+
             loop_slugs = media_index.list_loop()
             
             if len(loop_slugs) <= 1:
@@ -286,6 +301,10 @@ class DisplayPlayer:
     def set_active_media(self, slug: str) -> bool:
         """Set the active media to the specified slug."""
         with self.lock:
+            # Stop the producer thread of the current sequence
+            if self.current_sequence:
+                self.current_sequence.stop()
+
             # Check if slug exists in media
             media_dict = media_index.get_media_dict()
             if slug not in media_dict:
@@ -635,11 +654,11 @@ class DisplayPlayer:
                             break
                         
                         # Get frame data and duration
-                        frame_data = self.current_sequence.get_frame_data(frame_idx)
+                        frame_data = self.current_sequence.get_next_frame(timeout=2.0)
                         frame_duration = self.current_sequence.get_frame_duration(frame_idx)
                         
-                        if frame_data is None:
-                            self.logger.error(f"Failed to get frame {frame_idx}")
+                        if not frame_data:
+                            self.logger.error(f"Failed to get frame {frame_idx} from queue")
                             sequence_completed = False
                             break
                         
@@ -745,6 +764,12 @@ class DisplayPlayer:
         if self.running:
             self.running = False
             self.stop_processing_display()  # Stop progress display too
+            
+            # Stop the frame producer thread
+            if self.current_sequence:
+                self.current_sequence.stop()
+                self.current_sequence = None
+
             if self.playback_thread:
                 self.playback_thread.join(timeout=5)
                 if self.playback_thread.is_alive():
@@ -772,6 +797,8 @@ class DisplayPlayer:
         self.logger.info("Refreshing media list (clearing current sequence)")
         with self.lock:
             # Simply clear the current sequence to force reload on next cycle
+            if self.current_sequence:
+                self.current_sequence.stop()
             self.current_sequence = None
             
             # If no media exists, ensure we're in a clean state
