@@ -341,23 +341,23 @@ def create_app(
                 if job_id:
                     try:
                         media_index.complete_processing_job(job_id, False, f"Upload failed: {e}")
-                    except:
-                        pass
+                    except Exception as job_error:
+                        logger.warning(f"Failed to mark job {job_id} as failed: {job_error}")
             
             # Stop processing display on error
             if display_player:
                 try:
                     display_player.stop_processing_display()
-                except:
-                    pass
+                except Exception as display_error:
+                    logger.warning(f"Failed to stop processing display: {display_error}")
             
             # Resume playback if needed (error case)
             if display_player and not was_paused and display_player.is_paused():
                 try:
                     display_player.toggle_pause()
                     logger.info("Resumed playback after upload error")
-                except:
-                    pass
+                except Exception as resume_error:
+                    logger.warning(f"Failed to resume playback after error: {resume_error}")
             
             logger.error(f"Upload processing failed: {e}")
             raise HTTPException(status_code=500, detail=str(e))

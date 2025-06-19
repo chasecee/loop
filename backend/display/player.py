@@ -227,8 +227,9 @@ class DisplayPlayer:
                 try:
                     # Try default PIL font
                     font = ImageFont.load_default()
-                except:
+                except (OSError, IOError) as e:
                     # If all else fails, use basic drawing without font
+                    self.logger.debug(f"Default font loading failed: {e}")
                     font = None
             
             if font:
@@ -302,7 +303,8 @@ class DisplayPlayer:
                 try:
                     title_font = ImageFont.load_default()
                     subtitle_font = ImageFont.load_default()
-                except:
+                except (OSError, IOError) as e:
+                    self.logger.debug(f"Default font loading failed: {e}")
                     title_font = None
                     subtitle_font = None
             

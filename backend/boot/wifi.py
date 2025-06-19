@@ -68,8 +68,9 @@ class WiFiManager:
                             current, max_val = quality_part.split('/')
                             quality = int((int(current) / int(max_val)) * 100)
                             current_network['quality'] = quality
-                    except:
-                        pass
+                    except (IndexError, ValueError) as e:
+                        # Expected when parsing malformed iwlist output
+                        self.logger.debug(f"Failed to parse quality from line: {e}")
                 
                 elif 'Encryption key:' in line:
                     encrypted = 'on' in line.lower()
@@ -103,8 +104,9 @@ class WiFiManager:
                     addrs = netifaces.ifaddresses('wlan0')
                     if netifaces.AF_INET in addrs:
                         ip_address = addrs[netifaces.AF_INET][0]['addr']
-            except:
-                pass
+            except (KeyError, IndexError, OSError) as e:
+                # Expected when interface is down or not configured
+                self.logger.debug(f"Failed to get IP address: {e}")
             
             # Get signal strength
             signal_strength = None
@@ -117,8 +119,9 @@ class WiFiManager:
                         if len(parts) >= 4:
                             signal_strength = parts[3].rstrip('.')
                         break
-            except:
-                pass
+            except (subprocess.SubprocessError, FileNotFoundError, IndexError) as e:
+                # Expected when wireless interface is unavailable
+                self.logger.debug(f"Failed to get signal strength: {e}")
             
             return {
                 'ssid': current_ssid,

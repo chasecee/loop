@@ -173,7 +173,7 @@ class ILI9341Driver:
         self._write_command(self.ILI9341_RAMWR)
     
     def write_pixel_data(self, data: bytes) -> None:
-        """Write pixel data to display with optimized chunking and minimal overhead."""
+        """Write pixel data to display with optimized chunking."""
         if not SPI_AVAILABLE or not data:
             return
         
@@ -193,22 +193,13 @@ class ILI9341Driver:
                 for i in range(0, len(data), chunk_size):
                     chunk = data[i:i + chunk_size]
                     self.spi.writebytes(chunk)
-        except Exception:
-            # Silent fallback - no logging during frame ops for performance
-            # Convert to list as last resort if bytes object fails
-            try:
-                if len(data) <= chunk_size:
-                    self.spi.writebytes(list(data))
-                else:
-                    for i in range(0, len(data), chunk_size):
-                        chunk = data[i:i + chunk_size]
-                        try:
-                            self.spi.writebytes(chunk)
-                        except:
-                            self.spi.writebytes(list(chunk))
-            except Exception:
-                # Final fallback - completely silent failure for performance
-                pass
+        except (OSError, IOError) as e:
+            # Log specific SPI/hardware errors but don't crash display
+            self.logger.warning(f"SPI write failed: {e}")
+        except Exception as e:
+            # Log unexpected errors - these indicate real problems
+            self.logger.error(f"Unexpected display error: {e}")
+            raise
     
     def fill_screen(self, color: int = 0x0000) -> None:
         """Fill entire screen with color (RGB565)."""
@@ -254,8 +245,9 @@ class ILI9341Driver:
         # Turn off backlight
         try:
             GPIO.output(self.config.bl_pin, GPIO.LOW)
-        except:
-            pass
+        except (RuntimeError, ValueError) as e:
+            # GPIO cleanup can fail if already cleaned up or pins unavailable
+            self.logger.debug(f"GPIO backlight cleanup failed (expected): {e}")
         
         GPIO.cleanup()
         self.logger.info("Display driver cleaned up") 
