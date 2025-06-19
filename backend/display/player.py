@@ -47,6 +47,10 @@ class DisplayPlayer:
         self.progress_thread: Optional[threading.Thread] = None
         self.progress_stop_event = threading.Event()
         
+        # Event-based pause handling (eliminates busy-waiting)
+        self.pause_event = threading.Event()
+        self.pause_event.set()  # Start unpaused
+        
         # Threading
         self.playback_thread: Optional[threading.Thread] = None
         self.lock = threading.Lock()
@@ -54,7 +58,111 @@ class DisplayPlayer:
         # Status display
         self.frame_buffer = FrameBuffer(display_config.width, display_config.height)
         
+        # Pre-generate status message frames for performance (no runtime PIL operations)
+        self._status_frames = self._pregenerate_status_frames()
+        
         self.logger.info("Display player initialized (simplified architecture)")
+    
+    def _wait_interruptible(self, duration: float) -> bool:
+        """Wait for duration but return immediately if interrupted or paused.
+        
+        Returns:
+            True if wait completed normally, False if interrupted
+        """
+        if duration <= 0:
+            return True
+        
+        # Wait for pause to be cleared (if paused)
+        if not self.pause_event.wait(timeout=duration):
+            return False  # Interrupted by pause
+        
+        # If not paused, do the actual wait with interrupt checking
+        start_time = time.time()
+        while time.time() - start_time < duration:
+            if not self.running or self.showing_progress:
+                return False  # Interrupted
+            
+            # Check if we got paused during the wait
+            if not self.pause_event.is_set():
+                # We got paused, wait for unpause
+                if not self.pause_event.wait(timeout=0.1):
+                    continue  # Still paused, check again
+            
+            # Sleep for remainder or 0.1s max to stay responsive
+            remaining = duration - (time.time() - start_time)
+            sleep_time = min(remaining, 0.1)
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+        
+        return True  # Completed normally
+    
+    def _pregenerate_status_frames(self) -> Dict[str, bytes]:
+        """Pre-generate common status message frames to avoid runtime PIL operations."""
+        frames = {}
+        
+        # Common status messages to pre-generate
+        messages = [
+            ("No Media", "Add media files to start playback"),
+            ("Processing", "Converting media files..."),
+            ("Paused", "Playback paused"),
+            ("Loading", "Loading media..."),
+            ("Error", "Media playback error")
+        ]
+        
+        try:
+            from PIL import Image, ImageDraw, ImageFont
+            
+            for title, subtitle in messages:
+                # Create image
+                image = Image.new('RGB', (self.display_config.width, self.display_config.height), (0, 0, 0))
+                draw = ImageDraw.Draw(image)
+                
+                # Try to load fonts
+                try:
+                    title_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 20)
+                    subtitle_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 14)
+                except (OSError, IOError):
+                    try:
+                        title_font = ImageFont.load_default()
+                        subtitle_font = ImageFont.load_default()
+                    except (OSError, IOError) as e:
+                        self.logger.debug(f"Default font loading failed: {e}")
+                        title_font = None
+                        subtitle_font = None
+                
+                if title_font and subtitle_font:
+                    # Draw title
+                    title_bbox = draw.textbbox((0, 0), title, font=title_font)
+                    title_width = title_bbox[2] - title_bbox[0]
+                    title_x = (self.display_config.width - title_width) // 2
+                    title_y = self.display_config.height // 2 - 30
+                    draw.text((title_x, title_y), title, fill=(255, 255, 255), font=title_font)
+                    
+                    # Draw subtitle
+                    subtitle_bbox = draw.textbbox((0, 0), subtitle, font=subtitle_font)
+                    subtitle_width = subtitle_bbox[2] - subtitle_bbox[0]
+                    subtitle_x = (self.display_config.width - subtitle_width) // 2
+                    subtitle_y = title_y + 35
+                    draw.text((subtitle_x, subtitle_y), subtitle, fill=(200, 200, 200), font=subtitle_font)
+                
+                # Convert to RGB565 bytes directly (no PNG conversion)
+                import numpy as np
+                img_array = np.array(image, dtype=np.uint8)
+                r = img_array[:, :, 0].astype(np.uint16)
+                g = img_array[:, :, 1].astype(np.uint16)
+                b = img_array[:, :, 2].astype(np.uint16)
+                rgb565 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
+                frame_data = rgb565.astype('>u2').tobytes()
+                
+                frames[title.lower()] = frame_data
+                
+        except Exception as e:
+            self.logger.warning(f"Failed to pre-generate status frames: {e}")
+            # Return empty dict - fallback to basic display
+            return {}
+        
+        self.logger.info(f"Pre-generated {len(frames)} status message frames")
+        return frames
     
     def get_current_loop_media(self) -> List[Dict]:
         """Get current loop media from authoritative source."""
@@ -195,6 +303,10 @@ class DisplayPlayer:
         """Toggle playback pause state."""
         with self.lock:
             self.paused = not self.paused
+            if self.paused:
+                self.pause_event.clear()  # Block playback
+            else:
+                self.pause_event.set()    # Resume playback
             self.logger.info(f"Playback {'paused' if self.paused else 'resumed'}")
     
     def is_paused(self) -> bool:
@@ -213,74 +325,21 @@ class DisplayPlayer:
         return self.loop_mode
     
     def show_message(self, message: str, duration: float = 2.0, color: int = 0xFFFF) -> None:
-        """Display a message on screen temporarily."""
+        """Display a message on screen temporarily using pre-generated frames."""
         try:
-            # Create image with message
-            image = Image.new('RGB', (self.display_config.width, self.display_config.height), (0, 0, 0))
-            draw = ImageDraw.Draw(image)
-            
-            # Try to load a font, fall back to default if not available
-            try:
-                font_size = 24
-                font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", font_size)
-            except (OSError, IOError):
-                try:
-                    # Try default PIL font
-                    font = ImageFont.load_default()
-                except (OSError, IOError) as e:
-                    # If all else fails, use basic drawing without font
-                    self.logger.debug(f"Default font loading failed: {e}")
-                    font = None
-            
-            if font:
-                # Get text dimensions
-                bbox = draw.textbbox((0, 0), message, font=font)
-                text_width = bbox[2] - bbox[0]
-                text_height = bbox[3] - bbox[1]
-                
-                # Center the text
-                x = (self.display_config.width - text_width) // 2
-                y = (self.display_config.height - text_height) // 2
-                
-                # Convert color to RGB
-                if isinstance(color, int):
-                    # Convert RGB565 to RGB888
-                    r = (color >> 11) << 3
-                    g = ((color >> 5) & 0x3F) << 2
-                    b = (color & 0x1F) << 3
-                    rgb_color = (r, g, b)
-                else:
-                    rgb_color = color
-                
-                # Draw text
-                draw.text((x, y), message, fill=rgb_color, font=font)
-            else:
-                # Fallback: draw simple text
-                # This is very basic - just put text roughly in center
-                x = self.display_config.width // 4
-                y = self.display_config.height // 2
-                draw.text((x, y), message, fill=(255, 255, 255))
-            
-            # Convert to RGB565 format using FrameDecoder
-            decoder = FrameDecoder(self.display_config.width, self.display_config.height)
-            
-            # Save image to bytes buffer
-            buffer = io.BytesIO()
-            image.save(buffer, format='PNG')
-            buffer.seek(0)
-            
-            # Convert to RGB565 frame data
-            frame_data = decoder.decode_image_bytes(buffer.getvalue())
-            buffer.close()
-            
-            if frame_data:
+            # Try to use pre-generated frame first (MUCH faster - no PIL operations)
+            message_key = message.lower()
+            if message_key in self._status_frames:
+                frame_data = self._status_frames[message_key]
                 self.display_driver.display_frame(frame_data)
-                
-                # Sleep for specified duration if > 0
                 if duration > 0:
                     time.sleep(duration)
-            else:
-                self.logger.error("Failed to convert message image to frame data")
+                return
+            
+            # Fallback to simple colored fill for unknown messages (fast)
+            self.display_driver.fill_screen(0x0000)  # Black background
+            if duration > 0:
+                time.sleep(duration)
             
         except Exception as e:
             self.logger.error(f"Failed to show message: {e}")
@@ -490,7 +549,7 @@ class DisplayPlayer:
     
     def show_no_media_message(self) -> None:
         """Show a message when no media is available."""
-        self.show_message("No media loaded", duration=0, color=0x07E0)  # Green text
+        self.show_message("No Media", duration=0, color=0x07E0)  # Green text - matches pre-generated frame
     
     def run(self) -> None:
         """Main playback loop - FIXED to respect loop counts and proper timing."""
@@ -541,22 +600,15 @@ class DisplayPlayer:
                         self.logger.info(f"Displaying static image for {self.static_image_display_time} seconds")
                         self.display_driver.display_frame(frame_data)
                         
-                        # Wait for the full duration (or until interrupted)
-                        sleep_intervals = int(self.static_image_display_time * 10)  # 0.1s intervals
-                        actual_sleep_time = 0
-                        for i in range(sleep_intervals):
-                            if not self.running or self.showing_progress:
-                                self.logger.info(f"Static image interrupted after {actual_sleep_time:.1f}s")
-                                break
-                            while self.paused and self.running and not self.showing_progress:
-                                time.sleep(0.1)
-                            if not self.running or self.showing_progress:
-                                self.logger.info(f"Static image interrupted after {actual_sleep_time:.1f}s")
-                                break
-                            time.sleep(0.1)
-                            actual_sleep_time += 0.1
+                        # Efficient interruptible wait (no busy-waiting)
+                        start_time = time.time()
+                        wait_completed = self._wait_interruptible(self.static_image_display_time)
+                        actual_time = time.time() - start_time
                         
-                        self.logger.info(f"Static image display completed after {actual_sleep_time:.1f}s")
+                        if wait_completed:
+                            self.logger.info(f"Static image display completed after {actual_time:.1f}s")
+                        else:
+                            self.logger.info(f"Static image interrupted after {actual_time:.1f}s")
                 else:
                     # Play all frames in animated sequence
                     sequence_completed = True
@@ -570,9 +622,9 @@ class DisplayPlayer:
                             sequence_completed = False
                             break
                         
-                        # Handle pause
-                        while self.paused and self.running and not self.showing_progress:
-                            time.sleep(0.1)
+                        # Handle pause efficiently (no busy-waiting)
+                        if self.paused and self.running and not self.showing_progress:
+                            self.pause_event.wait()  # Block until unpaused
                         
                         if not self.running or self.showing_progress:
                             sequence_completed = False

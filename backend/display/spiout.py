@@ -56,7 +56,7 @@ class ILI9341Driver:
         # Initialize SPI
         self.spi = spidev.SpiDev()
         self.spi.open(self.config.spi_bus, self.config.spi_device)
-        self.spi.max_speed_hz = 32000000  # 32MHz - compromise between performance and stability
+        self.spi.max_speed_hz = 16000000  # 16MHz - safe speed for Pi Zero 2 W with ILI9341
         self.spi.mode = 0
         
         self.logger.info(f"Initialized ILI9341 driver: {self.config.width}x{self.config.height}")
