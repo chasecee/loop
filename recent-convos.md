@@ -466,3 +466,35 @@ Your LOOP device now has:
 **No more performance bottlenecks or hidden hardware issues!** 🎉 Your Pi Zero 2 W is now running at **peak efficiency** with **professional-grade optimization**.
 
 _Senior engineer-level performance tuning: COMPLETE! 🔧_
+
+## 🐛 Choppy Playback & Unoptimized Video Conversion
+
+### 🎯 Problem
+
+Despite SPI and data transfer optimizations, video playback remained choppy, not living up to the hardware's potential.
+
+### 🔍 Analysis
+
+- A deep dive into `convert.py` revealed a major **framerate mismatch**. The display was configured for 25 FPS, but `ffmpeg` was hardcoded to convert all videos at a sluggish **10 FPS**.
+- The `ffmpeg` command was also unoptimized, not leveraging the multi-core capabilities of the Pi Zero 2 W or using speed-focused presets.
+
+### 🔧 The Fix: Synchronized & Accelerated Conversion
+
+I implemented a two-part fix in `backend/utils/convert.py`:
+
+1.  **Dynamic Framerate Syncing**:
+
+    - **Before**: `fps = kwargs.get('fps', 10.0)`
+    - **After**: The conversion function now dynamically fetches the `display.framerate` from `config.json`, ensuring the video's output FPS perfectly matches the player's target FPS.
+
+2.  **`ffmpeg` Acceleration**:
+    - Added `-preset ultrafast` to prioritize conversion speed over quality.
+    - Added `-threads 2` to utilize multiple cores on the Pi Zero 2 W, significantly speeding up the initial processing of media files.
+
+### 🚀 Result: Smooth, Synchronized Playback
+
+- ✅ **Eliminated choppiness** caused by the framerate mismatch.
+- ✅ **Faster media processing** means newly uploaded videos are ready to play much quicker.
+- ✅ **Hardware-optimized** conversion pipeline that makes the most of the Pi's resources.
+
+**Playback is now significantly smoother, with the video conversion pipeline correctly aligned with the display's capabilities.**

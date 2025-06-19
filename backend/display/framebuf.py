@@ -149,56 +149,21 @@ class FrameDecoder:
 
 
 class FrameSequence:
-    """Manages a sequence of frames for playback with full pre-loading."""
+    """Manages a sequence of frames for playback with on-demand loading."""
     
     def __init__(self, frames_dir: Path, frames: List[str], durations: List[float]):
         self.frames_dir = frames_dir
         self.frame_paths = [frames_dir / f for f in frames]
         self.durations = durations
         self.frame_count = len(frames)
-        self.current_frame = 0
         self.logger = get_logger("framebuf")
-        
-        # Pre-load ALL frames into memory for blazing fast access
-        self.logger.info(f"Pre-loading {self.frame_count} frames into memory...")
-        self._frame_cache = {}
-        
-        # Load all frames at once
-        for i, frame_path in enumerate(self.frame_paths):
-            frame_data = self._load_frame(frame_path)
-            if frame_data:
-                self._frame_cache[i] = frame_data
-            else:
-                self.logger.error(f"Failed to load frame {i}: {frame_path}")
-        
-        self.logger.info(f"Pre-loaded {len(self._frame_cache)} frames ({sum(len(data) for data in self._frame_cache.values()) / 1024:.1f} KB)")
+        self.logger.info(f"Initialized sequence with {self.frame_count} frames (on-demand loading)")
     
     def get_frame_data(self, frame_idx: int) -> Optional[bytes]:
-        """Get frame data by index without advancing current frame."""
+        """Get frame data by index by loading from disk."""
         if 0 <= frame_idx < self.frame_count:
-            return self._frame_cache.get(frame_idx)
+            return self._load_frame(self.frame_paths[frame_idx])
         return None
-    
-    def get_frame(self) -> Optional[bytes]:
-        """Get the current frame and advance to next - ZERO disk I/O!"""
-        frame_data = self._frame_cache.get(self.current_frame)
-        
-        if not frame_data:
-            self.logger.error(f"Frame {self.current_frame} not found in cache (cache has {len(self._frame_cache)} frames)")
-            return None
-            
-        if len(frame_data) == 0:
-            self.logger.error(f"Frame {self.current_frame} has zero length data")
-            return None
-            
-        # Advance to next frame
-        self.current_frame = (self.current_frame + 1) % self.frame_count
-        
-        return frame_data
-    
-    def is_complete(self) -> bool:
-        """Check if we've completed a full loop."""
-        return self.current_frame == 0
     
     def get_frame_count(self) -> int:
         """Get total number of frames."""
@@ -215,7 +180,7 @@ class FrameSequence:
         return 0.1  # Default 100ms
     
     def _load_frame(self, frame_path: Path) -> Optional[bytes]:
-        """Load a frame from disk (only called during initialization)."""
+        """Load a frame from disk."""
         try:
             with open(frame_path, 'rb') as f:
                 data = f.read()
