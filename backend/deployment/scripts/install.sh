@@ -199,7 +199,7 @@ mkdir -p "${BACKEND_DIR}/logs"
 mkdir -p ~/.loop/logs
 
 # Set up configuration
-echo "⚙️  Setting up configuration..."
+echo "⚙️ Setting up configuration..."
 if [ ! -f "${BACKEND_DIR}/config/config.json" ]; then
     echo "❌ config.json missing! Aborting install."
     exit 1
@@ -435,7 +435,7 @@ if ! sudo apt-get install -y libjpeg-dev libopenjp2-7 libtiff6; then
     exit 1
 fi
 
-echo "⚙️  Configuring DRM for ILI9341 display (Bookworm method)..."
+echo "⚙️ Configuring DRM for ILI9341 display (Bookworm method)..."
 CONFIG_FILE="/boot/firmware/config.txt"
 
 # Ensure config file exists
