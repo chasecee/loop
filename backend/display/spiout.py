@@ -183,15 +183,19 @@ class ILI9341Driver:
         # Set data mode ONCE at the start - major optimization
         GPIO.output(self.config.dc_pin, GPIO.HIGH)
         
-        # Use xfer2() with fixed chunk size - your kernel supports 8KB chunks
-        # Always chunk the data regardless of size to respect SPI buffer limits
         chunk_size = self.config.spi_chunk_size
         
         try:
-            # Always chunked write - no "single write" fallback
-            for i in range(0, len(data), chunk_size):
-                chunk = data[i:i + chunk_size]
-                self.spi.xfer2(list(chunk))
+            # Use writebytes2 for direct, fast writing of byte data
+            # This is significantly faster than xfer2(list(chunk))
+            if hasattr(self.spi, 'writebytes2'):
+                for i in range(0, len(data), chunk_size):
+                    self.spi.writebytes2(data[i:i + chunk_size])
+            else:
+                # Fallback for older spidev versions
+                for i in range(0, len(data), chunk_size):
+                    chunk = data[i:i + chunk_size]
+                    self.spi.xfer2(list(chunk))
                 
         except Exception as e:
             self.logger.error(f"SPI write failed with {chunk_size}-byte chunks: {e}")
