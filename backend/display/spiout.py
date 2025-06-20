@@ -1,10 +1,10 @@
-"""SPI display driver for Waveshare 2.4" LCD Hat."""
+"""SPI display driver for Waveshare 2.4" LCD Module."""
 
 import sys
-import time
 from pathlib import Path
 from PIL import Image
 from typing import Optional
+import spidev
 
 # Add the Waveshare library path to Python's search path
 sys.path.append(str(Path(__file__).parent.parent.parent / 'waveshare' / 'LCD_Module_RPI_code' / 'RaspberryPi' / 'python'))
@@ -23,7 +23,11 @@ class ILI9341Driver:
         self.disp: Optional[LCD_2inch4] = None
         self.initialized = False
         
-        self.logger.info("Initializing Waveshare 2.4\" LCD driver")
+        self.logger.info(
+            f"Initializing Waveshare 2.4\" LCD driver with pins "
+            f"RST={self.config.rst_pin}, DC={self.config.dc_pin}, BL={self.config.bl_pin} "
+            f"on SPI bus {self.config.spi_bus}, device {self.config.spi_device}"
+        )
     
     def init(self) -> None:
         """Initialize the display hardware."""
@@ -32,7 +36,14 @@ class ILI9341Driver:
         
         self.logger.info("Initializing LCD...")
         try:
-            self.disp = LCD_2inch4()
+            spi = spidev.SpiDev(self.config.spi_bus, self.config.spi_device)
+            self.disp = LCD_2inch4(
+                spi=spi,
+                spi_freq=self.config.spi_speed_hz,
+                rst=self.config.rst_pin,
+                dc=self.config.dc_pin,
+                bl=self.config.bl_pin
+            )
             self.disp.Init()
             self.disp.clear()
             self.initialized = True
@@ -40,7 +51,6 @@ class ILI9341Driver:
         except Exception as e:
             self.logger.error(f"Failed to initialize LCD: {e}")
             self.initialized = False
-            # Exit if display cannot be initialized, as it's critical
             raise RuntimeError("Could not initialize Waveshare display") from e
 
     def display_frame(self, frame_data: bytes) -> None:
@@ -52,18 +62,19 @@ class ILI9341Driver:
             self.logger.error("Display screen not initialized, cannot display frame.")
             return
 
-        expected_size = self.config.width * self.config.height * 2
+        # The driver expects a landscape image (320x240), which matches our config.
+        # The frame_data should already be in this format.
+        expected_width = 320
+        expected_height = 240
+        expected_size = expected_width * expected_height * 2
+        
         if not frame_data or len(frame_data) != expected_size:
             self.logger.warning(f"Frame data has incorrect size. Expected {expected_size}, got {len(frame_data)}. Skipping frame.")
             return
 
         try:
-            # Create a PIL Image from the raw RGB565 bytes
-            image = Image.frombytes('RGB', (self.config.width, self.config.height), frame_data, 'raw', 'RGB;16')
-            
-            # Display the image
+            image = Image.frombytes('RGB', (expected_width, expected_height), frame_data, 'raw', 'RGB;16')
             self.disp.ShowImage(image)
-            
         except Exception as e:
             self.logger.error(f"Failed to display frame: {e}")
 
@@ -73,13 +84,12 @@ class ILI9341Driver:
             self.init()
             
         if self.disp:
-            # The library's clear function doesn't take a color, it clears to black.
-            # We can create a single-color image to simulate a fill.
             r = ((color >> 11) & 0x1F) << 3
             g = ((color >> 5) & 0x3F) << 2
             b = (color & 0x1F) << 3
             
-            image = Image.new('RGB', (self.config.width, self.config.height), (r, g, b))
+            # The driver expects a landscape image for showing
+            image = Image.new('RGB', (320, 240), (r, g, b))
             self.disp.ShowImage(image)
 
     def set_backlight(self, enabled: bool) -> None:

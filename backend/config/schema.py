@@ -11,10 +11,16 @@ from dataclasses import dataclass, asdict
 class DisplayConfig:
     """Display configuration."""
     type: str = "ILI9341"
-    width: int = 240
-    height: int = 320
+    width: int = 320
+    height: int = 240
     rotation: int = 0
     framerate: int = 25
+    spi_bus: int = 0
+    spi_device: int = 0
+    spi_speed_hz: int = 48000000
+    rst_pin: int = 27
+    dc_pin: int = 25
+    bl_pin: int = 18
     show_progress: bool = True  # Enable processing progress display
     progress_color: int = 0x07E0  # Green progress bar color (RGB565)
 
