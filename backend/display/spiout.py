@@ -74,8 +74,8 @@ class ILI9341Driver:
             return
 
         try:
-            # Build PIL image from raw bytes
-            image = Image.frombytes('RGB', (base_width, base_height), frame_data, 'raw', 'RGB;16')
+            # Build PIL image from raw bytes (our pipeline stores RGB565 big-endian)
+            image = Image.frombytes('RGB', (base_width, base_height), frame_data, 'raw', 'RGB;16B')
 
             # Apply rotation from config (values: 0, 90, 180, 270). PIL rotates CCW.
             rotation = self.config.rotation % 360
