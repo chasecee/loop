@@ -62,19 +62,26 @@ class ILI9341Driver:
             self.logger.error("Display screen not initialized, cannot display frame.")
             return
 
-        # The frame_data should be for a 320x240 landscape image, which matches our config.
-        expected_width = 320
-        expected_height = 240
-        expected_size = expected_width * expected_height * 2
-        
+        # Raw framebuffer is always generated as 320x240 RGB565 (little-endian) in landscape.
+        base_width  = 320
+        base_height = 240
+        expected_size = base_width * base_height * 2
+
         if not frame_data or len(frame_data) != expected_size:
-            self.logger.warning(f"Frame data has incorrect size. Expected {expected_size} (320x240), got {len(frame_data)}. Skipping frame.")
+            self.logger.warning(
+                f"Frame data has incorrect size. Expected {expected_size} (320x240), got {len(frame_data)}. Skipping frame."
+            )
             return
 
         try:
-            # The driver's ShowImage method handles the orientation based on image dimensions.
-            # We create a 320x240 image and let the driver handle the rest.
-            image = Image.frombytes('RGB', (expected_width, expected_height), frame_data, 'raw', 'RGB;16')
+            # Build PIL image from raw bytes
+            image = Image.frombytes('RGB', (base_width, base_height), frame_data, 'raw', 'RGB;16')
+
+            # Apply rotation from config (values: 0, 90, 180, 270). PIL rotates CCW.
+            rotation = self.config.rotation % 360
+            if rotation:
+                image = image.rotate(rotation, expand=True)
+
             self.disp.ShowImage(image)
         except Exception as e:
             self.logger.error(f"Failed to display frame: {e}")
