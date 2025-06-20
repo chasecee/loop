@@ -75,7 +75,7 @@ class ILI9341Driver:
 
         try:
             # Build PIL image from raw bytes; swap R/B to correct psychedelic colors
-            image = Image.frombytes('RGB', (base_width, base_height), frame_data, 'raw', 'BGR;16B')
+            image = Image.frombytes('RGB', (base_width, base_height), frame_data, 'raw', 'RGB;16')
 
             # Apply rotation from config (values: 0, 90, 180, 270). PIL rotates CCW.
             rotation = self.config.rotation % 360
