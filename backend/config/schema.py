@@ -13,7 +13,7 @@ class DisplayConfig:
     type: str = "ILI9341"
     width: int = 320
     height: int = 240
-    rotation: int = 0
+    rotation: int = 270
     framerate: int = 25
     spi_bus: int = 0
     spi_device: int = 0

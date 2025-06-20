@@ -62,17 +62,18 @@ class ILI9341Driver:
             self.logger.error("Display screen not initialized, cannot display frame.")
             return
 
-        # The driver expects a landscape image (320x240), which matches our config.
-        # The frame_data should already be in this format.
+        # The frame_data should be for a 320x240 landscape image, which matches our config.
         expected_width = 320
         expected_height = 240
         expected_size = expected_width * expected_height * 2
         
         if not frame_data or len(frame_data) != expected_size:
-            self.logger.warning(f"Frame data has incorrect size. Expected {expected_size}, got {len(frame_data)}. Skipping frame.")
+            self.logger.warning(f"Frame data has incorrect size. Expected {expected_size} (320x240), got {len(frame_data)}. Skipping frame.")
             return
 
         try:
+            # The driver's ShowImage method handles the orientation based on image dimensions.
+            # We create a 320x240 image and let the driver handle the rest.
             image = Image.frombytes('RGB', (expected_width, expected_height), frame_data, 'raw', 'RGB;16')
             self.disp.ShowImage(image)
         except Exception as e:
@@ -88,7 +89,7 @@ class ILI9341Driver:
             g = ((color >> 5) & 0x3F) << 2
             b = (color & 0x1F) << 3
             
-            # The driver expects a landscape image for showing
+            # Create a 320x240 image to match the config
             image = Image.new('RGB', (320, 240), (r, g, b))
             self.disp.ShowImage(image)
 
