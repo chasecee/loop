@@ -5,6 +5,7 @@ from pathlib import Path
 from PIL import Image
 from typing import Optional
 import spidev
+import numpy as np
 
 # Add the Waveshare library path to Python's search path
 sys.path.append(str(Path(__file__).parent.parent.parent / 'waveshare' / 'LCD_Module_RPI_code' / 'RaspberryPi' / 'python'))
@@ -74,8 +75,14 @@ class ILI9341Driver:
             return
 
         try:
-            # Build PIL image from raw bytes; swap R/B to correct psychedelic colors
-            image = Image.frombytes('RGB', (base_width, base_height), frame_data, 'raw', 'RGB;16')
+            # Robust conversion: RGB565 big-endian -> RGB888 using NumPy (fast ~2ms)
+            pixel_data = np.frombuffer(frame_data, dtype='>u2')  # big-endian uint16
+            # Extract RGB components and reshape to 2-D before stacking
+            r = (((pixel_data >> 11) & 0x1F).astype(np.uint8) << 3).reshape((base_height, base_width))
+            g = (((pixel_data >> 5) & 0x3F).astype(np.uint8) << 2).reshape((base_height, base_width))
+            b = (((pixel_data & 0x1F).astype(np.uint8) << 3)).reshape((base_height, base_width))
+            rgb_array = np.dstack((r, g, b))
+            image = Image.fromarray(rgb_array, 'RGB')
 
             # Apply rotation from config (values: 0, 90, 180, 270). PIL rotates CCW.
             rotation = self.config.rotation % 360
