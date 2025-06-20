@@ -43,6 +43,8 @@ class ILI9341Driver:
             )
             self.disp.Init()
             self.disp.clear()
+            # Ensure backlight is on after initialization
+            self.set_backlight(True)
             self.initialized = True
             self.logger.info("LCD initialized successfully")
         except Exception as e:
