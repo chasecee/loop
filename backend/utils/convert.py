@@ -171,9 +171,9 @@ class MediaConverter:
                     '-vf', (
                         f'fps={fps},'
                         f'scale={self.target_width}:{self.target_height}:force_original_aspect_ratio=increase,'
-                        f'crop={self.target_width}:{self.target_height},'
-                        f'format=rgb565be'
+                        f'crop={self.target_width}:{self.target_height}'
                     ),
+                    '-pix_fmt', 'rgb24', # Use standard 24-bit RGB
                     '-preset', 'ultrafast',  # Prioritize speed
                     '-threads', '2',  # Use 2 threads for encoding
                     '-f', 'rawvideo',
@@ -182,13 +182,18 @@ class MediaConverter:
                 ]
                 
                 self.logger.info(f"Running ffmpeg command: {' '.join(cmd)}")
-                result = subprocess.run(cmd, capture_output=True, text=True)
+                result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+                
+                # Check for errors and provide detailed logging
                 if result.returncode != 0:
-                    error_msg = f"ffmpeg failed (return code {result.returncode}): {result.stderr}"
+                    error_msg = (
+                        f"ffmpeg failed with exit code {result.returncode}.\n"
+                        f"Stderr: {result.stderr.strip() if result.stderr else 'N/A'}\n"
+                        f"Stdout: {result.stdout.strip() if result.stdout else 'N/A'}"
+                    )
                     self.logger.error(error_msg)
-                    self.logger.error(f"ffmpeg stdout: {result.stdout}")
                     if job_id:
-                        self._complete_job(job_id, False, error_msg)
+                        self._complete_job(job_id, False, f"ffmpeg error: {result.stderr.strip()}")
                     return None
                 
                 if job_id:
@@ -202,7 +207,7 @@ class MediaConverter:
                         self._complete_job(job_id, False, "No raw video data generated")
                     return None
                 
-                frame_size = self.target_width * self.target_height * 2  # RGB565 = 2 bytes per pixel
+                frame_size = self.target_width * self.target_height * 3  # RGB24 = 3 bytes per pixel
                 frames = []
                 durations = []
                 frame_duration = 1.0 / fps
@@ -221,13 +226,16 @@ class MediaConverter:
                             progress = 60 + (frame_index / estimated_frames) * 20  # 60-80% for frame processing
                             self._update_progress(job_id, progress, "processing", f"Processing frame {frame_index + 1}/{estimated_frames}")
                         
-                        # Save individual frame
-                        frame_path = frames_dir / f"frame_{frame_index:06d}.rgb565"
-                        with open(frame_path, 'wb') as frame_file:
-                            frame_file.write(frame_data)
+                        # Create PIL image from raw RGB24 data
+                        img = Image.frombytes('RGB', (self.target_width, self.target_height), frame_data)
                         
-                        frames.append(frame_path.name)
-                        durations.append(frame_duration)
+                        # Save individual frame using the reliable _save_frame method
+                        frame_path = self._save_frame(img, frames_dir, frame_index, format_type)
+                        
+                        if frame_path:
+                            frames.append(frame_path.name)
+                            durations.append(frame_duration)
+                        
                         frame_index += 1
                 
                 # Clean up raw file
@@ -246,6 +254,10 @@ class MediaConverter:
                             f'scale={self.target_width}:{self.target_height}:force_original_aspect_ratio=increase,'
                             f'crop={self.target_width}:{self.target_height}'
                         ),
+                        '-pix_fmt', 'rgb565le', # Use little-endian as we will swap bytes
+                        '-preset', 'ultrafast',  # Prioritize speed
+                        '-threads', '2',  # Use 2 threads for encoding
+                        '-f', 'rawvideo',
                         '-y',  # Overwrite output files
                         str(temp_path / 'frame_%06d.png')
                     ]
@@ -451,13 +463,11 @@ class MediaConverter:
         # Determine file type by extension
         ext = input_path.suffix.lower()
         
-        # Get framerate from config for videos
-        config = get_config()
-        
+        # Get framerate from kwargs for videos
         if ext == '.gif':
             return self.convert_gif(input_path, output_dir, format_type, job_id)
         elif ext in ['.mp4', '.avi', '.mov', '.mkv', '.webm']:
-            fps = kwargs.get('fps', config.display.framerate)
+            fps = kwargs.get('fps', 25.0) # Default to 25.0 if not provided
             return self.convert_video(input_path, output_dir, format_type, fps, job_id)
         elif ext in ['.png', '.jpg', '.jpeg', '.bmp', '.tiff']:
             return self.convert_image(input_path, output_dir, format_type, job_id)

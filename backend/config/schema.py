@@ -11,19 +11,18 @@ from dataclasses import dataclass, asdict
 class DisplayConfig:
     """Display configuration."""
     type: str = "ILI9341"
-    width: int = 240
-    height: int = 320
+    width: int = 320
+    height: int = 240
+    rotation: int = 270
+    framerate: int = 25
     spi_bus: int = 0
     spi_device: int = 0
-    dc_pin: int = 25
+    spi_speed_hz: int = 48000000
     rst_pin: int = 27
+    dc_pin: int = 25
     bl_pin: int = 18
-    rotation: int = 0
-    framerate: int = 25
     show_progress: bool = True  # Enable processing progress display
     progress_color: int = 0x07E0  # Green progress bar color (RGB565)
-    spi_chunk_size: int = 4096  # SPI chunk size (bytes) - safe Pi hardware limit
-    spi_speed_hz: int = 48000000  # SPI speed in Hz (48MHz - increased from 24MHz for performance)
 
 
 @dataclass
@@ -33,6 +32,8 @@ class WiFiConfig:
     password: str = ""
     hotspot_ssid: str = "LOOP-Setup"
     hotspot_password: str = "loop123"
+    hotspot_channel: int = 11
+    hotspot_enabled: bool = True
     timeout: int = 10
 
 

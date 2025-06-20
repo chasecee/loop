@@ -15,9 +15,9 @@ DNSMASQ_CONF_BACKUP="/etc/dnsmasq.conf.backup"
 # Default hotspot configuration
 DEFAULT_SSID="LOOP-Setup"
 DEFAULT_PASSWORD="loop123"
-DEFAULT_CHANNEL="7"
-HOTSPOT_IP="192.168.4.1"
-DHCP_RANGE="192.168.4.2,192.168.4.20"
+DEFAULT_CHANNEL="11"
+HOTSPOT_IP="192.168.24.1"
+DHCP_RANGE="192.168.24.2,192.168.24.20"
 
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
@@ -61,6 +61,7 @@ create_dnsmasq_config() {
     cat > "$DNSMASQ_CONF_LOOP" << EOF
 # LOOP hotspot configuration
 interface=wlan0
+bind-interfaces
 dhcp-range=$DHCP_RANGE,255.255.255.0,24h
 domain=loop.local
 address=/#/$HOTSPOT_IP
@@ -95,8 +96,9 @@ restore_configs() {
 start_hotspot() {
     local ssid="$1"
     local password="$2"
+    local channel="${3:-$DEFAULT_CHANNEL}"
     
-    echo "Starting WiFi hotspot: $ssid"
+    echo "Starting WiFi hotspot: $ssid on channel $channel"
     
     # Check if we can write to system files
     if ! is_writable "$HOSTAPD_CONF"; then
@@ -111,7 +113,7 @@ start_hotspot() {
     backup_configs
     
     # Create LOOP configurations
-    create_hostapd_config "$ssid" "$password"
+    create_hostapd_config "$ssid" "$password" "$channel"
     create_dnsmasq_config
     
     # Apply configurations
@@ -205,17 +207,17 @@ status() {
 }
 
 usage() {
-    echo "Usage: $0 {start|stop|status|restart} [ssid] [password]"
+    echo "Usage: $0 {start|stop|status|restart} [ssid] [password] [channel]"
     echo ""
     echo "Commands:"
-    echo "  start [ssid] [password]  - Start hotspot (default: $DEFAULT_SSID)"
-    echo "  stop                     - Stop hotspot and restore WiFi"
-    echo "  status                   - Show hotspot status"
-    echo "  restart [ssid] [pass]    - Restart hotspot"
+    echo "  start [ssid] [password] [channel] - Start hotspot (default SSID: $DEFAULT_SSID, default channel: $DEFAULT_CHANNEL)"
+    echo "  stop                              - Stop hotspot and restore WiFi"
+    echo "  status                            - Show hotspot status"
+    echo "  restart [ssid] [pass] [chan]      - Restart hotspot"
     echo ""
     echo "Examples:"
     echo "  $0 start                          # Start with default settings"
-    echo "  $0 start MyLOOP mypass123         # Start with custom SSID/password"
+    echo "  $0 start MyLOOP mypass123 1       # Start with custom settings on channel 1"
     echo "  $0 stop                           # Stop hotspot"
     echo "  $0 status                         # Check status"
 }
@@ -227,7 +229,7 @@ case "$1" in
             echo "❌ This script must be run as root (use sudo)"
             exit 1
         fi
-        start_hotspot "$2" "$3"
+        start_hotspot "$2" "$3" "$4"
         ;;
     stop)
         if [ $EUID -ne 0 ]; then
@@ -243,7 +245,7 @@ case "$1" in
         fi
         stop_hotspot
         sleep 2
-        start_hotspot "$2" "$3"
+        start_hotspot "$2" "$3" "$4"
         ;;
     status)
         status

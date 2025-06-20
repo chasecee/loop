@@ -44,15 +44,6 @@ install_missing_packages() {
     fi
 }
 
-# Function to check if SPI is enabled
-check_spi() {
-    if grep -q "^dtparam=spi=on" /boot/config.txt || lsmod | grep -q "^spi_"; then
-        echo "✅ SPI already enabled"
-        return 0
-    fi
-    return 1
-}
-
 # Function to check Python venv
 check_venv() {
     if [ -f "${VENV_DIR}/bin/python" ] && [ -f "${VENV_DIR}/bin/pip" ]; then
@@ -127,40 +118,16 @@ EOF
     echo "Continuing with fresh installation..."
 fi
 
-# Check if this is a reinstall
-if [ -f "$CONFIG_FLAG" ]; then
-    if check_venv; then
-        echo "🔄 Detected previous installation"
-        echo "Performing quick update..."
-        
-        # Just update Python packages and restart service
-        if [ -f "${BACKEND_DIR}/requirements.txt" ]; then
-            echo "📚 Updating Python dependencies..."
-            source "${VENV_DIR}/bin/activate"
-            pip install -r "${BACKEND_DIR}/requirements.txt"
-        fi
-        
-        # Restart service if it exists
-        if check_service; then
-            echo "🔄 Restarting service..."
-            sudo systemctl restart ${SERVICE_NAME}
-            
-            # Show IP and exit
-            IP_ADDR=$(hostname -I | awk '{print $1}')
-            echo ""
-            echo "🌐 LOOP is accessible at:"
-            echo "   http://${IP_ADDR}:8080"
-        fi
-        
-        echo "✨ Quick update complete!"
-        exit 0
-    else
-        echo "⚠️  Previous install flag found but virtualenv missing – performing fresh install..."
-        rm -f "$CONFIG_FLAG"
+# For fresh install, continue with full setup...
+# Stop service if it is running to ensure clean installation
+if systemctl list-unit-files | grep -q "^${SERVICE_NAME}.service"; then
+    if systemctl is-active --quiet ${SERVICE_NAME}; then
+        echo "🛑 Stopping running LOOP service before installation..."
+        sudo systemctl stop ${SERVICE_NAME}
+        echo "✅ Service stopped."
     fi
 fi
 
-# For fresh install, continue with full setup...
 # Check if running on Raspberry Pi
 if ! grep -q "Raspberry Pi" /proc/cpuinfo 2>/dev/null; then
     echo "⚠️  Warning: This doesn't appear to be a Raspberry Pi"
@@ -197,10 +164,22 @@ install_missing_packages \
     libopenjp2-7 \
     libtiff-dev
 
+# Set Boot Config path based on OS version
+if [ -f /boot/firmware/config.txt ]; then
+    BOOT_CONFIG_FILE="/boot/firmware/config.txt"
+else
+    BOOT_CONFIG_FILE="/boot/config.txt"
+fi
+
 # Enable SPI interface if needed
-if ! check_spi; then
-    echo "🔌 Enabling SPI interface..."
-    sudo raspi-config nonint do_spi 0
+echo "🔌 Checking SPI interface..."
+if ! grep -q -E "^dtparam=spi=on" "$BOOT_CONFIG_FILE"; then
+    echo "   SPI not enabled. Enabling now..."
+    echo "# Enable SPI for LOOP hardware" | sudo tee -a "$BOOT_CONFIG_FILE"
+    echo "dtparam=spi=on" | sudo tee -a "$BOOT_CONFIG_FILE"
+    echo "✅ SPI enabled. A reboot will be required."
+else
+    echo "✅ SPI is already enabled in $BOOT_CONFIG_FILE."
 fi
 
 # Create virtual environment if needed
@@ -229,7 +208,7 @@ mkdir -p "${BACKEND_DIR}/logs"
 mkdir -p ~/.loop/logs
 
 # Set up configuration
-echo "⚙️  Setting up configuration..."
+echo "⚙️ Setting up configuration..."
 if [ ! -f "${BACKEND_DIR}/config/config.json" ]; then
     echo "❌ config.json missing! Aborting install."
     exit 1
@@ -316,15 +295,25 @@ sleep 2
 if sudo systemctl is-active --quiet ${SERVICE_NAME}; then
     echo "✅ LOOP service is running!"
     
-    # Get the local IP address
-    IP_ADDR=$(hostname -I | awk '{print $1}')
+    # Wait for a valid IP address
+    echo "⌛ Waiting for network connection..."
+    IP_ADDR=""
+    for i in {1..15}; do
+        IP_ADDR=$(hostname -I | awk '{print $1}')
+        if [[ -n "$IP_ADDR" && "$IP_ADDR" != "192.168.24.1" ]]; then
+            echo "✅ Network connected."
+            break
+        fi
+        sleep 1
+    done
+
     echo ""
-    echo "🌐 LOOP is accessible at:"
-    echo "   http://${IP_ADDR}:8080"
-    echo ""
-    echo "📱 If WiFi setup is needed, connect to:"
-    echo "   SSID: LOOP-Setup"
-    echo "   Password: loop123"
+    if [[ -n "$IP_ADDR" && "$IP_ADDR" != "192.168.24.1" ]]; then
+        echo "🌐 LOOP is accessible at: http://${IP_ADDR}:8080"
+    else
+        echo "⚠️  Could not determine IP address. Please check your network or connect to the hotspot if enabled."
+        echo "   Default Hotspot SSID: LOOP-Setup"
+    fi
     echo ""
 else
     echo "❌ Failed to start LOOP service"
@@ -454,4 +443,21 @@ with open('$INDEX_FILE', 'w') as f:
         
         echo "✅ Default media index created with $(ls -1d "$BACKEND_DIR/media/processed"/*/ 2>/dev/null | wc -l) items"
     fi
-fi 
+fi
+
+# -----------------------------------------------------------------------------
+# Install display dependencies and configure DRM
+# -----------------------------------------------------------------------------
+# This entire section is now obsolete and has been removed.
+# The application now uses a self-contained, user-space Python driver from the 
+# 'waveshare' directory that communicates directly with the hardware via SPI.
+# This approach removes the need for a kernel framebuffer driver (DRM/dtoverlay)
+# and resolves issues related to the missing 'waveshare24b.dtbo' overlay file.
+
+# -----------------------------------------------------------------------------
+# Install Python dependencies
+# -----------------------------------------------------------------------------
+# Go back to project root
+cd "$PROJECT_DIR"
+
+# ... existing code ... 

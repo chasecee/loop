@@ -614,7 +614,7 @@ class DisplayPlayer:
                 
                 if is_static_image:
                     # Display static image for the configured duration
-                    frame_data = self.current_sequence.get_frame_data(0)
+                    frame_data = self.current_sequence.get_next_frame(timeout=2.0)
                     if frame_data:
                         self.logger.info(f"Displaying static image for {self.static_image_display_time} seconds")
                         self.display_driver.display_frame(frame_data)
