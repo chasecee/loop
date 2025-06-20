@@ -7,9 +7,9 @@ from PIL import Image
 from typing import Optional
 
 # Add the Waveshare library path to Python's search path
-sys.path.append(str(Path(__file__).parent.parent.parent / 'waveshare' / 'LCD_Module_RPI_code' / 'RaspberryPi' / 'python' / 'lib'))
+sys.path.append(str(Path(__file__).parent.parent.parent / 'waveshare' / 'LCD_Module_RPI_code' / 'RaspberryPi' / 'python'))
 
-from LCD_2inch4 import LCD_2inch4
+from lib.LCD_2inch4 import LCD_2inch4
 from config.schema import DisplayConfig
 from utils.logger import get_logger
 
