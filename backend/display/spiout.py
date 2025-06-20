@@ -36,10 +36,7 @@ class ILI9341Driver:
         
         self.logger.info("Initializing LCD...")
         try:
-            spi = spidev.SpiDev(self.config.spi_bus, self.config.spi_device)
             self.disp = LCD_2inch4(
-                spi=spi,
-                spi_freq=self.config.spi_speed_hz,
                 rst=self.config.rst_pin,
                 dc=self.config.dc_pin,
                 bl=self.config.bl_pin
