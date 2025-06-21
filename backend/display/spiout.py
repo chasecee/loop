@@ -23,6 +23,7 @@ class ILI9341Driver:
         self.logger = get_logger("display")
         self.disp: Optional[LCD_2inch4] = None
         self.initialized = False
+        self._software_brightness: float = 1.0  # extra dimming factor 0-1
         
         self.logger.info(
             f"Initializing Waveshare 2.4\" LCD driver with pins "
@@ -88,6 +89,11 @@ class ILI9341Driver:
             g = (((pixel_data >> 5) & 0x3F).astype(np.uint8) << 2).reshape((base_height, base_width))
             b = (((pixel_data & 0x1F).astype(np.uint8) << 3)).reshape((base_height, base_width))
             rgb_array = np.dstack((r, g, b))
+
+            # Apply software dimming to avoid PWM flicker at low brightness
+            if self._software_brightness < 0.99:
+                rgb_array = (rgb_array.astype(np.float32) * self._software_brightness).astype(np.uint8)
+
             image = Image.fromarray(rgb_array, 'RGB')
 
             # Apply rotation from config (values: 0, 90, 180, 270). PIL rotates CCW.
@@ -126,14 +132,26 @@ class ILI9341Driver:
         if not self.disp:
             return
 
-        # Distinguish between real bools and ints (since bool is a subclass of int)
         if type(level) is bool:
-            duty_cycle = self.config.brightness if level else 0
+            if level:
+                duty_cycle = 100  # backlight on fully
+                self._software_brightness = self.config.brightness / 100.0
+            else:
+                duty_cycle = 0
+                self._software_brightness = 0.0
         else:
-            duty_cycle = max(0, min(100, int(level)))
+            pct = max(0, min(100, int(level)))
+            if pct == 0:
+                duty_cycle = 0
+                self._software_brightness = 0.0
+            else:
+                duty_cycle = 100  # always full backlight to avoid flicker
+                self._software_brightness = pct / 100.0
 
         self.disp.bl_DutyCycle(duty_cycle)
-        self.logger.debug(f"Backlight set to {duty_cycle}%")
+        self.logger.debug(
+            f"Backlight PWM={duty_cycle}%, software_brightness={self._software_brightness:.2f}"
+        )
 
     def cleanup(self) -> None:
         """Clean up resources."""
