@@ -120,7 +120,8 @@ class ILI9341Driver:
         if not self.disp:
             return
 
-        if isinstance(level, bool):
+        # Distinguish between real bools and ints (since bool is a subclass of int)
+        if type(level) is bool:
             duty_cycle = self.config.brightness if level else 0
         else:
             duty_cycle = max(0, min(100, int(level)))
