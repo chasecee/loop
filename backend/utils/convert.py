@@ -167,7 +167,8 @@ class MediaConverter:
                 # ---------------------------------------------------------------------------------
                 # FAST PATH: let ffmpeg deliver RGB565BE frames directly, one file per frame.
                 # ---------------------------------------------------------------------------------
-                segment_time = 1.0 / fps
+                # Use the image2 muxer which works with rawvideo outputs; newer ffmpeg rejects
+                # rawvideo with the segment muxer. One file per frame: frame_000001.rgb565 ...
                 cmd = [
                     'ffmpeg', '-i', str(video_path),
                     '-vf', (
@@ -176,12 +177,11 @@ class MediaConverter:
                         f'crop={self.target_width}:{self.target_height}'
                     ),
                     '-pix_fmt', 'rgb565be',        # Big-endian RGB565 matches pipeline (>u2)
-                    '-preset', 'ultrafast',          # Speed over compression — we just want raw frames
-                    '-threads', '4',                 # Use all cores on Pi Zero 2 W
-                    '-f', 'segment',                 # Split into individual files on the fly
-                    '-segment_time', f'{segment_time}',
-                    '-reset_timestamps', '1',
-                    '-y',                           # Overwrite
+                    '-vcodec', 'rawvideo',          # raw RGB565 frames
+                    '-preset', 'ultrafast',         # speed over compression – we just want bytes
+                    '-threads', '4',
+                    '-f', 'image2',                # write numbered files via image2 muxer
+                    '-y',                          # overwrite existing
                     str(frames_dir / 'frame_%06d.rgb565')
                 ]
 
