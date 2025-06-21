@@ -690,7 +690,7 @@ class DisplayPlayer:
                             avg_display = sum(times[0] for times in frame_times) / len(frame_times)
                             avg_total = sum(times[1] for times in frame_times) / len(frame_times)
                             actual_fps = 1.0 / avg_total if avg_total > 0 else 0
-                            self.logger.info(f"Frame performance: {actual_fps:.1f} FPS (display: {avg_display*1000:.1f}ms, total: {avg_total*1000:.1f}ms)")
+                            self.logger.debug(f"Frame performance: {actual_fps:.1f} FPS (display: {avg_display*1000:.1f}ms, total: {avg_total*1000:.1f}ms)")
                             frame_times = []  # Reset for next batch
                     
                     if not sequence_completed:

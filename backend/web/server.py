@@ -101,6 +101,16 @@ class CacheControlMiddleware(BaseHTTPMiddleware):
         
         return response
 
+class RequestLoggingMiddleware(BaseHTTPMiddleware):
+    """Log each HTTP request with method, path, status code, and processing time."""
+
+    async def dispatch(self, request: Request, call_next):
+        start_time = time.perf_counter()
+        response: Response = await call_next(request)
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        logger.info(f"{request.method} {request.url.path} - {response.status_code} ({duration_ms:.2f} ms)")
+        return response
+
 def get_dir_size(path: Path) -> int:
     """Recursively get the size of a directory."""
     total = 0
@@ -127,6 +137,9 @@ def create_app(
         docs_url="/docs" if config and config.web.debug else None,
         redoc_url="/redoc" if config and config.web.debug else None
     )
+    
+    # Add request logging middleware
+    app.add_middleware(RequestLoggingMiddleware)
     
     # SPA assets directory (Next.js export)
     spa_dir = Path(__file__).parent / "spa"

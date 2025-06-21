@@ -385,7 +385,7 @@ class LOOPApplication:
                 # Connection management settings
                 timeout_keep_alive=5,  # Reduce keep-alive timeout from default 20s
                 timeout_graceful_shutdown=30,  # Graceful shutdown timeout
-                limit_max_requests=1000,  # Restart worker after 1000 requests
+                limit_max_requests=None,  # Disable auto-restart; keeps web server alive
                 backlog=50,  # Connection backlog queue size
                 h11_max_incomplete_event_size=16 * 1024,  # 16KB max incomplete event
             )
