@@ -13,6 +13,7 @@ from PIL import Image, ImageSequence, ImageOps
 import tempfile
 import hashlib
 import numpy as np
+import re  # Added for slug sanitization
 
 from utils.logger import get_logger
 from display.framebuf import FrameBuffer
@@ -47,10 +48,20 @@ class MediaConverter:
     
     def _generate_slug(self, filename: str) -> str:
         """Generate URL-safe slug from filename."""
-        # Remove extension and create hash-based slug
+        # Remove extension and sanitize name by stripping typical tempfile prefixes
         name = Path(filename).stem
+
+        # Many uploads arrive with names like "tmpabcd123_myfile.gif" created by the
+        # operating system's tempfile utilities.  Remove the leading tmp* segment so
+        # the slug is more readable while still appending an 8-char hash for
+        # deduplication.
+        cleaned_name = re.sub(r"^tmp[a-zA-Z0-9]+(?:[_-])?", "", name)
+        if not cleaned_name:
+            cleaned_name = "media"
+
+        # Append deterministic hash to guarantee uniqueness while remaining concise
         hash_part = hashlib.md5(filename.encode()).hexdigest()[:8]
-        return f"{name}_{hash_part}".lower().replace(' ', '_').replace('-', '_')
+        return f"{cleaned_name}_{hash_part}".lower().replace(' ', '_').replace('-', '_')
     
     def convert_gif(self, gif_path: Path, output_dir: Path, format_type: str = "rgb565", job_id: str = None) -> Optional[Dict]:
         """Convert GIF to frame sequence."""
