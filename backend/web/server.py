@@ -114,16 +114,48 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 class BrightnessPayload(BaseModel):
     brightness: int
 
-def get_dir_size(path: Path) -> int:
-    """Recursively get the size of a directory."""
+# ------------------------------------------------------------------
+# Directory-size helper with simple in-memory cache. Scanning the full
+# project tree on every /api/storage request was expensive (tens of ms
+# or worse on SD-cards) and caused uvicorn default 30 s timeouts when
+# many clients polled at once.  We keep a per-path size for 30 s and
+# invalidate it whenever the media library is mutated.
+# ------------------------------------------------------------------
+
+_DIR_SIZE_CACHE: dict[Path, tuple[float, int]] = {}
+_DIR_SIZE_TTL = 30  # seconds
+
+
+def _calc_dir_size(path: Path) -> int:
+    """Recursively compute directory size in bytes (no cache)."""
     total = 0
     if path.exists():
         for entry in os.scandir(path):
             if entry.is_file():
                 total += entry.stat().st_size
             elif entry.is_dir():
-                total += get_dir_size(Path(entry.path))
+                total += _calc_dir_size(Path(entry.path))
     return total
+
+
+def get_dir_size(path: Path) -> int:
+    """Return cached dir size; refresh after TTL expires."""
+    now = time.time()
+    cached = _DIR_SIZE_CACHE.get(path)
+    if cached and (now - cached[0] < _DIR_SIZE_TTL):
+        return cached[1]
+
+    size = _calc_dir_size(path)
+    _DIR_SIZE_CACHE[path] = (now, size)
+    return size
+
+
+def _invalidate_dir_size(path: Path | None = None):
+    """Remove cache entry (or all) after media changes."""
+    if path is None:
+        _DIR_SIZE_CACHE.clear()
+    else:
+        _DIR_SIZE_CACHE.pop(path, None)
 
 def create_app(
     display_player: DisplayPlayer = None,
@@ -335,6 +367,7 @@ def create_app(
             
             # Return results in format expected by frontend
             if processed_files:
+                _invalidate_dir_size()
                 return APIResponse(
                     success=True,
                     message=f"Successfully processed {len(processed_files)} of {len(files)} files",
@@ -415,6 +448,8 @@ def create_app(
             if display_player:
                 display_player.refresh_media_list()
             
+            _invalidate_dir_size()
+            
             return APIResponse(success=True, message=f"Deleted media: {slug}")
             
         except Exception as e:
@@ -429,6 +464,9 @@ def create_app(
             
             if display_player:
                 display_player.refresh_media_list()
+            
+            if cleanup_count:
+                _invalidate_dir_size()
             
             return APIResponse(
                 success=True,

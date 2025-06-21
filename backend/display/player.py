@@ -602,19 +602,26 @@ class DisplayPlayer:
                     # Reset loop counter when loading new media
                     self.current_media_loops = 0
                 
-                # Play current media sequence
-                if not self.current_sequence:
-                    self.logger.warning("Current sequence is None, attempting to reload")
-                    if not self.load_current_sequence():
-                        time.sleep(1)
-                        continue
-                
-                frame_count = self.current_sequence.get_frame_count()
-                is_static_image = frame_count == 1 and self.current_sequence.get_frame_duration(0) == 0.0
+                # Snapshot the current sequence to avoid race conditions where another
+                # thread sets self.current_sequence to None mid-playback (e.g. during
+                # a refresh or media switch).  Holding a local reference ensures we
+                # either finish the current playback iteration or fail gracefully
+                # without triggering AttributeError: 'NoneType' object has no attribute ...
+                sequence = self.current_sequence
+
+                # In extremely rare cases the sequence may have been cleared between
+                # the checks above and this assignment. Safeguard and retry loading
+                # if that happens.
+                if sequence is None:
+                    self.logger.debug("Sequence cleared mid-cycle; reloading.")
+                    continue
+
+                frame_count = sequence.get_frame_count()
+                is_static_image = frame_count == 1 and sequence.get_frame_duration(0) == 0.0
                 
                 if is_static_image:
                     # Display static image for the configured duration
-                    frame_data = self.current_sequence.get_next_frame(timeout=2.0)
+                    frame_data = sequence.get_next_frame(timeout=2.0)
                     if frame_data:
                         self.logger.info(f"Displaying static image for {self.static_image_display_time} seconds")
                         self.display_driver.display_frame(frame_data)
@@ -654,8 +661,8 @@ class DisplayPlayer:
                             break
                         
                         # Get frame data and duration
-                        frame_data = self.current_sequence.get_next_frame(timeout=2.0)
-                        frame_duration = self.current_sequence.get_frame_duration(frame_idx)
+                        frame_data = sequence.get_next_frame(timeout=2.0)
+                        frame_duration = sequence.get_frame_duration(frame_idx)
                         
                         if not frame_data:
                             self.logger.error(f"Failed to get frame {frame_idx} from queue")
