@@ -24,6 +24,10 @@ class ILI9341Driver:
         self.disp: Optional[LCD_2inch4] = None
         self.initialized = False
         self._software_brightness: float = 1.0  # extra dimming factor 0-1
+        self._gamma: float = max(0.1, config.gamma) if hasattr(config, "gamma") else 2.4
+        # Precompute gamma LUT (0-255 -> corrected)
+        import numpy as _np
+        self._gamma_lut = (_np.linspace(0, 1, 256) ** (1.0 / self._gamma) * 255).astype(_np.uint8)
         
         self.logger.info(
             f"Initializing Waveshare 2.4\" LCD driver with pins "
@@ -94,6 +98,11 @@ class ILI9341Driver:
             if self._software_brightness < 0.99:
                 rgb_array = (rgb_array.astype(np.float32) * self._software_brightness).astype(np.uint8)
 
+            # Apply gamma correction using LUT
+            if self._gamma and abs(self._gamma - 1.0) > 0.05:
+                lut = self._gamma_lut
+                rgb_array = lut[rgb_array]
+
             image = Image.fromarray(rgb_array, 'RGB')
 
             # Apply rotation from config (values: 0, 90, 180, 270). PIL rotates CCW.
@@ -158,4 +167,13 @@ class ILI9341Driver:
         if self.initialized and self.disp:
             self.disp.module_exit()
             self.initialized = False
-            self.logger.info("Waveshare display driver cleaned up") 
+            self.logger.info("Waveshare display driver cleaned up")
+
+    # ------------------- Gamma API --------------------
+    def set_gamma(self, gamma: float) -> None:
+        """Set display gamma (software correction)."""
+        gamma = max(0.1, min(10.0, gamma))
+        self._gamma = gamma
+        import numpy as _np
+        self._gamma_lut = (_np.linspace(0, 1, 256) ** (1.0 / gamma) * 255).astype(_np.uint8)
+        self.logger.info(f"Set software gamma to {gamma:.2f}") 

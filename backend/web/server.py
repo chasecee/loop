@@ -111,8 +111,9 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         logger.info(f"{request.method} {request.url.path} - {response.status_code} ({duration_ms:.2f} ms)")
         return response
 
-class BrightnessPayload(BaseModel):
-    brightness: int
+class DisplaySettingsPayload(BaseModel):
+    brightness: Optional[int] = None
+    gamma: Optional[float] = None
 
 # ------------------------------------------------------------------
 # Directory-size helper with simple in-memory cache. Scanning the full
@@ -525,29 +526,37 @@ def create_app(
         )
     
     @app.post("/api/display/brightness", response_model=APIResponse)
-    async def set_display_brightness(payload: BrightnessPayload):
+    async def set_display_settings(payload: DisplaySettingsPayload):
         """Set LCD backlight brightness (0-100)."""
         if not display_player:
             raise HTTPException(status_code=503, detail="Display driver not available")
-        level = max(0, min(100, payload.brightness))
+        response_data = {}
         try:
-            display_player.display_driver.set_backlight(level)
-            # Persist to config
-            if config:
-                config.display.brightness = level
-                config.save()  # Save back to config.json
-            return APIResponse(success=True, message=f"Brightness set to {level}%", data={"brightness": level})
+            if payload.brightness is not None:
+                level = max(0, min(100, payload.brightness))
+                display_player.display_driver.set_backlight(level)
+                response_data["brightness"] = level
+                if config:
+                    config.display.brightness = level
+            if payload.gamma is not None:
+                display_player.display_driver.set_gamma(payload.gamma)
+                response_data["gamma"] = payload.gamma
+                if config:
+                    config.display.gamma = payload.gamma
+            if config and response_data:
+                config.save()
+            return APIResponse(success=True, message="Display settings updated", data=response_data)
         except Exception as e:
             logger.error(f"Failed to set brightness: {e}")
             raise HTTPException(status_code=500, detail=str(e))
     
     @app.get("/api/display/brightness", response_model=APIResponse)
-    async def get_display_brightness():
-        """Get current LCD backlight brightness (0-100)."""
+    async def get_display_settings():
+        """Get current LCD backlight brightness and gamma."""
         try:
-            # Prefer value from config if available; fall back to 100%.
             level = config.display.brightness if config and config.display else 100
-            return APIResponse(success=True, data={"brightness": level})
+            gamma = config.display.gamma if config and config.display else 2.4
+            return APIResponse(success=True, data={"brightness": level, "gamma": gamma})
         except Exception as e:
             logger.error(f"Failed to get brightness: {e}")
             raise HTTPException(status_code=500, detail=str(e))
