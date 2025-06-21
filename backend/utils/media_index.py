@@ -130,9 +130,15 @@ class MediaIndexManager:
                 LOGGER.error("Invalid media index format, resetting to default")
                 return MediaIndex.empty()
 
-            # Create MediaIndex with validated data
+            raw_media = data.get("media", {})
+            if isinstance(raw_media, list):
+                # Legacy format: list of media; convert to dict keyed by slug
+                converted = {m.get("slug", f"legacy_{i}"): m for i, m in enumerate(raw_media) if isinstance(m, dict)}
+                LOGGER.warning("Converted legacy list-based media index to dict format")
+                raw_media = converted
+
             index = MediaIndex(
-                media=data.get("media", {}),
+                media=raw_media if isinstance(raw_media, dict) else {},
                 loop=data.get("loop", []),
                 active=data.get("active"),
                 last_updated=data.get("last_updated"),
