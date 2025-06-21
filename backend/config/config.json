@@ -36,7 +36,7 @@
     "debounce_ms": 20
   },
   "media": {
-    "max_file_size_mb": 25,
+    "max_file_size_mb": 50,
     "active_media": null,
     "loop_count": 2,
     "static_image_duration_sec": 10,
