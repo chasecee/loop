@@ -24,6 +24,7 @@ class DisplayConfig:
     show_progress: bool = True  # Enable processing progress display
     progress_color: int = 0x07E0  # Green progress bar color (RGB565)
     brightness: int = 100  # Backlight brightness percentage (0-100)
+    backlight_freq: int = 20000  # PWM frequency in Hz to reduce flicker
 
 
 @dataclass
@@ -52,7 +53,7 @@ class MediaConfig:
     """Media configuration."""
     max_file_size_mb: int = 10
     active_media: Optional[str] = None
-    loop_count: int = 3  # Loop each media 3 times before advancing (was -1)
+    loop_count: int = 2  # Loop each media 2 times before advancing (was -1)
     static_image_duration_sec: int = 10  # How long to display static images
     auto_advance_enabled: bool = True  # Whether to auto-advance to next media in loop mode
 

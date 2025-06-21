@@ -46,6 +46,12 @@ class ILI9341Driver:
             self.disp.clear()
             # Mark as initialized before controlling backlight to avoid recursion
             self.initialized = True
+            # Increase PWM frequency to minimize visible flicker
+            try:
+                if hasattr(self.disp, "bl_Frequency"):
+                    self.disp.bl_Frequency(self.config.backlight_freq)
+            except Exception as freq_err:
+                self.logger.debug(f"Unable to set backlight PWM frequency: {freq_err}")
             # Set initial brightness from config after initialization
             self.set_backlight(self.config.brightness)
             self.logger.info("LCD initialized successfully")
