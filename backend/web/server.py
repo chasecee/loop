@@ -590,6 +590,17 @@ def create_app(
             logger.error(f"Failed to set brightness: {e}")
             raise HTTPException(status_code=500, detail=str(e))
     
+    @app.get("/api/display/brightness", response_model=APIResponse)
+    async def get_display_brightness():
+        """Get current LCD backlight brightness (0-100)."""
+        try:
+            # Prefer value from config if available; fall back to 100%.
+            level = config.display.brightness if config and config.display else 100
+            return APIResponse(success=True, data={"brightness": level})
+        except Exception as e:
+            logger.error(f"Failed to get brightness: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+    
     # WiFi Management API
     
     @app.get("/api/wifi/scan", response_model=APIResponse)
