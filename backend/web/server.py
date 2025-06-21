@@ -265,151 +265,102 @@ def create_app(
     
     @app.post("/api/media", response_model=APIResponse)
     async def upload_media(files: List[UploadFile] = File(...)):
-        """Upload and process media files synchronously with display progress."""
-        logger.info(f"🔥 UPLOAD ENDPOINT HIT! Received {len(files)} files: {[f.filename for f in files]}")
+        """Upload media and kick off background processing quickly so the request returns fast."""
+        import asyncio
+
+        logger.info(
+            f"🔥 ASYNC UPLOAD ENDPOINT HIT! Received {len(files)} files: {[f.filename for f in files]}"
+        )
+
         if not files:
             raise HTTPException(status_code=400, detail="No files provided")
-        
-        processed_files = []
-        errors = []
-        job_ids = []
-        was_paused = False
-        
+
         # Pause playback during processing
+        was_paused = False
         if display_player:
-            was_paused = display_player.is_paused()
-            logger.info(f"🎮 Player state: paused={was_paused}, running={display_player.running}")
-            if not was_paused:
-                try:
+            try:
+                was_paused = display_player.is_paused()
+                if not was_paused:
                     display_player.toggle_pause()
-                    logger.info("🛑 Paused playback for upload processing")
-                except Exception as exc:
-                    logger.warning(f"Failed to pause playback: {exc}")
-            else:
-                logger.info("🎮 Player was already paused")
-        
-        try:
-            # Create job IDs and start display progress BEFORE processing
-            for file in files:
-                job_id = str(uuid.uuid4())
-                job_ids.append(job_id)
-                media_index.add_processing_job(job_id, file.filename)
-            
-            # Start display progress tracking
-            if job_ids and display_player:
-                try:
-                    logger.info(f"📊 Starting progress display for {len(job_ids)} jobs: {job_ids}")
-                    display_player.start_processing_display(job_ids)
-                    logger.info(f"✅ Successfully started progress display for {len(job_ids)} jobs")
-                except Exception as exc:
-                    logger.error(f"❌ Failed to start processing display: {exc}")
-            
-            # Process files synchronously
-            last_successful_slug = None
-            for i, file in enumerate(files):
-                job_id = job_ids[i]
-                try:
-                    logger.info(f"Processing file {i+1}/{len(files)}: {file.filename}")
-                    
-                    # Read file content
-                    content = await file.read()
-                    
-                    # Process the file
-                    metadata = _process_media_file_impl(
-                        file.filename, 
-                        content, 
-                        file.content_type, 
-                        converter, 
-                        config, 
-                        job_id
-                    )
-                    
-                    processed_files.append(metadata)
-                    last_successful_slug = metadata.get('slug')
-                    logger.info(f"Successfully processed {file.filename}")
-                    
-                except Exception as e:
-                    error_msg = f"Failed to process {file.filename}: {str(e)}"
-                    logger.error(error_msg)
-                    errors.append({"filename": file.filename, "error": str(e)})
-                    if job_id:
-                        media_index.complete_processing_job(job_id, False, str(e))
-            
-            # Stop processing display
+            except Exception as exc:
+                logger.debug(f"Unable to pause playback: {exc}")
+
+        # Create job IDs immediately so frontend can poll progress
+        job_ids: list[str] = []
+        for file in files:
+            job_id = str(uuid.uuid4())
+            job_ids.append(job_id)
+            media_index.add_processing_job(job_id, file.filename)
+
+        # Start progress display (non-blocking)
+        if job_ids and display_player:
+            try:
+                display_player.start_processing_display(job_ids)
+            except Exception as exc:
+                logger.warning(f"Unable to start processing display: {exc}")
+
+        loop = asyncio.get_running_loop()
+
+        async def _schedule(file: UploadFile, job_id: str):
+            try:
+                content = await file.read()
+                # Run the heavy FFmpeg conversion in a default thread pool
+                await loop.run_in_executor(
+                    None,
+                    _process_media_file_impl,
+                    file.filename,
+                    content,
+                    file.content_type,
+                    converter,
+                    config,
+                    job_id,
+                )
+            except Exception as e:
+                logger.error(f"Background processing failed for {file.filename}: {e}")
+
+        # Fire-and-forget tasks and track them for finalization
+        processing_tasks: list[asyncio.Task] = []
+        for idx, file in enumerate(files):
+            processing_tasks.append(asyncio.create_task(_schedule(file, job_ids[idx])))
+
+        async def _finalize():
+            """Run after all processing tasks complete: clean up UI and resume playback."""
+            results = await asyncio.gather(*processing_tasks, return_exceptions=True)
+
+            last_successful_slug: str | None = None
+            for res in results:
+                if isinstance(res, dict):
+                    last_successful_slug = res.get("slug", last_successful_slug)
+
+            # Stop progress display and refresh player
             if display_player:
                 try:
                     display_player.stop_processing_display()
-                    logger.info("Stopped processing display")
-                except Exception as exc:
-                    logger.warning(f"Failed to stop processing display: {exc}")
-            
-            # Refresh player and activate last successful media
-            if display_player and processed_files:
-                try:
                     display_player.refresh_media_list()
-                    
-                    # Activate the last successfully processed file
                     if last_successful_slug:
                         display_player.set_active_media(last_successful_slug)
-                        logger.info(f"Activated newly uploaded media: {last_successful_slug}")
-                    
                 except Exception as exc:
-                    logger.error(f"Failed to refresh/activate player: {exc}")
-            
-            # Resume playback if it wasn't originally paused
-            if display_player and not was_paused:
+                    logger.debug(f"Post-processing player update failed: {exc}")
+
+                # Resume playback if it was running before
                 try:
-                    if display_player.is_paused():
+                    if not was_paused and display_player.is_paused():
                         display_player.toggle_pause()
-                        logger.info("Resumed playback after processing")
-                except Exception as exc:
-                    logger.warning(f"Failed to resume playback: {exc}")
-            
-            # Return results in format expected by frontend
-            if processed_files:
-                _invalidate_dir_size()
-                return APIResponse(
-                    success=True,
-                    message=f"Successfully processed {len(processed_files)} of {len(files)} files",
-                    data={
-                        "job_ids": job_ids,
-                        "processing_started": True,
-                        "processed": processed_files,
-                        "errors": errors if errors else None
-                    }
-                )
-            else:
-                raise HTTPException(
-                    status_code=400, 
-                    detail=f"Failed to process any files: {'; '.join([e['error'] for e in errors])}"
-                )
-            
-        except Exception as e:
-            # Clean up jobs on error
-            for job_id in job_ids:
-                if job_id:
-                    try:
-                        media_index.complete_processing_job(job_id, False, f"Upload failed: {e}")
-                    except Exception as job_error:
-                        logger.warning(f"Failed to mark job {job_id} as failed: {job_error}")
-            
-            # Stop processing display on error
-            if display_player:
-                try:
-                    display_player.stop_processing_display()
-                except Exception as display_error:
-                    logger.warning(f"Failed to stop processing display: {display_error}")
-            
-            # Resume playback if needed (error case)
-            if display_player and not was_paused and display_player.is_paused():
-                try:
-                    display_player.toggle_pause()
-                    logger.info("Resumed playback after upload error")
-                except Exception as resume_error:
-                    logger.warning(f"Failed to resume playback after error: {resume_error}")
-            
-            logger.error(f"Upload processing failed: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
+                except Exception:
+                    pass
+
+            # Invalidate cached sizes
+            _invalidate_dir_size()
+
+        # Kick off finalize task
+        asyncio.create_task(_finalize())
+
+        # Return immediately – processing continues in background
+        return APIResponse(
+            success=True,
+            message="Upload accepted – processing in background",
+            data={"job_ids": job_ids, "processing_started": True},
+        )
     
     @app.post("/api/media/{slug}/activate", response_model=APIResponse)
     async def activate_media(slug: str):
@@ -885,88 +836,17 @@ def _process_media_file_impl(filename: str, content: bytes, content_type: str, c
         if "tmp_path" in locals() and tmp_path.exists():
             tmp_path.unlink()
 
-async def process_media_file(file: UploadFile, converter: MediaConverter, config: Config, job_id: str = None) -> Dict[str, Any]:
-    """Process a single uploaded media file."""
-    # Validate file type and size
-    allowed_extensions = {".gif", ".mp4", ".avi", ".mov", ".png", ".jpg", ".jpeg"}
-    file_ext = Path(file.filename).suffix.lower()
-    if file_ext not in allowed_extensions:
-        if job_id:
-            media_index.complete_processing_job(job_id, False, f"Unsupported file type: {file.filename}")
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported file type: {file.filename}",
-        )
-
-    max_size = (config.media.max_file_size_mb if config else 10) * 1024 * 1024
-    
-    # Save to temporary file
-    media_raw_dir = Path("media/raw")
-    try:
-        if job_id:
-            media_index.update_processing_job(job_id, 5, "uploading", "Saving uploaded file...")
-        
-        with tempfile.NamedTemporaryFile(
-            delete=False, suffix=file.filename, dir=media_raw_dir
-        ) as tmp:
-            content = await file.read()
-            if len(content) > max_size:
-                if job_id:
-                    media_index.complete_processing_job(job_id, False, f"File too large: {file.filename}")
-                raise HTTPException(
-                    status_code=413, detail=f"File too large: {file.filename}"
-                )
-            tmp.write(content)
-            tmp_path = Path(tmp.name)
-
-        # Generate slug and output directory
-        slug = converter._generate_slug(tmp_path.name)
-        output_dir = Path("media/processed") / slug
-
-        if job_id:
-            media_index.update_processing_job(job_id, 10, "converting", "Starting media conversion...")
-        
-        # Convert media with progress tracking
-        metadata = converter.convert_media_file(tmp_path, output_dir, job_id=job_id, fps=25.0)
-        if not metadata:
-            if job_id:
-                media_index.complete_processing_job(job_id, False, f"Failed to process {file.filename}")
-            raise HTTPException(
-                status_code=500, detail=f"Failed to process {file.filename}"
-            )
-        
-        # Augment metadata for frontend
-        file_size = len(content)
-        uploaded_at_iso = datetime.utcnow().isoformat() + "Z"
-
-        metadata.update({
-            "filename": file.filename,
-            "type": file.content_type or metadata.get("type", "unknown"),
-            "size": file_size,
-            "uploadedAt": uploaded_at_iso,
-            "url": f"/media/raw/{slug}{Path(file.filename).suffix}",
-        })
-
-        # Add to media index
-        media_index.add_media(metadata, make_active=True)
-
-        # Save original for preview
-        dest_raw_path = media_raw_dir / f"{slug}{Path(file.filename).suffix}"
-        shutil.copy(tmp_path, dest_raw_path)
-
-        if job_id:
-            media_index.complete_processing_job(job_id, True)
-
-        return metadata
-
-    except Exception as e:
-        if job_id:
-            media_index.complete_processing_job(job_id, False, str(e))
-        raise
-    finally:
-        # Clean up temp file
-        if "tmp_path" in locals() and tmp_path.exists():
-            tmp_path.unlink()
+async def process_media_file(file: UploadFile, converter: MediaConverter, config: Config, job_id: str | None = None) -> Dict[str, Any]:
+    """Thin async wrapper that streams the UploadFile to bytes and delegates to the core implementation."""
+    content = await file.read()
+    return _process_media_file_impl(
+        file.filename,
+        content,
+        file.content_type,
+        converter,
+        config,
+        job_id,
+    )
 
 # For development/testing
 if __name__ == "__main__":
@@ -984,8 +864,9 @@ if __name__ == "__main__":
             f.write("<h1>SPA Placeholder</h1><p>Build the frontend and place it here.</p>")
 
     uvicorn.run(
-        app, 
-        host=config.web.host, 
+        app,
+        host=config.web.host,
         port=config.web.port,
-        log_level="info"
+        log_level="info",
+        limit_max_requests=None,
     ) 
