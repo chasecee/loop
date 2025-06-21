@@ -3,7 +3,7 @@
 import sys
 from pathlib import Path
 from PIL import Image
-from typing import Optional
+from typing import Optional, Union
 import spidev
 import numpy as np
 
@@ -46,8 +46,8 @@ class ILI9341Driver:
             self.disp.clear()
             # Mark as initialized before controlling backlight to avoid recursion
             self.initialized = True
-            # Ensure backlight is on after initialization
-            self.set_backlight(True)
+            # Set initial brightness from config after initialization
+            self.set_backlight(self.config.brightness)
             self.logger.info("LCD initialized successfully")
         except Exception as e:
             self.logger.error(f"Failed to initialize LCD: {e}")
@@ -107,15 +107,26 @@ class ILI9341Driver:
             image = Image.new('RGB', (320, 240), (r, g, b))
             self.disp.ShowImage(image)
 
-    def set_backlight(self, enabled: bool) -> None:
-        """Control backlight."""
+    def set_backlight(self, level: Union[int, bool]) -> None:
+        """Set backlight brightness.
+
+        Args:
+            level: If bool, True = use configured brightness, False = off.
+                   If int, 0-100 percentage duty cycle.
+        """
         if not self.initialized:
             self.init()
             
-        if self.disp:
-            duty_cycle = 100 if enabled else 0
-            self.disp.bl_DutyCycle(duty_cycle)
-            self.logger.debug(f"Backlight set to {'on' if enabled else 'off'}")
+        if not self.disp:
+            return
+
+        if isinstance(level, bool):
+            duty_cycle = self.config.brightness if level else 0
+        else:
+            duty_cycle = max(0, min(100, int(level)))
+
+        self.disp.bl_DutyCycle(duty_cycle)
+        self.logger.debug(f"Backlight set to {duty_cycle}%")
 
     def cleanup(self) -> None:
         """Clean up resources."""

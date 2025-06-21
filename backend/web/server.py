@@ -111,6 +111,9 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         logger.info(f"{request.method} {request.url.path} - {response.status_code} ({duration_ms:.2f} ms)")
         return response
 
+class BrightnessPayload(BaseModel):
+    brightness: int
+
 def get_dir_size(path: Path) -> int:
     """Recursively get the size of a directory."""
     total = 0
@@ -531,6 +534,23 @@ def create_app(
             message=f"Loop mode set to: {new_mode}",
             data={"loop_mode": new_mode}
         )
+    
+    @app.post("/api/display/brightness", response_model=APIResponse)
+    async def set_display_brightness(payload: BrightnessPayload):
+        """Set LCD backlight brightness (0-100)."""
+        if not display_player:
+            raise HTTPException(status_code=503, detail="Display driver not available")
+        level = max(0, min(100, payload.brightness))
+        try:
+            display_player.display_driver.set_backlight(level)
+            # Persist to config
+            if config:
+                config.display.brightness = level
+                config.save()  # Save back to config.json
+            return APIResponse(success=True, message=f"Brightness set to {level}%", data={"brightness": level})
+        except Exception as e:
+            logger.error(f"Failed to set brightness: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
     
     # WiFi Management API
     

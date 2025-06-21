@@ -1,4 +1,4 @@
-"""Display playback engine for LOOP."""
+# backend/display/player.py
 
 import json
 import threading
