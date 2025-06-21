@@ -380,9 +380,10 @@ class MediaConverter:
         """Save a frame in the specified format."""
         try:
             if format_type == "rgb565":
-                # Convert to RGB565 binary using fast NumPy operations
-                frame_path = frames_dir / f"frame_{frame_index:06d}.rgb565"
-                
+                # Ensure RGB mode to avoid palette/grayscale misinterpretation
+                if frame.mode != 'RGB':
+                    frame = frame.convert('RGB')
+
                 # Convert PIL image to NumPy array (much faster than getpixel loops)
                 img_array = np.array(frame, dtype=np.uint8)
                 
@@ -402,6 +403,7 @@ class MediaConverter:
                 # Convert to big-endian bytes and save
                 rgb565_bytes = rgb565.astype('>u2').tobytes()
                 
+                frame_path = frames_dir / f"frame_{frame_index:06d}.rgb565"
                 with open(frame_path, 'wb') as f:
                     f.write(rgb565_bytes)
                 
