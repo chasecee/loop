@@ -233,14 +233,11 @@ class WifiNetwork(BaseModel):
     secured: bool
 
 # ------------------------------------------------------------------
-# Directory-size helper with aggressive caching to prevent 44+ second delays.
-# SD card operations are extremely slow, so we cache aggressively and only
-# update after actual media changes.
+# Startup-only storage calculation with permanent cache.
+# Scans once on startup, then only invalidates on actual media changes.
 # ------------------------------------------------------------------
 
-_DIR_SIZE_CACHE: dict[Path, tuple[float, int]] = {}
-_DIR_SIZE_TTL = 300  # 5 minutes - much longer cache since it's expensive
-_STORAGE_CALCULATION_IN_PROGRESS = False
+_STORAGE_CACHE: dict[Path, int] = {}
 
 
 def _calc_dir_size_fast(path: Path) -> int:
@@ -272,47 +269,33 @@ def _calc_dir_size_fast(path: Path) -> int:
 
 
 def get_dir_size(path: Path) -> int:
-    """Return cached dir size with aggressive caching to prevent slow SD card operations."""
-    global _STORAGE_CALCULATION_IN_PROGRESS
+    """Return cached dir size - scanned once on startup."""
+    return _STORAGE_CACHE.get(path, 0)
+
+
+def _scan_storage_on_startup():
+    """Scan all storage once during startup."""
+    logger.info("Scanning storage sizes on startup...")
+    start_time = time.time()
     
-    now = time.time()
-    cached = _DIR_SIZE_CACHE.get(path)
-    if cached and (now - cached[0] < _DIR_SIZE_TTL):
-        return cached[1]
-
-    # If a calculation is already in progress, return last known value or estimate
-    if _STORAGE_CALCULATION_IN_PROGRESS:
-        if cached:
-            logger.debug(f"Storage calculation in progress, returning cached value for {path}")
-            return cached[1]
-        else:
-            logger.debug(f"Storage calculation in progress, returning estimate for {path}")
-            return 1024 * 1024 * 100  # 100MB estimate
-
-    _STORAGE_CALCULATION_IN_PROGRESS = True
-    try:
-        logger.debug(f"Calculating directory size for {path}")
-        start_time = time.time()
-        size = _calc_dir_size_fast(path)
-        calc_time = time.time() - start_time
-        
-        if calc_time > 1.0:  # Log slow calculations
-            logger.warning(f"Slow storage calculation for {path}: {calc_time:.2f}s")
-        
-        _DIR_SIZE_CACHE[path] = (now, size)
-        return size
-    finally:
-        _STORAGE_CALCULATION_IN_PROGRESS = False
+    backend_root = Path(__file__).resolve().parent
+    media_path = backend_root / "media"
+    
+    # Scan both directories
+    media_size = _calc_dir_size_fast(media_path)
+    backend_size = _calc_dir_size_fast(backend_root)
+    
+    _STORAGE_CACHE[media_path] = media_size
+    _STORAGE_CACHE[backend_root] = backend_size
+    
+    scan_time = time.time() - start_time
+    logger.info(f"Storage scan complete: media={media_size/1024/1024:.1f}MB, backend={backend_size/1024/1024:.1f}MB (took {scan_time:.2f}s)")
 
 
-def _invalidate_dir_size(path: Path | None = None):
-    """Remove cache entry (or all) after media changes."""
-    if path is None:
-        _DIR_SIZE_CACHE.clear()
-        logger.debug("Cleared all directory size cache")
-    else:
-        _DIR_SIZE_CACHE.pop(path, None)
-        logger.debug(f"Invalidated directory size cache for {path}")
+def _invalidate_storage_cache():
+    """Rescan storage after media changes."""
+    logger.info("Media changed, rescanning storage...")
+    _scan_storage_on_startup()
 
 def create_app(
     display_player: DisplayPlayer = None,
@@ -321,6 +304,9 @@ def create_app(
     config: Config = None
 ) -> FastAPI:
     """Create and configure the FastAPI application."""
+    
+    # Scan storage once on startup for lightning-fast dashboard responses
+    _scan_storage_on_startup()
     
     app = FastAPI(
         title="LOOP",
@@ -475,12 +461,17 @@ def create_app(
             logger.info(f"Processing file {i+1}/{len(files)}: {file.filename} ({file.content_type})")
             
             # Read file content (may have been read during validation)
+            logger.info(f"Reading uploaded file {file.filename}...")
+            read_start = time.time()
             try:
                 content = await file.read()
                 file_size = len(content)
-                logger.info(f"File {file.filename} read successfully: {file_size} bytes")
+                read_time = time.time() - read_start
+                speed_mbps = (file_size / (1024 * 1024)) / read_time if read_time > 0 else 0
+                logger.info(f"File {file.filename} read successfully: {file_size} bytes ({speed_mbps:.1f} MB/s in {read_time:.2f}s)")
             except Exception as e:
-                logger.error(f"Failed to read file {file.filename}: {e}")
+                read_time = time.time() - read_start
+                logger.error(f"Failed to read file {file.filename} after {read_time:.2f}s: {e}")
                 raise HTTPException(status_code=500, detail=f"Failed to read file: {e}")
 
             # Create a slug based on filename + uuid to avoid clashes
@@ -513,15 +504,19 @@ def create_app(
                         logger.debug(f"Writing ZIP to temp file: {tmp_zip}")
                         
                         # Write file in chunks to avoid memory issues with large files
+                        logger.info(f"Writing {len(content)} bytes to temp file...")
                         with open(tmp_zip, "wb") as f:
                             chunk_size = 1024 * 1024  # 1MB chunks
                             bytes_written = 0
+                            start_time = time.time()
                             while bytes_written < len(content):
                                 chunk = content[bytes_written:bytes_written + chunk_size]
                                 f.write(chunk)
                                 bytes_written += len(chunk)
                                 if bytes_written % (10 * 1024 * 1024) == 0:  # Log every 10MB
-                                    logger.debug(f"Written {bytes_written}/{len(content)} bytes to temp file")
+                                    elapsed = time.time() - start_time
+                                    speed_mbps = (bytes_written / (1024 * 1024)) / elapsed if elapsed > 0 else 0
+                                    logger.info(f"Written {bytes_written}/{len(content)} bytes ({speed_mbps:.1f} MB/s)")
 
                         try:
                             with zipfile.ZipFile(tmp_zip, "r") as zf:
@@ -544,10 +539,14 @@ def create_app(
                                 
                                 # Extract with progress logging for large files
                                 total_members = len(members)
+                                logger.info(f"Extracting {total_members} files from ZIP...")
+                                extract_start = time.time()
                                 for idx, member in enumerate(members):
                                     zf.extract(member, output_dir)
                                     if idx % 100 == 0 or idx == total_members - 1:
-                                        logger.debug(f"Extracted {idx+1}/{total_members} files")
+                                        elapsed = time.time() - extract_start
+                                        rate = (idx + 1) / elapsed if elapsed > 0 else 0
+                                        logger.info(f"Extracted {idx+1}/{total_members} files ({rate:.1f} files/sec)")
 
                                 # Minimal sanitisation: ensure frames live in frames/
                                 # (skip deeper validation for brevity)
@@ -670,7 +669,7 @@ def create_app(
             refresh_thread.start()
             logger.info("Started background player refresh")
 
-        _invalidate_dir_size()
+        _invalidate_storage_cache()
         logger.info(f"Upload complete: {len(slugs)} files processed, job_ids: {job_ids}")
 
         return APIResponse(success=True, message="Upload complete", data={"slug": slugs[-1] if slugs else None, "job_ids": job_ids})
@@ -712,7 +711,7 @@ def create_app(
             if display_player:
                 display_player.refresh_media_list()
             
-            _invalidate_dir_size()
+            _invalidate_storage_cache()
             
             return APIResponse(success=True, message=f"Deleted media: {slug}")
             
@@ -730,7 +729,7 @@ def create_app(
                 display_player.refresh_media_list()
             
             if cleanup_count:
-                _invalidate_dir_size()
+                _invalidate_storage_cache()
             
             return APIResponse(
                 success=True,
@@ -973,16 +972,18 @@ def create_app(
         # Media / loop / processing data
         dashboard_data = media_index.get_dashboard_data()
 
-        # Storage data (reuse logic from /api/storage)
+        # Storage data - ONLY scan what we need, not entire project!
         total, used, free = shutil.disk_usage("/")
 
-        project_root = Path(__file__).resolve().parents[2]
-        media_path = project_root / "media"
+        # Only scan backend directory (not entire project with git/node_modules/etc)
+        backend_root = Path(__file__).resolve().parent
+        media_path = backend_root / "media"
         media_size = get_dir_size(media_path)
 
-        total_project_size = get_dir_size(project_root)
-        app_size = total_project_size - media_size
-        system_size = max(0, used - total_project_size)
+        # Only scan backend app files (exclude media)
+        backend_size = get_dir_size(backend_root)
+        app_size = max(0, backend_size - media_size)
+        system_size = max(0, used - backend_size)
 
         storage_payload = StorageInfo(
             total=total,

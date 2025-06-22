@@ -22,7 +22,7 @@ class DisplayConfig:
     dc_pin: int = 25
     bl_pin: int = 18
     show_progress: bool = True  # Enable processing progress display
-    progress_color: int = 0x07E0  # Green progress bar color (RGB565)
+    progress_color: int = 1984  # Green progress bar color (RGB565)
     brightness: int = 100  # Backlight brightness percentage (0-100)
     backlight_freq: int = 20000  # PWM frequency in Hz to reduce flicker
     gamma: float = 1.0  # Display gamma for software correction
