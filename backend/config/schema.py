@@ -82,7 +82,7 @@ class WebConfig:
     host: str = "0.0.0.0"
     port: int = 80
     debug: bool = False
-    max_concurrent_requests: int = 8  # Conservative limit for Pi Zero 2 W (512MB RAM)
+    max_concurrent_requests: int = 12  # Increased to handle polling during slow storage operations
     request_timeout_seconds: int = 300  # 5 minute timeout for large uploads
 
 

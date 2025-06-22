@@ -233,47 +233,86 @@ class WifiNetwork(BaseModel):
     secured: bool
 
 # ------------------------------------------------------------------
-# Directory-size helper with simple in-memory cache. Scanning the full
-# project tree on every /api/storage request was expensive (tens of ms
-# or worse on SD-cards) and caused uvicorn default 30 s timeouts when
-# many clients polled at once.  We keep a per-path size for 30 s and
-# invalidate it whenever the media library is mutated.
+# Directory-size helper with aggressive caching to prevent 44+ second delays.
+# SD card operations are extremely slow, so we cache aggressively and only
+# update after actual media changes.
 # ------------------------------------------------------------------
 
 _DIR_SIZE_CACHE: dict[Path, tuple[float, int]] = {}
-_DIR_SIZE_TTL = 30  # seconds
+_DIR_SIZE_TTL = 300  # 5 minutes - much longer cache since it's expensive
+_STORAGE_CALCULATION_IN_PROGRESS = False
 
 
-def _calc_dir_size(path: Path) -> int:
-    """Recursively compute directory size in bytes (no cache)."""
+def _calc_dir_size_fast(path: Path) -> int:
+    """Fast directory size calculation with early bailout for large directories."""
     total = 0
-    if path.exists():
-        for entry in os.scandir(path):
-            if entry.is_file():
-                total += entry.stat().st_size
-            elif entry.is_dir():
-                total += _calc_dir_size(Path(entry.path))
+    if not path.exists():
+        return 0
+    
+    try:
+        # Use os.walk for better performance than recursive scandir
+        for root, dirs, files in os.walk(path):
+            # Limit to prevent runaway calculations
+            if total > 10 * 1024**3:  # 10GB limit
+                logger.warning(f"Directory size calculation truncated at 10GB for {path}")
+                break
+                
+            for file in files:
+                try:
+                    file_path = os.path.join(root, file)
+                    total += os.path.getsize(file_path)
+                except (OSError, IOError):
+                    # Skip files we can't read
+                    continue
+    except (OSError, IOError) as e:
+        logger.warning(f"Error calculating directory size for {path}: {e}")
+        return 0
+    
     return total
 
 
 def get_dir_size(path: Path) -> int:
-    """Return cached dir size; refresh after TTL expires."""
+    """Return cached dir size with aggressive caching to prevent slow SD card operations."""
+    global _STORAGE_CALCULATION_IN_PROGRESS
+    
     now = time.time()
     cached = _DIR_SIZE_CACHE.get(path)
     if cached and (now - cached[0] < _DIR_SIZE_TTL):
         return cached[1]
 
-    size = _calc_dir_size(path)
-    _DIR_SIZE_CACHE[path] = (now, size)
-    return size
+    # If a calculation is already in progress, return last known value or estimate
+    if _STORAGE_CALCULATION_IN_PROGRESS:
+        if cached:
+            logger.debug(f"Storage calculation in progress, returning cached value for {path}")
+            return cached[1]
+        else:
+            logger.debug(f"Storage calculation in progress, returning estimate for {path}")
+            return 1024 * 1024 * 100  # 100MB estimate
+
+    _STORAGE_CALCULATION_IN_PROGRESS = True
+    try:
+        logger.debug(f"Calculating directory size for {path}")
+        start_time = time.time()
+        size = _calc_dir_size_fast(path)
+        calc_time = time.time() - start_time
+        
+        if calc_time > 1.0:  # Log slow calculations
+            logger.warning(f"Slow storage calculation for {path}: {calc_time:.2f}s")
+        
+        _DIR_SIZE_CACHE[path] = (now, size)
+        return size
+    finally:
+        _STORAGE_CALCULATION_IN_PROGRESS = False
 
 
 def _invalidate_dir_size(path: Path | None = None):
     """Remove cache entry (or all) after media changes."""
     if path is None:
         _DIR_SIZE_CACHE.clear()
+        logger.debug("Cleared all directory size cache")
     else:
         _DIR_SIZE_CACHE.pop(path, None)
+        logger.debug(f"Invalidated directory size cache for {path}")
 
 def create_app(
     display_player: DisplayPlayer = None,
@@ -299,7 +338,7 @@ def create_app(
     # Add middleware in correct order (innermost to outermost)
     app.add_middleware(CacheControlMiddleware)
     app.add_middleware(RequestLoggingMiddleware)
-    app.add_middleware(ConcurrencyLimitMiddleware, max_concurrent=config.web.max_concurrent_requests if config else 3)
+    app.add_middleware(ConcurrencyLimitMiddleware, max_concurrent=config.web.max_concurrent_requests if config else 12)  # Increased temporarily
     app.add_middleware(ErrorHandlingMiddleware)
     
     # CORS middleware (outermost)

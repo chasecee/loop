@@ -216,7 +216,8 @@ class DisplayPlayer:
         try:
             # Get frame info from media metadata
             frame_count = media_info.get('frame_count', 0)
-            frame_duration = media_info.get('frame_duration', 0.04)  # Default 25fps
+            fps = media_info.get('fps', 25)  # Default 25fps
+            frame_duration = 1.0 / fps
             
             # Create frame sequence with simplified constructor
             self.current_sequence = FrameSequence(frames_dir, frame_count, frame_duration)
