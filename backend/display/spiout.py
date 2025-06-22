@@ -85,18 +85,10 @@ class ILI9341Driver:
             )
             return
 
-        # The raw RGB565 fast-path currently assumes the buffer is already
-        # in the panel's native orientation (landscape 320×240) and thus
-        # ignores any additional rotation configured by the user.  Trying
-        # to use it while a non-zero rotation is active results in
-        # garbled / offset output.  Until we add full orientation support
-        # to the raw path we therefore only enable it when *no* rotation
-        # is requested (i.e. rotation == 0).
-
-        can_send_raw = (
-            abs(self._gamma - 1.0) < 0.05 and  # gamma disabled
-            (self.config.rotation % 360) == 0   # no rotation
-        )
+        # Fast-path is possible when gamma correction is disabled.  Rotation is
+        # now handled by programming the MADCTL register appropriately, so we
+        # do NOT exclude non-zero rotation angles anymore.
+        can_send_raw = abs(self._gamma - 1.0) < 0.05
 
         if can_send_raw:
             try:
@@ -121,14 +113,28 @@ class ILI9341Driver:
                 else:
                     frame_bytes = frame_data  # no brightness change
 
-                # MADCTL value 0x78 gives us the same landscape orientation as
-                # the standard ShowImage path when the source buffer is 320×240
-                # laid out left-to-right, top-to-bottom.
-                self.disp.command(0x36)
-                self.disp.data(0x78)
+                # ---------------- Orientation handling ----------------
+                rot = self.config.rotation % 360
+                if rot == 0:
+                    madctl = 0x48  # MX | BGR
+                    win_w, win_h = self.disp.width, self.disp.height
+                elif rot == 90:
+                    madctl = 0x28  # MV | BGR
+                    win_w, win_h = self.disp.height, self.disp.width
+                elif rot == 180:
+                    madctl = 0x88  # MY | BGR
+                    win_w, win_h = self.disp.width, self.disp.height
+                else:  # 270°
+                    madctl = 0xE8  # MX | MY | MV | BGR
+                    win_w, win_h = self.disp.height, self.disp.width
 
-                # Window to full screen
-                self.disp.SetWindows(0, 0, self.disp.width, self.disp.height)
+                # Program MADCTL register
+                self.disp.command(0x36)
+                self.disp.data(madctl)
+
+                # Set the drawing window to cover the full panel in the
+                # chosen orientation.
+                self.disp.SetWindows(0, 0, win_w, win_h)
                 # Switch to data mode
                 self.disp.digital_write(self.disp.DC_PIN, True)
 
