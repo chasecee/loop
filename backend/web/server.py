@@ -7,7 +7,7 @@ import tempfile
 import time
 import uuid
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Literal
 from datetime import datetime
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, status # type: ignore
@@ -53,26 +53,48 @@ class MediaItem(BaseModel):
     frame_count: Optional[int] = None
 
 class ProcessingJobResponse(BaseModel):
-    """Processing job status response."""
+    """Processing job status response - matches frontend ProcessingJob interface."""
     job_id: str
     filename: str
-    status: str
-    progress: float
+    status: Literal["processing", "completed", "error"]  # Match TypeScript union type
+    progress: float  # 0-100
     stage: str
     message: str
-    timestamp: float
+    timestamp: float  # Unix timestamp
+
+class PlayerStatus(BaseModel):
+    """Player status - matches frontend PlayerStatus interface."""
+    is_playing: bool
+    current_media: Optional[str] = None
+    loop_index: int
+    total_media: int
+    frame_rate: float
+    loop_mode: Literal["all", "one"]
+
+class WiFiStatus(BaseModel):
+    """WiFi status - matches frontend WiFiStatus interface."""
+    connected: bool
+    current_ssid: Optional[str] = None
+    signal_strength: Optional[int] = None
+    hotspot_active: bool
+
+class UpdateStatus(BaseModel):
+    """Update status - matches frontend UpdateStatus interface."""
+    available: bool
+    version: Optional[str] = None
+    last_check: Optional[str] = None
 
 class DeviceStatus(BaseModel):
     """Device status matching frontend expectations."""
-    system: str = "LOOP v1.0.0"
+    system: str = "LOOP v1.0.0" 
     status: str = "running"
     timestamp: int = Field(default_factory=lambda: int(time.time()))
-    player: Optional[Dict[str, Any]] = None
-    wifi: Optional[Dict[str, Any]] = None
-    updates: Optional[Dict[str, Any]] = None
+    player: Optional[PlayerStatus] = None
+    wifi: Optional[WiFiStatus] = None
+    updates: Optional[UpdateStatus] = None
 
 class StorageInfo(BaseModel):
-    """Detailed storage usage returned to the UI (units: bytes)."""
+    """Storage info - matches frontend StorageData interface."""
     total: int
     used: int
     free: int
@@ -82,17 +104,17 @@ class StorageInfo(BaseModel):
     units: str = "bytes"
 
 class DashboardData(BaseModel):
-    """Combined dashboard data (single round-trip for the SPA)."""
+    """Combined dashboard data - matches frontend DashboardData interface."""
     status: DeviceStatus
-    media: List[Dict[str, Any]]
+    media: List[Dict[str, Any]]  # List of MediaItem dicts
     active: Optional[str]
     loop: List[str]
     last_updated: Optional[int]
-    processing: Optional[Dict[str, Any]] = None
+    processing: Optional[Dict[str, Any]] = None  # Processing jobs dict
     storage: StorageInfo
 
 class APIResponse(BaseModel):
-    """Standard API response format."""
+    """Standard API response format - matches frontend APIResponse interface."""
     success: bool
     message: Optional[str] = None
     data: Optional[Any] = None
@@ -197,6 +219,12 @@ class ErrorHandlingMiddleware(BaseHTTPMiddleware):
 class DisplaySettingsPayload(BaseModel):
     brightness: Optional[int] = None
     gamma: Optional[float] = None
+
+class WifiNetwork(BaseModel):
+    """WiFi network info - matches frontend WifiNetwork interface."""
+    ssid: str
+    signal: int
+    secured: bool
 
 # ------------------------------------------------------------------
 # Directory-size helper with simple in-memory cache. Scanning the full
