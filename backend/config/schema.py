@@ -80,7 +80,7 @@ class SyncConfig:
 class WebConfig:
     """Web server configuration."""
     host: str = "0.0.0.0"
-    port: int = 8080
+    port: int = 80
     debug: bool = False
 
 
