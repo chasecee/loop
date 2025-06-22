@@ -146,37 +146,8 @@ class ILI9341Driver:
                     self.disp.spi_writebyte(list(chunk))
                 return  # done
             except Exception as e:
-                self.logger.error(f"Raw RGB565 blit failed, falling back to PIL path: {e}")
-
-        # ---------- Slow fallback path (existing behaviour) ----------
-        try:
-            # Robust conversion: RGB565 big-endian -> RGB888 using NumPy (fast ~2ms)
-            pixel_data = np.frombuffer(frame_data, dtype='>u2')  # big-endian uint16
-            # Extract RGB components and reshape to 2-D before stacking
-            r = (((pixel_data >> 11) & 0x1F).astype(np.uint8) << 3).reshape((base_height, base_width))
-            g = (((pixel_data >> 5) & 0x3F).astype(np.uint8) << 2).reshape((base_height, base_width))
-            b = (((pixel_data & 0x1F).astype(np.uint8) << 3)).reshape((base_height, base_width))
-            rgb_array = np.dstack((r, g, b))
-
-            # Apply software dimming to avoid PWM flicker at low brightness
-            if self._software_brightness < 0.99:
-                rgb_array = (rgb_array.astype(np.float32) * self._software_brightness).astype(np.uint8)
-
-            # Apply gamma correction using LUT
-            if self._gamma and abs(self._gamma - 1.0) > 0.05:
-                lut = self._gamma_lut
-                rgb_array = lut[rgb_array]
-
-            image = Image.fromarray(rgb_array, 'RGB')
-
-            # Apply rotation from config (values: 0, 90, 180, 270). PIL rotates CCW.
-            rotation = self.config.rotation % 360
-            if rotation:
-                image = image.rotate(rotation, expand=True)
-
-            self.disp.ShowImage(image)
-        except Exception as e:
-            self.logger.error(f"Failed to display frame: {e}")
+                self.logger.error(f"Raw RGB565 blit failed: {e}")
+                return  # Skip this frame instead of running the slow fallback
 
     def fill_screen(self, color: int = 0x0000) -> None:
         """Fill the screen with a color."""

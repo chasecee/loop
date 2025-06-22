@@ -29,6 +29,15 @@ class MediaConverter:
         self.target_height = target_height
         self.logger = get_logger("converter")
         
+        # Pull gamma setting from global config (frontend slider updates config before upload)
+        cfg = get_config()
+        self.gamma: float = max(0.1, getattr(cfg.display, "gamma", 1.0))
+        # Pre-compute 8-bit LUT for fast per-channel correction
+        if abs(self.gamma - 1.0) < 0.05:
+            self._gamma_lut = None  # No correction needed
+        else:
+            self._gamma_lut = (np.linspace(0, 1, 256) ** (1.0 / self.gamma) * 255).astype(np.uint8)
+
         # Check for ffmpeg availability
         self.ffmpeg_available = shutil.which('ffmpeg') is not None
         if not self.ffmpeg_available:
@@ -174,9 +183,8 @@ class MediaConverter:
             if job_id:
                 self._update_progress(job_id, 20, "extracting", "Extracting frames with ffmpeg...")
             
-            # Pull gamma from config if available
-            cfg = get_config()
-            gamma = getattr(cfg.display, "gamma", 2.4)
+            # Use converter-wide gamma setting
+            gamma = self.gamma
 
             filter_str = (
                 f"fps={fps},"
@@ -343,6 +351,10 @@ class MediaConverter:
                 # Convert PIL image to NumPy array (much faster than getpixel loops)
                 img_array = np.array(frame, dtype=np.uint8)
                 
+                # Apply gamma correction using LUT if needed (per-channel)
+                if self._gamma_lut is not None:
+                    img_array = self._gamma_lut[img_array]
+
                 # Ensure 3-channel RGB array (GIF frames can be single-channel)
                 if img_array.ndim == 2:
                     img_array = np.stack([img_array] * 3, axis=-1)
