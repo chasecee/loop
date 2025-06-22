@@ -784,7 +784,7 @@ def _process_media_file_impl(filename: str, content: bytes, content_type: str, c
     import shutil
     
     # Validate file type and size
-    allowed_extensions = {".gif", ".mp4", ".avi", ".mov", ".png", ".jpg", ".jpeg"}
+    allowed_extensions = {".gif", ".mp4", ".avi", ".mov", ".png", ".jpg", ".jpeg", ".zip"}
     file_ext = Path(filename).suffix.lower()
     if file_ext not in allowed_extensions:
         if job_id:
