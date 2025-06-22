@@ -85,12 +85,18 @@ class ILI9341Driver:
             )
             return
 
-        # FAST-PATH: as long as *gamma* correction is off we can stay in RGB565.
-        # We optionally apply software brightness here with a cheap vectorised
-        # multiply on the 5-6-5 components.  This still avoids the heavy
-        # RGB565→RGB888→PIL detour and keeps us <2 ms per frame on a Pi Zero.
+        # The raw RGB565 fast-path currently assumes the buffer is already
+        # in the panel's native orientation (landscape 320×240) and thus
+        # ignores any additional rotation configured by the user.  Trying
+        # to use it while a non-zero rotation is active results in
+        # garbled / offset output.  Until we add full orientation support
+        # to the raw path we therefore only enable it when *no* rotation
+        # is requested (i.e. rotation == 0).
 
-        can_send_raw = abs(self._gamma - 1.0) < 0.05  # gamma disabled
+        can_send_raw = (
+            abs(self._gamma - 1.0) < 0.05 and  # gamma disabled
+            (self.config.rotation % 360) == 0   # no rotation
+        )
 
         if can_send_raw:
             try:
