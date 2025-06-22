@@ -410,9 +410,30 @@ def create_app(
                                 # Minimal sanitisation: ensure frames live in frames/
                                 # (skip deeper validation for brevity)
 
+                                # Preserve original filename from metadata, not ZIP filename
+                                original_filename = meta_data.get("original_filename") or meta_data.get("filename") or file.filename
+                                logger.info(f"Original filename: {original_filename}")
+                                
                                 meta_data.setdefault("uploadedAt", datetime.utcnow().isoformat() + "Z")
-                                meta_data.setdefault("filename", file.filename)
+                                meta_data["filename"] = original_filename  # Use original filename
                                 meta_data.setdefault("size", len(content))
+
+                                # Verify frames directory exists
+                                frames_dir = output_dir / "frames"
+                                if not frames_dir.exists():
+                                    logger.warning(f"Frames directory not found after extraction: {frames_dir}")
+                                    # Try to find frames in root of extracted content
+                                    frame_files = list(output_dir.glob("*.rgb")) + list(output_dir.glob("*.png")) + list(output_dir.glob("*.jpg"))
+                                    if frame_files:
+                                        logger.info(f"Found {len(frame_files)} frame files in root, creating frames/ directory")
+                                        frames_dir.mkdir(exist_ok=True)
+                                        for frame_file in frame_files:
+                                            frame_file.rename(frames_dir / frame_file.name)
+                                            logger.debug(f"Moved {frame_file.name} to frames/")
+                                    else:
+                                        logger.error(f"No frame files found in extraction, this may cause playback issues")
+                                else:
+                                    logger.info(f"Frames directory exists with {len(list(frames_dir.glob('*')))} files")
 
                                 logger.info(f"Adding media to index: {slug}")
                                 media_index.add_media(meta_data, make_active=True)
@@ -489,16 +510,23 @@ def create_app(
             except Exception as e:
                 logger.warning(f"Failed to stop processing display: {e}")
 
-        # Refresh player display
+        # Refresh player display in background to avoid blocking HTTP response
         if display_player:
-            try:
-                logger.info("Refreshing player media list")
-                display_player.refresh_media_list()
-                if slugs:
-                    logger.info(f"Setting active media to: {slugs[-1]}")
-                    display_player.set_active_media(slugs[-1])
-            except Exception as exc:
-                logger.warning(f"Failed to refresh player after upload: {exc}")
+            def refresh_player_async():
+                try:
+                    logger.info("Refreshing player media list")
+                    display_player.refresh_media_list()
+                    if slugs:
+                        logger.info(f"Setting active media to: {slugs[-1]}")
+                        display_player.set_active_media(slugs[-1])
+                except Exception as exc:
+                    logger.warning(f"Failed to refresh player after upload: {exc}")
+            
+            # Run in background thread to avoid blocking HTTP response
+            import threading
+            refresh_thread = threading.Thread(target=refresh_player_async, daemon=True)
+            refresh_thread.start()
+            logger.info("Started background player refresh")
 
         _invalidate_dir_size()
         logger.info(f"Upload complete: {len(slugs)} files processed, job_ids: {job_ids}")
