@@ -386,7 +386,7 @@ def create_app(
 
         _invalidate_dir_size()
 
-        return APIResponse(success=True, message="Upload complete", data={"slug": slugs[-1] if slugs else None})
+        return APIResponse(success=True, message="Upload complete", data={"slug": slugs[-1] if slugs else None, "job_ids": job_ids})
     
     @app.post("/api/media/{slug}/activate", response_model=APIResponse)
     async def activate_media(slug: str):
