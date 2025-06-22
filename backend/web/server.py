@@ -122,6 +122,78 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         logger.info(f"{request.method} {request.url.path} - {response.status_code} ({duration_ms:.2f} ms)")
         return response
 
+class ConcurrencyLimitMiddleware(BaseHTTPMiddleware):
+    """Handle concurrency limits gracefully and provide helpful error responses."""
+    
+    def __init__(self, app, max_concurrent: int = 3):
+        super().__init__(app)
+        self.max_concurrent = max_concurrent
+        self.active_requests = 0
+    
+    async def dispatch(self, request: Request, call_next):
+        # Skip concurrency check for static files and health checks
+        if (request.url.path.startswith("/_next") or 
+            request.url.path.startswith("/assets") or
+            request.url.path.startswith("/media/raw") or
+            request.url.path == "/"):
+            return await call_next(request)
+        
+        if self.active_requests >= self.max_concurrent:
+            logger.warning(f"Concurrency limit exceeded: {self.active_requests}/{self.max_concurrent} active requests")
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "success": False,
+                    "message": f"Server busy. Too many concurrent requests ({self.active_requests}/{self.max_concurrent}). Please retry in a moment.",
+                    "code": "CONCURRENCY_LIMIT_EXCEEDED",
+                    "retry_after": 2  # Suggest retry after 2 seconds
+                }
+            )
+        
+        self.active_requests += 1
+        try:
+            response = await call_next(request)
+            return response
+        finally:
+            self.active_requests -= 1
+
+class ErrorHandlingMiddleware(BaseHTTPMiddleware):
+    """Standardize error responses across the API."""
+    
+    async def dispatch(self, request: Request, call_next):
+        try:
+            response = await call_next(request)
+            return response
+        except Exception as exc:
+            logger.error(f"Unhandled error in {request.method} {request.url.path}: {exc}", exc_info=True)
+            
+            # Map common exceptions to appropriate HTTP status codes
+            if isinstance(exc, ValueError):
+                status_code = 400
+                message = str(exc)
+            elif isinstance(exc, KeyError):
+                status_code = 404
+                message = f"Resource not found: {exc}"
+            elif isinstance(exc, PermissionError):
+                status_code = 403
+                message = "Permission denied"
+            elif isinstance(exc, FileNotFoundError):
+                status_code = 404
+                message = "File not found"
+            else:
+                status_code = 500
+                message = "Internal server error"
+            
+            return JSONResponse(
+                status_code=status_code,
+                content={
+                    "success": False,
+                    "message": message,
+                    "code": exc.__class__.__name__,
+                    "timestamp": int(time.time())
+                }
+            )
+
 class DisplaySettingsPayload(BaseModel):
     brightness: Optional[int] = None
     gamma: Optional[float] = None
@@ -188,8 +260,27 @@ def create_app(
     # Configure request limits for large file uploads
     app.router.default_response_class.media_type = "application/json"
     
-    # Add request logging middleware
+    # Media converter
+    converter = MediaConverter(
+        config.display.width if config else 240,
+        config.display.height if config else 320
+    )
+    
+    # Add middleware in correct order (innermost to outermost)
+    app.add_middleware(CacheControlMiddleware)
     app.add_middleware(RequestLoggingMiddleware)
+    app.add_middleware(ConcurrencyLimitMiddleware, max_concurrent=config.web.max_concurrent_requests if config else 3)
+    app.add_middleware(ErrorHandlingMiddleware)
+    
+    # CORS middleware (outermost)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],  # In production, specify exact origins
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+        max_age=3600,  # Cache preflight requests for 1 hour
+    )
     
     # SPA assets directory (Next.js export)
     spa_dir = Path(__file__).parent / "spa"
@@ -206,27 +297,6 @@ def create_app(
     
     # Serve raw media files for frontend previews
     app.mount("/media/raw", StaticFiles(directory=media_raw_dir), name="raw-media")
-    
-    # Media converter
-    converter = MediaConverter(
-        config.display.width if config else 240,
-        config.display.height if config else 320
-    )
-    
-    # Exception handlers
-    @app.exception_handler(ValueError)
-    async def value_error_handler(request, exc):
-        return JSONResponse(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            content={"success": False, "message": str(exc)}
-        )
-    
-    @app.exception_handler(KeyError)
-    async def key_error_handler(request, exc):
-        return JSONResponse(
-            status_code=status.HTTP_404_NOT_FOUND,
-            content={"success": False, "message": f"Resource not found: {exc}"}
-        )
     
     # Routes
     
@@ -905,17 +975,6 @@ def create_app(
             success=True,
             message="Processing job cleared"
         )
-    
-    # Add middleware
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],  # In production, specify exact origins
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-        max_age=3600,  # Cache preflight requests for 1 hour
-    )
-    app.add_middleware(CacheControlMiddleware)
     
     logger.info("FastAPI application created successfully")
     return app

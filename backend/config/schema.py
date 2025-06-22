@@ -82,6 +82,8 @@ class WebConfig:
     host: str = "0.0.0.0"
     port: int = 80
     debug: bool = False
+    max_concurrent_requests: int = 3  # Pi can handle limited concurrent requests
+    request_timeout_seconds: int = 300  # 5 minute timeout for large uploads
 
 
 @dataclass

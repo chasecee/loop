@@ -387,10 +387,10 @@ class LOOPApplication:
                 timeout_graceful_shutdown=30,  # Graceful shutdown timeout
                 limit_max_requests=None,  # Disable auto-restart; keeps web server alive
                 backlog=50,  # Connection backlog queue size
-                                  h11_max_incomplete_event_size=16 * 1024,  # 16KB max incomplete event
-                  # Large file upload settings
-                  limit_concurrency=1,  # Pi can only handle 1 connection at a time
-                  timeout_notify=300,  # 5 minute timeout for slow uploads
+                h11_max_incomplete_event_size=16 * 1024,  # 16KB max incomplete event
+                # Large file upload settings
+                limit_concurrency=self.config.web.max_concurrent_requests,  # Use config value
+                timeout_notify=self.config.web.request_timeout_seconds,  # Use config timeout
                 loop="asyncio",  # Use asyncio event loop for better performance
             )
             

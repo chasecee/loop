@@ -2,7 +2,7 @@
 
 import struct
 from pathlib import Path
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Union, Dict
 from PIL import Image
 import io
 import numpy as np
@@ -154,11 +154,12 @@ class FrameDecoder:
 class FrameSequence:
     """Manages a sequence of frames for playback using a producer-consumer queue."""
     
-    def __init__(self, frames_dir: Path, frames: List[str], durations: List[float]):
+    def __init__(self, frames_dir: Path, frame_count: int, frame_duration: float = 0.04):
         self.frames_dir = frames_dir
-        self.frame_paths = [frames_dir / f for f in frames]
-        self.durations = durations
-        self.frame_count = len(frames)
+        self.frame_count = frame_count
+        self.frame_duration = frame_duration
+        
+        # Generate frame paths on-the-fly (no need to store massive arrays)
         self.logger = get_logger("framebuf")
 
         # Bounded queue to hold pre-loaded frames
@@ -170,6 +171,10 @@ class FrameSequence:
         
         self.logger.info(f"Initialized sequence with {self.frame_count} frames (producer-consumer buffer)")
 
+    def _get_frame_path(self, frame_idx: int) -> Path:
+        """Generate frame path for given index."""
+        return self.frames_dir / f"frame_{frame_idx+1:06d}.rgb"
+
     def _produce_frames(self):
         """Producer thread: loads frames from disk and puts them in the queue."""
         frame_idx = 0
@@ -178,7 +183,7 @@ class FrameSequence:
                 time.sleep(0.1)
                 continue
 
-            frame_path = self.frame_paths[frame_idx]
+            frame_path = self._get_frame_path(frame_idx)
             frame_data = self._load_frame(frame_path)
             
             # Use a timeout on put() to prevent deadlocking if the consumer stops reading.
@@ -227,13 +232,7 @@ class FrameSequence:
     
     def get_frame_duration(self, frame_idx: int) -> float:
         """Get duration for a specific frame."""
-        if not self.durations:
-            return 0.1  # Default 100ms if no durations
-        
-        if 0 <= frame_idx < len(self.durations):
-            duration = self.durations[frame_idx]
-            return max(0.01, duration)  # Minimum 10ms duration
-        return 0.1  # Default 100ms
+        return max(0.01, self.frame_duration)  # Minimum 10ms duration
     
     def _load_frame(self, frame_path: Path) -> Optional[bytes]:
         """Load a frame from disk."""

@@ -137,10 +137,10 @@ class MediaConverter:
                     "width": self.target_width,
                     "height": self.target_height,
                     "frame_count": processed_frames,
-                    "frames": frames,
-                    "durations": durations,
+                    "frame_duration": durations[0] if durations else 0.1,  # Use first duration as default
                     "format": format_type,
-                    "loop_count": getattr(img, 'info', {}).get('loop', 0)  # 0 = infinite
+                    "loop_count": getattr(img, 'info', {}).get('loop', 0),  # 0 = infinite
+                    "_optimized": True  # Flag to indicate this uses optimized format
                 }
                 
                 # Save metadata
@@ -250,11 +250,11 @@ class MediaConverter:
                 "width": self.target_width,
                 "height": self.target_height,
                 "frame_count": len(frames),
-                "frames": frames,
-                "durations": durations,
-                "format": format_type,
                 "fps": fps,
-                "loop_count": -1  # Infinite loop for videos
+                "frame_duration": frame_duration,
+                "format": format_type,
+                "loop_count": -1,  # Infinite loop for videos
+                "_optimized": True  # Flag to indicate this uses optimized format
             }
             
             # Save metadata
@@ -316,10 +316,10 @@ class MediaConverter:
                     "width": self.target_width,
                     "height": self.target_height,
                     "frame_count": 1,
-                    "frames": [frame_path.name],
-                    "durations": [0.0],  # Static image
+                    "frame_duration": 0.0,  # Static image
                     "format": format_type,
-                    "loop_count": 0
+                    "loop_count": 0,
+                    "_optimized": True  # Flag to indicate this uses optimized format
                 }
                 
                 # Save metadata

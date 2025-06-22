@@ -214,25 +214,17 @@ class DisplayPlayer:
             return False
         
         try:
-            # Get frames and durations from media info
-            frames = media_info.get('frames', [])
-            durations = media_info.get('durations', [])
+            # Get frame info from media metadata
+            frame_count = media_info.get('frame_count', 0)
+            frame_duration = media_info.get('frame_duration', 0.04)  # Default 25fps
             
-            if not frames:
-                self.logger.error("No frames found in media info")
-                return False
-            
-            # Create frame sequence with frames and durations
-            self.current_sequence = FrameSequence(
-                frames_dir,
-                frames,
-                durations
-            )
+            # Create frame sequence with simplified constructor
+            self.current_sequence = FrameSequence(frames_dir, frame_count, frame_duration)
             
             if self.current_sequence.get_frame_count() == 0:
                 self.logger.error(f"No frames found in {frames_dir}")
                 return False
-            
+
             self.logger.info(f"Loaded media: {media_info.get('original_filename', media_slug)}")
             return True
             
