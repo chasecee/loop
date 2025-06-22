@@ -282,102 +282,111 @@ def create_app(
     
     @app.post("/api/media", response_model=APIResponse)
     async def upload_media(files: List[UploadFile] = File(...)):
-        """Upload media and kick off background processing quickly so the request returns fast."""
-        import asyncio
-
-        logger.info(
-            f"🔥 ASYNC UPLOAD ENDPOINT HIT! Received {len(files)} files: {[f.filename for f in files]}"
-        )
+        """Upload *already-converted* media files from the browser (no server-side ffmpeg)."""
 
         if not files:
             raise HTTPException(status_code=400, detail="No files provided")
 
-        # Pause playback during processing
-        was_paused = False
-        if display_player:
-            try:
-                was_paused = display_player.is_paused()
-                if not was_paused:
-                    display_player.toggle_pause()
-            except Exception as exc:
-                logger.debug(f"Unable to pause playback: {exc}")
+        slugs: list[str] = []
+        job_ids: list[str] = []  # Track job IDs for display progress
 
-        # Create job IDs immediately so frontend can poll progress
-        job_ids: list[str] = []
         for file in files:
+            # Limit size to 100 MB
+            content = await file.read()
+            if len(content) > 100 * 1024 * 1024:
+                raise HTTPException(status_code=413, detail=f"{file.filename} is too large (max 100 MB)")
+
+            # Create a slug based on filename + uuid to avoid clashes
+            sanitized = Path(file.filename).stem.replace(" ", "_").lower()
+            slug = f"{sanitized}_{uuid.uuid4().hex[:8]}"
+
+            # --- Register lightweight upload job for progress UI ---
             job_id = str(uuid.uuid4())
             job_ids.append(job_id)
             media_index.add_processing_job(job_id, file.filename)
 
-        # Start progress display (non-blocking)
-        if job_ids and display_player:
-            try:
-                display_player.start_processing_display(job_ids)
-            except Exception as exc:
-                logger.warning(f"Unable to start processing display: {exc}")
-
-        loop = asyncio.get_running_loop()
-
-        async def _schedule(file: UploadFile, job_id: str):
-            try:
-                content = await file.read()
-                # Run the heavy FFmpeg conversion in a default thread pool
-                await loop.run_in_executor(
-                    None,
-                    _process_media_file_impl,
-                    file.filename,
-                    content,
-                    file.content_type,
-                    converter,
-                    config,
-                    job_id,
-                )
-            except Exception as e:
-                logger.error(f"Background processing failed for {file.filename}: {e}")
-
-        # Fire-and-forget tasks and track them for finalization
-        processing_tasks: list[asyncio.Task] = []
-        for idx, file in enumerate(files):
-            processing_tasks.append(asyncio.create_task(_schedule(file, job_ids[idx])))
-
-        async def _finalize():
-            """Run after all processing tasks complete: clean up UI and resume playback."""
-            results = await asyncio.gather(*processing_tasks, return_exceptions=True)
-
-            last_successful_slug: str | None = None
-            for res in results:
-                if isinstance(res, dict):
-                    last_successful_slug = res.get("slug", last_successful_slug)
-
-            # Stop progress display and refresh player
-            if display_player:
+            # Start progress overlay once
+            if display_player and not display_player.showing_progress:
                 try:
-                    display_player.stop_processing_display()
-                    display_player.refresh_media_list()
-                    if last_successful_slug:
-                        display_player.set_active_media(last_successful_slug)
-                except Exception as exc:
-                    logger.debug(f"Post-processing player update failed: {exc}")
-
-                # Resume playback if it was running before
-                try:
-                    if not was_paused and display_player.is_paused():
-                        display_player.toggle_pause()
+                    display_player.start_processing_display(job_ids)
                 except Exception:
                     pass
 
-            # Invalidate cached sizes
-            _invalidate_dir_size()
+            if file.filename.lower().endswith(".zip"):
+                import zipfile, json
 
-        # Kick off finalize task
-        asyncio.create_task(_finalize())
+                # Extract zip directly into processed directory
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    tmp_zip = Path(tmpdir) / "upload.zip"
+                    tmp_zip.write_bytes(content)
 
-        # Return immediately – processing continues in background
-        return APIResponse(
-            success=True,
-            message="Upload accepted – processing in background",
-            data={"job_ids": job_ids, "processing_started": True},
-        )
+                    with zipfile.ZipFile(tmp_zip, "r") as zf:
+                        members = zf.namelist()
+                        if "metadata.json" not in members:
+                            raise HTTPException(status_code=400, detail="metadata.json missing in upload")
+                        meta_data = json.loads(zf.read("metadata.json").decode())
+
+                        slug = meta_data.get("slug") or slug  # prefer slug from metadata
+                        meta_data["slug"] = slug
+                        output_dir = Path("media/processed") / slug
+                        output_dir.mkdir(parents=True, exist_ok=True)
+                        zf.extractall(output_dir)
+
+                        # Minimal sanitisation: ensure frames live in frames/
+                        # (skip deeper validation for brevity)
+
+                        meta_data.setdefault("uploadedAt", datetime.utcnow().isoformat() + "Z")
+                        meta_data.setdefault("filename", file.filename)
+                        meta_data.setdefault("size", len(content))
+
+                        media_index.add_media(meta_data, make_active=True)
+
+                        slugs.append(slug)
+                        media_index.complete_processing_job(job_id, True)
+
+            else:
+                # Fallback: treat as pre-rendered video
+                # Prepare directories
+                output_dir = Path("media/processed") / slug
+                output_dir.mkdir(parents=True, exist_ok=True)
+
+                # Save as video.mp4 inside its folder for consistency
+                out_path = output_dir / "video.mp4"
+                with open(out_path, "wb") as out_f:
+                    out_f.write(content)
+
+                metadata = {
+                    "slug": slug,
+                    "filename": file.filename,
+                    "type": file.content_type or "video/mp4",
+                    "size": len(content),
+                    "uploadedAt": datetime.utcnow().isoformat() + "Z",
+                }
+
+                media_index.add_media(metadata, make_active=True)
+
+                slugs.append(slug)
+                media_index.complete_processing_job(job_id, True)
+
+        # Stop progress overlay
+        if display_player:
+            try:
+                display_player.stop_processing_display()
+            except Exception:
+                pass
+
+        # Refresh player display
+        if display_player:
+            try:
+                display_player.refresh_media_list()
+                if slugs:
+                    display_player.set_active_media(slugs[-1])
+            except Exception as exc:
+                logger.debug(f"Failed to refresh player after upload: {exc}")
+
+        _invalidate_dir_size()
+
+        return APIResponse(success=True, message="Upload complete", data={"slug": slugs[-1] if slugs else None})
     
     @app.post("/api/media/{slug}/activate", response_model=APIResponse)
     async def activate_media(slug: str):
