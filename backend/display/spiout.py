@@ -124,8 +124,9 @@ class ILI9341Driver:
                 elif rot == 180:
                     madctl = 0x88  # MY | BGR
                     win_w, win_h = self.disp.width, self.disp.height
-                else:  # 270°
-                    madctl = 0xE8  # MX | MY | MV | BGR
+                elif rot == 270:
+                    # Remove MY to undo the unwanted flip along the long (320-pixel) axis.
+                    madctl = 0x68  # MX | MV | BGR
                     win_w, win_h = self.disp.height, self.disp.width
 
                 # Program MADCTL register
