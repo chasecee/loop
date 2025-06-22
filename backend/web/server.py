@@ -283,108 +283,161 @@ def create_app(
     @app.post("/api/media", response_model=APIResponse)
     async def upload_media(files: List[UploadFile] = File(...)):
         """Upload *already-converted* media files from the browser (no server-side ffmpeg)."""
+        logger.info(f"Upload started: {len(files)} files received")
 
         if not files:
+            logger.warning("Upload failed: No files provided")
             raise HTTPException(status_code=400, detail="No files provided")
 
         slugs: list[str] = []
         job_ids: list[str] = []  # Track job IDs for display progress
 
-        for file in files:
+        for i, file in enumerate(files):
+            logger.info(f"Processing file {i+1}/{len(files)}: {file.filename} ({file.content_type}, size unknown)")
+            
             # Limit size to 100 MB
-            content = await file.read()
-            if len(content) > 100 * 1024 * 1024:
+            try:
+                content = await file.read()
+                file_size = len(content)
+                logger.info(f"File {file.filename} read successfully: {file_size} bytes")
+            except Exception as e:
+                logger.error(f"Failed to read file {file.filename}: {e}")
+                raise HTTPException(status_code=500, detail=f"Failed to read file: {e}")
+            
+            if file_size > 100 * 1024 * 1024:
+                logger.warning(f"File {file.filename} too large: {file_size} bytes (max 100MB)")
                 raise HTTPException(status_code=413, detail=f"{file.filename} is too large (max 100 MB)")
 
             # Create a slug based on filename + uuid to avoid clashes
             sanitized = Path(file.filename).stem.replace(" ", "_").lower()
             slug = f"{sanitized}_{uuid.uuid4().hex[:8]}"
+            logger.info(f"Generated slug for {file.filename}: {slug}")
 
             # --- Register lightweight upload job for progress UI ---
             job_id = str(uuid.uuid4())
             job_ids.append(job_id)
+            logger.info(f"Created processing job {job_id} for {file.filename}")
             media_index.add_processing_job(job_id, file.filename)
 
             # Start progress overlay once
             if display_player and not display_player.showing_progress:
                 try:
+                    logger.info(f"Starting processing display for jobs: {job_ids}")
                     display_player.start_processing_display(job_ids)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"Failed to start processing display: {e}")
 
-            if file.filename.lower().endswith(".zip"):
-                import zipfile, json
+            try:
+                if file.filename.lower().endswith(".zip"):
+                    logger.info(f"Processing ZIP file: {file.filename}")
+                    import zipfile, json
 
-                # Extract zip directly into processed directory
-                with tempfile.TemporaryDirectory() as tmpdir:
-                    tmp_zip = Path(tmpdir) / "upload.zip"
-                    tmp_zip.write_bytes(content)
+                    # Extract zip directly into processed directory
+                    with tempfile.TemporaryDirectory() as tmpdir:
+                        tmp_zip = Path(tmpdir) / "upload.zip"
+                        logger.debug(f"Writing ZIP to temp file: {tmp_zip}")
+                        tmp_zip.write_bytes(content)
 
-                    with zipfile.ZipFile(tmp_zip, "r") as zf:
-                        members = zf.namelist()
-                        if "metadata.json" not in members:
-                            raise HTTPException(status_code=400, detail="metadata.json missing in upload")
-                        meta_data = json.loads(zf.read("metadata.json").decode())
+                        try:
+                            with zipfile.ZipFile(tmp_zip, "r") as zf:
+                                members = zf.namelist()
+                                logger.debug(f"ZIP contents: {len(members)} files - {members[:10]}{'...' if len(members) > 10 else ''}")
+                                
+                                if "metadata.json" not in members:
+                                    logger.error(f"ZIP file {file.filename} missing metadata.json")
+                                    raise HTTPException(status_code=400, detail="metadata.json missing in upload")
+                                
+                                logger.debug("Reading metadata.json from ZIP")
+                                meta_data = json.loads(zf.read("metadata.json").decode())
+                                logger.debug(f"Metadata loaded: {meta_data.keys()}")
 
-                        slug = meta_data.get("slug") or slug  # prefer slug from metadata
-                        meta_data["slug"] = slug
-                        output_dir = Path("media/processed") / slug
-                        output_dir.mkdir(parents=True, exist_ok=True)
-                        zf.extractall(output_dir)
+                                slug = meta_data.get("slug") or slug  # prefer slug from metadata
+                                meta_data["slug"] = slug
+                                output_dir = Path("media/processed") / slug
+                                logger.info(f"Extracting ZIP to: {output_dir}")
+                                output_dir.mkdir(parents=True, exist_ok=True)
+                                zf.extractall(output_dir)
 
-                        # Minimal sanitisation: ensure frames live in frames/
-                        # (skip deeper validation for brevity)
+                                # Minimal sanitisation: ensure frames live in frames/
+                                # (skip deeper validation for brevity)
 
-                        meta_data.setdefault("uploadedAt", datetime.utcnow().isoformat() + "Z")
-                        meta_data.setdefault("filename", file.filename)
-                        meta_data.setdefault("size", len(content))
+                                meta_data.setdefault("uploadedAt", datetime.utcnow().isoformat() + "Z")
+                                meta_data.setdefault("filename", file.filename)
+                                meta_data.setdefault("size", len(content))
 
-                        media_index.add_media(meta_data, make_active=True)
+                                logger.info(f"Adding media to index: {slug}")
+                                media_index.add_media(meta_data, make_active=True)
 
-                        slugs.append(slug)
-                        media_index.complete_processing_job(job_id, True)
+                                slugs.append(slug)
+                                logger.info(f"Completing processing job {job_id} for {file.filename}")
+                                media_index.complete_processing_job(job_id, True)
 
-            else:
-                # Fallback: treat as pre-rendered video
-                # Prepare directories
-                output_dir = Path("media/processed") / slug
-                output_dir.mkdir(parents=True, exist_ok=True)
+                        except zipfile.BadZipFile as e:
+                            logger.error(f"Invalid ZIP file {file.filename}: {e}")
+                            media_index.complete_processing_job(job_id, False, f"Invalid ZIP file: {e}")
+                            raise HTTPException(status_code=400, detail=f"Invalid ZIP file: {e}")
+                        except json.JSONDecodeError as e:
+                            logger.error(f"Invalid metadata.json in {file.filename}: {e}")
+                            media_index.complete_processing_job(job_id, False, f"Invalid metadata: {e}")
+                            raise HTTPException(status_code=400, detail=f"Invalid metadata in ZIP: {e}")
 
-                # Save as video.mp4 inside its folder for consistency
-                out_path = output_dir / "video.mp4"
-                with open(out_path, "wb") as out_f:
-                    out_f.write(content)
+                else:
+                    logger.info(f"Processing as pre-rendered video: {file.filename}")
+                    # Fallback: treat as pre-rendered video
+                    # Prepare directories
+                    output_dir = Path("media/processed") / slug
+                    output_dir.mkdir(parents=True, exist_ok=True)
 
-                metadata = {
-                    "slug": slug,
-                    "filename": file.filename,
-                    "type": file.content_type or "video/mp4",
-                    "size": len(content),
-                    "uploadedAt": datetime.utcnow().isoformat() + "Z",
-                }
+                    # Save as video.mp4 inside its folder for consistency
+                    out_path = output_dir / "video.mp4"
+                    logger.debug(f"Writing video file to: {out_path}")
+                    with open(out_path, "wb") as out_f:
+                        out_f.write(content)
 
-                media_index.add_media(metadata, make_active=True)
+                    metadata = {
+                        "slug": slug,
+                        "filename": file.filename,
+                        "type": file.content_type or "video/mp4",
+                        "size": len(content),
+                        "uploadedAt": datetime.utcnow().isoformat() + "Z",
+                    }
 
-                slugs.append(slug)
-                media_index.complete_processing_job(job_id, True)
+                    logger.info(f"Adding video media to index: {slug}")
+                    media_index.add_media(metadata, make_active=True)
+
+                    slugs.append(slug)
+                    logger.info(f"Completing processing job {job_id} for {file.filename}")
+                    media_index.complete_processing_job(job_id, True)
+
+            except HTTPException:
+                # Re-raise HTTP exceptions as-is
+                raise
+            except Exception as e:
+                logger.error(f"Unexpected error processing {file.filename}: {e}", exc_info=True)
+                media_index.complete_processing_job(job_id, False, f"Processing error: {e}")
+                raise HTTPException(status_code=500, detail=f"Processing failed: {e}")
 
         # Stop progress overlay
         if display_player:
             try:
+                logger.info("Stopping processing display")
                 display_player.stop_processing_display()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Failed to stop processing display: {e}")
 
         # Refresh player display
         if display_player:
             try:
+                logger.info("Refreshing player media list")
                 display_player.refresh_media_list()
                 if slugs:
+                    logger.info(f"Setting active media to: {slugs[-1]}")
                     display_player.set_active_media(slugs[-1])
             except Exception as exc:
-                logger.debug(f"Failed to refresh player after upload: {exc}")
+                logger.warning(f"Failed to refresh player after upload: {exc}")
 
         _invalidate_dir_size()
+        logger.info(f"Upload complete: {len(slugs)} files processed, job_ids: {job_ids}")
 
         return APIResponse(success=True, message="Upload complete", data={"slug": slugs[-1] if slugs else None, "job_ids": job_ids})
     

@@ -266,6 +266,7 @@ class MediaIndexManager:
     
     def add_processing_job(self, job_id: str, filename: str) -> None:
         """Add a processing job to track conversion progress."""
+        LOGGER.info(f"Adding processing job: {job_id} for {filename}")
         index = self._read_raw()
         index.processing[job_id] = {
             "job_id": job_id,
@@ -277,12 +278,14 @@ class MediaIndexManager:
             "timestamp": time.time()
         }
         self._write_raw(index)
-        LOGGER.info(f"Added processing job: {job_id} for {filename}")
+        LOGGER.info(f"Processing job added successfully: {job_id}")
 
     def update_processing_job(self, job_id: str, progress: float, stage: str, message: str) -> None:
         """Update processing job progress."""
+        LOGGER.debug(f"Updating processing job {job_id}: {progress}% - {stage} - {message}")
         index = self._read_raw()
         if job_id in index.processing:
+            old_progress = index.processing[job_id].get("progress", 0)
             index.processing[job_id].update({
                 "progress": min(100, max(0, progress)),
                 "stage": stage,
@@ -290,11 +293,17 @@ class MediaIndexManager:
                 "timestamp": time.time()
             })
             self._write_raw(index)
+            if progress != old_progress:
+                LOGGER.debug(f"Processing job {job_id} progress: {old_progress}% -> {progress}%")
+        else:
+            LOGGER.warning(f"Attempted to update non-existent processing job: {job_id}")
 
     def complete_processing_job(self, job_id: str, success: bool, error: str = "") -> None:
         """Mark a processing job as completed."""
+        LOGGER.info(f"Completing processing job {job_id}: success={success}, error='{error}'")
         index = self._read_raw()
         if job_id in index.processing:
+            old_status = index.processing[job_id].get("status", "unknown")
             index.processing[job_id].update({
                 "progress": 100,
                 "stage": "completed" if success else "error",
@@ -303,24 +312,38 @@ class MediaIndexManager:
                 "timestamp": time.time()
             })
             self._write_raw(index)
-            LOGGER.info(f"Completed processing job: {job_id} (success: {success})")
+            LOGGER.info(f"Processing job {job_id} status: {old_status} -> {'completed' if success else 'error'}")
+        else:
+            LOGGER.warning(f"Attempted to complete non-existent processing job: {job_id}")
 
     def get_processing_job(self, job_id: str) -> Optional[Dict[str, Any]]:
         """Get processing job status."""
+        LOGGER.debug(f"Getting processing job status: {job_id}")
         index = self._read_raw()
-        return index.processing.get(job_id)
+        job = index.processing.get(job_id)
+        if job:
+            LOGGER.debug(f"Processing job {job_id} found: {job.get('progress', 0)}% - {job.get('stage', 'unknown')}")
+        else:
+            LOGGER.debug(f"Processing job {job_id} not found")
+        return job
 
     def remove_processing_job(self, job_id: str) -> None:
         """Remove a processing job from tracking."""
+        LOGGER.info(f"Removing processing job: {job_id}")
         index = self._read_raw()
         if job_id in index.processing:
             del index.processing[job_id]
             self._write_raw(index)
-            LOGGER.info(f"Removed processing job: {job_id}")
+            LOGGER.info(f"Processing job removed successfully: {job_id}")
+        else:
+            LOGGER.warning(f"Attempted to remove non-existent processing job: {job_id}")
 
     def list_processing_jobs(self) -> Dict[str, Dict[str, Any]]:
         """Return all processing jobs."""
-        return self._read_raw().processing.copy()
+        index = self._read_raw()
+        job_count = len(index.processing)
+        LOGGER.debug(f"Listed {job_count} processing jobs")
+        return index.processing.copy()
 
     def add_media(self, metadata: Union[Dict[str, Any], MediaMetadata], make_active: bool = True) -> None:
         """Add a media item to the index."""
