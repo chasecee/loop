@@ -71,14 +71,25 @@ class DeviceStatus(BaseModel):
     wifi: Optional[Dict[str, Any]] = None
     updates: Optional[Dict[str, Any]] = None
 
+class StorageInfo(BaseModel):
+    """Detailed storage usage returned to the UI (units: bytes)."""
+    total: int
+    used: int
+    free: int
+    system: int
+    app: int
+    media: int
+    units: str = "bytes"
+
 class DashboardData(BaseModel):
-    """Combined dashboard data."""
+    """Combined dashboard data (single round-trip for the SPA)."""
     status: DeviceStatus
     media: List[Dict[str, Any]]
     active: Optional[str]
     loop: List[str]
     last_updated: Optional[int]
     processing: Optional[Dict[str, Any]] = None
+    storage: StorageInfo
 
 class APIResponse(BaseModel):
     """Standard API response format."""
@@ -226,23 +237,28 @@ def create_app(
     
     # System Status API
     
-    @app.get("/api/status", response_model=DeviceStatus)
     async def get_status():
-        """Get comprehensive system status."""
+        """Collect comprehensive system status (internal helper)."""
         device_status = DeviceStatus()
-        
+
         if display_player:
-            player_status = display_player.get_status()
-            device_status.player = player_status
-        
+            try:
+                device_status.player = display_player.get_status()
+            except Exception:
+                pass
+
         if wifi_manager:
-            wifi_status = wifi_manager.get_status()
-            device_status.wifi = wifi_status
-        
+            try:
+                device_status.wifi = wifi_manager.get_status()
+            except Exception:
+                pass
+
         if updater:
-            update_status = updater.get_update_status()
-            device_status.updates = update_status
-        
+            try:
+                device_status.updates = updater.get_update_status()
+            except Exception:
+                pass
+
         return device_status
     
     # Media Management API
@@ -648,50 +664,47 @@ def create_app(
     
     # Storage Information API
     
-    @app.get("/api/storage", response_model=APIResponse)
-    async def get_storage_info():
-        """Get detailed storage usage information."""
-        total, used, free = shutil.disk_usage("/")
-        
-        project_root = Path(__file__).resolve().parents[2]
-        media_path = project_root / "media"
-        media_size = get_dir_size(media_path)
-        
-        total_project_size = get_dir_size(project_root)
-        app_size = total_project_size - media_size
-        system_size = max(0, used - total_project_size)
-        
-        return APIResponse(
-            success=True,
-            data={
-                "total": total,
-                "used": used,
-                "free": free,
-                "system": system_size,
-                "app": app_size,
-                "media": media_size,
-                "units": "bytes"
-            }
-        )
+    # @app.get("/api/storage", response_model=APIResponse)  # DEPRECATED – storage now in /api/dashboard
     
     # Dashboard API - Optimized single endpoint
     
     @app.get("/api/dashboard", response_model=DashboardData)
     async def get_dashboard():
         """Get consolidated dashboard data in a single request."""
-        # Get status
+        # System status
         device_status = await get_status()
-        
-        # Get media data
+
+        # Media / loop / processing data
         dashboard_data = media_index.get_dashboard_data()
-        
+
+        # Storage data (reuse logic from /api/storage)
+        total, used, free = shutil.disk_usage("/")
+
+        project_root = Path(__file__).resolve().parents[2]
+        media_path = project_root / "media"
+        media_size = get_dir_size(media_path)
+
+        total_project_size = get_dir_size(project_root)
+        app_size = total_project_size - media_size
+        system_size = max(0, used - total_project_size)
+
+        storage_payload = StorageInfo(
+            total=total,
+            used=used,
+            free=free,
+            system=system_size,
+            app=app_size,
+            media=media_size,
+        )
+
         return DashboardData(
             status=device_status,
             media=dashboard_data["media"],
             active=dashboard_data["active"],
             loop=dashboard_data["loop"],
             last_updated=dashboard_data["last_updated"],
-            processing=dashboard_data["processing"]
+            processing=dashboard_data["processing"],
+            storage=storage_payload,
         )
     
     # Processing Progress API
