@@ -388,6 +388,10 @@ class LOOPApplication:
                 limit_max_requests=None,  # Disable auto-restart; keeps web server alive
                 backlog=50,  # Connection backlog queue size
                 h11_max_incomplete_event_size=16 * 1024,  # 16KB max incomplete event
+                # Large file upload settings
+                limit_concurrency=10,  # Limit concurrent connections to avoid overload
+                timeout_notify=300,  # 5 minute timeout for slow uploads
+                loop="asyncio",  # Use asyncio event loop for better performance
             )
             
             def run_server():

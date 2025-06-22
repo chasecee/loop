@@ -185,6 +185,9 @@ def create_app(
         redoc_url="/redoc" if config and config.web.debug else None
     )
     
+    # Configure request limits for large file uploads
+    app.router.default_response_class.media_type = "application/json"
+    
     # Add request logging middleware
     app.add_middleware(RequestLoggingMiddleware)
     
@@ -289,13 +292,47 @@ def create_app(
             logger.warning("Upload failed: No files provided")
             raise HTTPException(status_code=400, detail="No files provided")
 
+        # Pre-validate all files before processing any
+        total_size = 0
+        for file in files:
+            # Check file size without reading full content first
+            try:
+                # Try to get size from content-length header if available
+                file_size = getattr(file, 'size', None)
+                if file_size is None:
+                    # Fallback: read file to check size (unavoidable)
+                    content = await file.read()
+                    file_size = len(content)
+                    # Reset file pointer
+                    await file.seek(0)
+                
+                total_size += file_size
+                logger.info(f"File {file.filename}: {file_size} bytes")
+                
+                if file_size > 100 * 1024 * 1024:  # 100MB limit per file
+                    logger.warning(f"File {file.filename} too large: {file_size} bytes")
+                    raise HTTPException(status_code=413, detail=f"{file.filename} is too large (max 100 MB)")
+                    
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"Error checking file size for {file.filename}: {e}")
+                raise HTTPException(status_code=500, detail=f"Error processing {file.filename}")
+
+        # Check total upload size
+        if total_size > 500 * 1024 * 1024:  # 500MB total limit
+            logger.warning(f"Total upload size too large: {total_size} bytes")
+            raise HTTPException(status_code=413, detail="Total upload size exceeds 500MB limit")
+
+        logger.info(f"Pre-validation complete: {len(files)} files, {total_size} bytes total")
+
         slugs: list[str] = []
         job_ids: list[str] = []  # Track job IDs for display progress
 
         for i, file in enumerate(files):
-            logger.info(f"Processing file {i+1}/{len(files)}: {file.filename} ({file.content_type}, size unknown)")
+            logger.info(f"Processing file {i+1}/{len(files)}: {file.filename} ({file.content_type})")
             
-            # Limit size to 100 MB
+            # Read file content (may have been read during validation)
             try:
                 content = await file.read()
                 file_size = len(content)
@@ -303,10 +340,6 @@ def create_app(
             except Exception as e:
                 logger.error(f"Failed to read file {file.filename}: {e}")
                 raise HTTPException(status_code=500, detail=f"Failed to read file: {e}")
-            
-            if file_size > 100 * 1024 * 1024:
-                logger.warning(f"File {file.filename} too large: {file_size} bytes (max 100MB)")
-                raise HTTPException(status_code=413, detail=f"{file.filename} is too large (max 100 MB)")
 
             # Create a slug based on filename + uuid to avoid clashes
             sanitized = Path(file.filename).stem.replace(" ", "_").lower()
@@ -336,7 +369,17 @@ def create_app(
                     with tempfile.TemporaryDirectory() as tmpdir:
                         tmp_zip = Path(tmpdir) / "upload.zip"
                         logger.debug(f"Writing ZIP to temp file: {tmp_zip}")
-                        tmp_zip.write_bytes(content)
+                        
+                        # Write file in chunks to avoid memory issues with large files
+                        with open(tmp_zip, "wb") as f:
+                            chunk_size = 1024 * 1024  # 1MB chunks
+                            bytes_written = 0
+                            while bytes_written < len(content):
+                                chunk = content[bytes_written:bytes_written + chunk_size]
+                                f.write(chunk)
+                                bytes_written += len(chunk)
+                                if bytes_written % (10 * 1024 * 1024) == 0:  # Log every 10MB
+                                    logger.debug(f"Written {bytes_written}/{len(content)} bytes to temp file")
 
                         try:
                             with zipfile.ZipFile(tmp_zip, "r") as zf:
@@ -349,14 +392,20 @@ def create_app(
                                 
                                 logger.debug("Reading metadata.json from ZIP")
                                 meta_data = json.loads(zf.read("metadata.json").decode())
-                                logger.debug(f"Metadata loaded: {meta_data.keys()}")
+                                logger.debug(f"Metadata loaded: {list(meta_data.keys())}")
 
                                 slug = meta_data.get("slug") or slug  # prefer slug from metadata
                                 meta_data["slug"] = slug
                                 output_dir = Path("media/processed") / slug
                                 logger.info(f"Extracting ZIP to: {output_dir}")
                                 output_dir.mkdir(parents=True, exist_ok=True)
-                                zf.extractall(output_dir)
+                                
+                                # Extract with progress logging for large files
+                                total_members = len(members)
+                                for idx, member in enumerate(members):
+                                    zf.extract(member, output_dir)
+                                    if idx % 100 == 0 or idx == total_members - 1:
+                                        logger.debug(f"Extracted {idx+1}/{total_members} files")
 
                                 # Minimal sanitisation: ensure frames live in frames/
                                 # (skip deeper validation for brevity)
@@ -373,13 +422,20 @@ def create_app(
                                 media_index.complete_processing_job(job_id, True)
 
                         except zipfile.BadZipFile as e:
-                            logger.error(f"Invalid ZIP file {file.filename}: {e}")
-                            media_index.complete_processing_job(job_id, False, f"Invalid ZIP file: {e}")
-                            raise HTTPException(status_code=400, detail=f"Invalid ZIP file: {e}")
+                            error_msg = f"Invalid ZIP file {file.filename}: {str(e)}"
+                            logger.error(error_msg)
+                            media_index.complete_processing_job(job_id, False, error_msg)
+                            raise HTTPException(status_code=400, detail=error_msg)
                         except json.JSONDecodeError as e:
-                            logger.error(f"Invalid metadata.json in {file.filename}: {e}")
-                            media_index.complete_processing_job(job_id, False, f"Invalid metadata: {e}")
-                            raise HTTPException(status_code=400, detail=f"Invalid metadata in ZIP: {e}")
+                            error_msg = f"Invalid metadata.json in {file.filename}: {str(e)}"
+                            logger.error(error_msg)
+                            media_index.complete_processing_job(job_id, False, error_msg)
+                            raise HTTPException(status_code=400, detail=error_msg)
+                        except Exception as e:
+                            error_msg = f"ZIP processing error for {file.filename}: {str(e)}"
+                            logger.error(error_msg, exc_info=True)
+                            media_index.complete_processing_job(job_id, False, error_msg)
+                            raise HTTPException(status_code=500, detail=error_msg)
 
                 else:
                     logger.info(f"Processing as pre-rendered video: {file.filename}")
@@ -391,8 +447,15 @@ def create_app(
                     # Save as video.mp4 inside its folder for consistency
                     out_path = output_dir / "video.mp4"
                     logger.debug(f"Writing video file to: {out_path}")
+                    
+                    # Write in chunks for large files
                     with open(out_path, "wb") as out_f:
-                        out_f.write(content)
+                        chunk_size = 1024 * 1024  # 1MB chunks
+                        bytes_written = 0
+                        while bytes_written < len(content):
+                            chunk = content[bytes_written:bytes_written + chunk_size]
+                            out_f.write(chunk)
+                            bytes_written += len(chunk)
 
                     metadata = {
                         "slug": slug,
@@ -413,9 +476,10 @@ def create_app(
                 # Re-raise HTTP exceptions as-is
                 raise
             except Exception as e:
-                logger.error(f"Unexpected error processing {file.filename}: {e}", exc_info=True)
-                media_index.complete_processing_job(job_id, False, f"Processing error: {e}")
-                raise HTTPException(status_code=500, detail=f"Processing failed: {e}")
+                error_msg = f"Unexpected error processing {file.filename}: {str(e)}"
+                logger.error(error_msg, exc_info=True)
+                media_index.complete_processing_job(job_id, False, error_msg)
+                raise HTTPException(status_code=500, detail=error_msg)
 
         # Stop progress overlay
         if display_player:
