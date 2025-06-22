@@ -346,21 +346,27 @@ def create_app(
 
         if display_player:
             try:
-                device_status.player = display_player.get_status()
-            except Exception:
-                pass
+                player_data = display_player.get_status()
+                logger.debug(f"Raw player status: {player_data}")
+                device_status.player = player_data
+            except Exception as e:
+                logger.error(f"Failed to get player status: {e}")
 
         if wifi_manager:
             try:
-                device_status.wifi = wifi_manager.get_status()
-            except Exception:
-                pass
+                wifi_data = wifi_manager.get_status()
+                logger.debug(f"Raw wifi status: {wifi_data}")
+                device_status.wifi = wifi_data
+            except Exception as e:
+                logger.error(f"Failed to get wifi status: {e}")
 
         if updater:
             try:
-                device_status.updates = updater.get_update_status()
-            except Exception:
-                pass
+                update_data = updater.get_update_status()
+                logger.debug(f"Raw update status: {update_data}")
+                device_status.updates = update_data
+            except Exception as e:
+                logger.error(f"Failed to get update status: {e}")
 
         return device_status
     
