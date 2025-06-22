@@ -53,18 +53,9 @@ class FrameBuffer:
         """Get frame data as bytes."""
         return bytes(self.data)
     
-    @staticmethod
-    def rgb888_to_rgb565(r: int, g: int, b: int) -> int:
-        """Convert RGB888 to RGB565."""
-        return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
+
     
-    @staticmethod
-    def rgb565_to_rgb888(color: int) -> Tuple[int, int, int]:
-        """Convert RGB565 to RGB888."""
-        r = (color >> 11) << 3
-        g = ((color >> 5) & 0x3F) << 2
-        b = (color & 0x1F) << 3
-        return r, g, b
+
 
 
 class FrameDecoder:

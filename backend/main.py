@@ -172,38 +172,9 @@ class LOOPApplication:
             setup_logger = get_logger("default_media")
             setup_logger.info("Processing default media files...")
 
-            from utils.convert import MediaConverter
-            converter = MediaConverter(240, 320)  # Default resolution
-
-            media_items = {}
-            loop_order = []
-            
-            for media_file in default_media_dir.iterdir():
-                if media_file.is_file():
-                    slug = converter._generate_slug(media_file.name)
-                    out_dir = processed_dir / slug
-                    try:
-                        meta = converter.convert_media_file(media_file, out_dir, fps=25.0)
-                        if meta:
-                            media_items[slug] = meta
-                            loop_order.append(slug)
-                            setup_logger.info(f"Converted default media: {media_file.name}")
-                    except Exception as e:
-                        setup_logger.error(f"Failed to convert {media_file.name}: {e}")
-
-            # Create index.json
-            if media_items:
-                import json
-                index_data = {
-                    "media": media_items,
-                    "loop": loop_order,
-                    "active": loop_order[0] if loop_order else None,
-                    "last_updated": int(time.time())
-                }
-                with open(index_file, "w") as f:
-                    json.dump(index_data, f, indent=2)
-
-                setup_logger.info(f"Default media setup complete: {len(media_items)} items")
+            # Default media should be pre-processed and deployed as ZIP files
+            # during build/deployment process. No server-side conversion needed.
+            setup_logger.info("Default media processing is now handled during deployment")
     
     def _reset_watchdog(self):
         """Reset the software watchdog timer and notify systemd."""

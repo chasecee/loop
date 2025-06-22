@@ -23,7 +23,7 @@ from config.schema import Config
 from display.player import DisplayPlayer
 from boot.wifi import WiFiManager
 from deployment.updater import SystemUpdater
-from utils.convert import MediaConverter
+
 from utils.media_index import media_index
 from utils.logger import get_logger
 
@@ -106,11 +106,11 @@ class StorageInfo(BaseModel):
 class DashboardData(BaseModel):
     """Combined dashboard data - matches frontend DashboardData interface."""
     status: DeviceStatus
-    media: List[Dict[str, Any]]  # List of MediaItem dicts
+    media: List[MediaItem]  # List of MediaItem objects
     active: Optional[str]
     loop: List[str]
     last_updated: Optional[int]
-    processing: Optional[Dict[str, Any]] = None  # Processing jobs dict
+    processing: Optional[Dict[str, ProcessingJobResponse]] = None  # Processing jobs dict
     storage: StorageInfo
 
 class APIResponse(BaseModel):
@@ -288,11 +288,7 @@ def create_app(
     # Configure request limits for large file uploads
     app.router.default_response_class.media_type = "application/json"
     
-    # Media converter
-    converter = MediaConverter(
-        config.display.width if config else 240,
-        config.display.height if config else 320
-    )
+
     
     # Add middleware in correct order (innermost to outermost)
     app.add_middleware(CacheControlMiddleware)
@@ -1007,109 +1003,7 @@ def create_app(
     logger.info("FastAPI application created successfully")
     return app
 
-# Removed - now using _process_media_file_impl directly
 
-def _process_media_file_impl(filename: str, content: bytes, content_type: str, converter: MediaConverter, config: Config, job_id: str = None) -> Dict[str, Any]:
-    """Core media file processing implementation."""
-    from datetime import datetime
-    import tempfile
-    import shutil
-    
-    # Validate file type and size
-    allowed_extensions = {".gif", ".mp4", ".avi", ".mov", ".png", ".jpg", ".jpeg", ".zip"}
-    file_ext = Path(filename).suffix.lower()
-    if file_ext not in allowed_extensions:
-        if job_id:
-            media_index.complete_processing_job(job_id, False, f"Unsupported file type: {filename}")
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported file type: {filename}",
-        )
-
-    max_size = (config.media.max_file_size_mb if config else 10) * 1024 * 1024
-    
-    if len(content) > max_size:
-        if job_id:
-            media_index.complete_processing_job(job_id, False, f"File too large: {filename}")
-        raise HTTPException(
-            status_code=413, detail=f"File too large: {filename}"
-        )
-    
-    # Save to temporary file
-    media_raw_dir = Path("media/raw")
-    try:
-        if job_id:
-            media_index.update_processing_job(job_id, 5, "uploading", "Saving uploaded file...")
-        
-        with tempfile.NamedTemporaryFile(
-            delete=False, suffix=filename, dir=media_raw_dir
-        ) as tmp:
-            tmp.write(content)
-            tmp_path = Path(tmp.name)
-
-        # Generate slug and output directory
-        slug = converter._generate_slug(tmp_path.name)
-        output_dir = Path("media/processed") / slug
-
-        if job_id:
-            media_index.update_processing_job(job_id, 10, "converting", "Starting media conversion...")
-        
-        # Convert media with progress tracking, using framerate from config
-        framerate = config.display.framerate if config and config.display else 25.0
-        metadata = converter.convert_media_file(tmp_path, output_dir, job_id=job_id, fps=framerate)
-        if not metadata:
-            error_msg = f"Media conversion failed for {filename}. Check if ffmpeg is installed and file format is supported."
-            logger.error(error_msg)
-            if job_id:
-                media_index.complete_processing_job(job_id, False, error_msg)
-            raise HTTPException(
-                status_code=500, detail=error_msg
-            )
-        
-        # Augment metadata for frontend
-        file_size = len(content)
-        uploaded_at_iso = datetime.utcnow().isoformat() + "Z"
-
-        metadata.update({
-            "filename": filename,
-            "type": content_type or metadata.get("type", "unknown"),
-            "size": file_size,
-            "uploadedAt": uploaded_at_iso,
-            "url": f"/media/raw/{slug}{Path(filename).suffix}",
-        })
-
-        # Add to media index
-        media_index.add_media(metadata, make_active=True)
-
-        # Save original for preview
-        dest_raw_path = media_raw_dir / f"{slug}{Path(filename).suffix}"
-        shutil.copy(tmp_path, dest_raw_path)
-
-        if job_id:
-            media_index.complete_processing_job(job_id, True)
-
-        return metadata
-
-    except Exception as e:
-        if job_id:
-            media_index.complete_processing_job(job_id, False, str(e))
-        raise
-    finally:
-        # Clean up temp file
-        if "tmp_path" in locals() and tmp_path.exists():
-            tmp_path.unlink()
-
-async def process_media_file(file: UploadFile, converter: MediaConverter, config: Config, job_id: str | None = None) -> Dict[str, Any]:
-    """Thin async wrapper that streams the UploadFile to bytes and delegates to the core implementation."""
-    content = await file.read()
-    return _process_media_file_impl(
-        file.filename,
-        content,
-        file.content_type,
-        converter,
-        config,
-        job_id,
-    )
 
 # For development/testing
 if __name__ == "__main__":

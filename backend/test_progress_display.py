@@ -7,16 +7,13 @@ import time
 import uuid
 from pathlib import Path
 from utils.media_index import media_index
-from utils.convert import MediaConverter
 from config.schema import get_config
 
 def test_progress_system():
     """Test the progress tracking system."""
     print("Testing processing progress system...")
     
-    # Initialize converter
-    config = get_config()
-    converter = MediaConverter(config.display.width, config.display.height)
+    # No converter needed - just testing progress tracking
     
     # Create test job
     job_id = str(uuid.uuid4())

@@ -62,7 +62,7 @@ class MediaConfig:
 @dataclass
 class ProcessingConfig:
     """Media processing configuration."""
-    progress_update_interval_ms: int = 500  # How often to update progress in convert.py
+    progress_update_interval_ms: int = 500  # How often to update progress displays
     job_cleanup_hours: int = 1  # Clean up old processing jobs after this many hours
     max_concurrent_jobs: int = 3  # Maximum concurrent conversion jobs
 
