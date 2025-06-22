@@ -75,23 +75,19 @@ class PlayerStatus(BaseModel):
 class WiFiStatus(BaseModel):
     """WiFi status - matches frontend WiFiStatus interface."""
     connected: bool
-    current_ssid: Optional[str] = None
-    signal_strength: Optional[str] = None  # Can be string from wireless stats
     hotspot_active: bool
-    # Extra fields returned by WiFiManager
+    current_ssid: Optional[str] = None
     ip_address: Optional[str] = None
     configured_ssid: Optional[str] = None
     hotspot_ssid: Optional[str] = None
+    signal_strength: Optional[str] = None  # Can be string from wireless stats
     network_info: Optional[Dict[str, Any]] = None
 
 class UpdateStatus(BaseModel):
     """Update status - matches frontend UpdateStatus interface."""
-    available: bool = False
-    version: Optional[str] = None
-    last_check: Optional[str] = None
-    # Extra fields returned by SystemUpdater
     current_version: Optional[str] = None
     git_available: Optional[bool] = None
+    last_check: Optional[str] = None
     update_sources: Optional[Dict[str, Any]] = None
 
 class DeviceStatus(BaseModel):
