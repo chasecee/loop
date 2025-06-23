@@ -35,6 +35,8 @@ import shutil
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Union
 from dataclasses import dataclass, asdict
+import threading
+from contextlib import contextmanager
 
 from utils.logger import get_logger
 
@@ -102,17 +104,74 @@ class MediaIndex:
         }
 
 class MediaIndexManager:
-    """Thread-safe manager for media index operations."""
+    """Thread-safe manager for media index operations with in-memory caching."""
     
     def __init__(self, index_path: Path = MEDIA_INDEX_PATH):
         self.index_path = index_path
         self._ensure_media_dir()
+        
+        # In-memory cache for performance
+        self._cache: Optional[MediaIndex] = None
+        self._cache_dirty = False
+        self._last_file_read = 0
+        self._cache_lock = threading.Lock()
+        
+        # Batching support
+        self._batching = False
+        self._batch_dirty = False
+        
+        # Periodic persistence timer
+        self._persistence_timer: Optional[threading.Timer] = None
+        self._persistence_interval = 30  # seconds
+        self._start_persistence_timer()
     
     def _ensure_media_dir(self) -> None:
         """Ensure media directory exists."""
         self.index_path.parent.mkdir(parents=True, exist_ok=True)
     
+    def _start_persistence_timer(self) -> None:
+        """Start periodic persistence timer."""
+        def persist_if_dirty():
+            with self._cache_lock:
+                if self._cache_dirty and self._cache:
+                    try:
+                        self._write_to_disk(self._cache)
+                        self._cache_dirty = False
+                        LOGGER.debug("Periodic persistence completed")
+                    except Exception as e:
+                        LOGGER.error(f"Periodic persistence failed: {e}")
+            
+            # Schedule next persistence
+            self._persistence_timer = threading.Timer(self._persistence_interval, persist_if_dirty)
+            self._persistence_timer.daemon = True
+            self._persistence_timer.start()
+        
+        # Start the timer
+        self._persistence_timer = threading.Timer(self._persistence_interval, persist_if_dirty)
+        self._persistence_timer.daemon = True
+        self._persistence_timer.start()
+    
     def _read_raw(self) -> MediaIndex:
+        """Read the media index with in-memory caching."""
+        with self._cache_lock:
+            # Check if we can use cache
+            if self._cache and not self._cache_dirty:
+                # Check if file was modified since last read
+                try:
+                    file_mtime = self.index_path.stat().st_mtime
+                    if file_mtime <= self._last_file_read:
+                        return self._cache
+                except (OSError, FileNotFoundError):
+                    pass
+            
+            # Read from disk
+            index = self._read_from_disk()
+            self._cache = index
+            self._cache_dirty = False
+            self._last_file_read = time.time()
+            return index
+    
+    def _read_from_disk(self) -> MediaIndex:
         """Read the media index from disk."""
         if not self.index_path.exists():
             return MediaIndex.empty()
@@ -154,26 +213,47 @@ class MediaIndexManager:
             
             if len(index.loop) != original_loop_length:
                 LOGGER.info(f"Cleaned up {original_loop_length - len(index.loop)} orphaned slugs from loop")
-                self._write_raw(index)
+                self._write_to_disk(index)
 
             # Validate active slug
             if index.active and index.active not in valid_slugs:
                 LOGGER.info(f"Clearing invalid active slug: {index.active}")
                 index.active = index.loop[0] if index.loop else None
-                self._write_raw(index)
+                self._write_to_disk(index)
 
-            # Clean up old processing jobs (older than 30 minutes for cleaner experience)
+            # Clean up old processing jobs (more aggressive cleanup: 5 minutes for completed, limit total jobs)
             current_time = time.time()
-            old_jobs = [
-                job_id for job_id, job_data in index.processing.items()
-                if current_time - job_data.get("timestamp", 0) > 1800  # 30 minutes
-            ]
+            old_jobs = []
+            completed_jobs = []
+            
+            for job_id, job_data in index.processing.items():
+                job_timestamp = job_data.get("timestamp", 0)
+                job_status = job_data.get("status", "processing")
+                job_age = current_time - job_timestamp
+                
+                # Remove completed/error jobs after 5 minutes
+                if job_status in ["completed", "error"] and job_age > 300:
+                    old_jobs.append(job_id)
+                # Remove very old processing jobs (30 minutes)
+                elif job_age > 1800:
+                    old_jobs.append(job_id)
+                # Track completed jobs for size limiting
+                elif job_status in ["completed", "error"]:
+                    completed_jobs.append((job_id, job_timestamp))
+            
+            # Limit total completed jobs to prevent memory buildup (keep max 20 most recent)
+            if len(completed_jobs) > 20:
+                completed_jobs.sort(key=lambda x: x[1])  # Sort by timestamp
+                old_jobs.extend([job_id for job_id, _ in completed_jobs[:-20]])
+            
+            # Remove old jobs
             for job_id in old_jobs:
-                del index.processing[job_id]
+                if job_id in index.processing:
+                    del index.processing[job_id]
             
             if old_jobs:
                 LOGGER.info(f"Cleaned up {len(old_jobs)} old processing jobs")
-                self._write_raw(index)
+                self._write_to_disk(index)
 
             return index
 
@@ -182,6 +262,24 @@ class MediaIndexManager:
             return MediaIndex.empty()
 
     def _write_raw(self, index: MediaIndex) -> None:
+        """Write the media index with caching and batching support."""
+        with self._cache_lock:
+            self._cache = index
+            self._cache_dirty = True
+            
+            # Check if we're in batching mode
+            if self._batching:
+                self._batch_dirty = True
+                return
+            
+            # For critical operations, write immediately
+            # For less critical ones, rely on periodic persistence
+            if hasattr(self, '_immediate_write_needed'):
+                self._write_to_disk(index)
+                self._cache_dirty = False
+                delattr(self, '_immediate_write_needed')
+
+    def _write_to_disk(self, index: MediaIndex) -> None:
         """Write the media index atomically with proper locking."""
         try:
             # Update timestamp
@@ -224,6 +322,10 @@ class MediaIndexManager:
                     temp_file.unlink()
                 except Exception:
                     pass
+
+    def _force_immediate_write(self) -> None:
+        """Mark next write as immediate (for critical operations)."""
+        self._immediate_write_needed = True
 
     # Public API methods
     
@@ -370,6 +472,7 @@ class MediaIndexManager:
         if make_active and (not index.active or index.active not in index.media):
             index.active = slug
 
+        self._force_immediate_write()  # Critical operation
         self._write_raw(index)
         LOGGER.info(f"Added media: {slug}")
 
@@ -392,6 +495,7 @@ class MediaIndexManager:
             index.active = index.loop[0] if index.loop else None
             LOGGER.info(f"Updated active media to: {index.active}")
         
+        self._force_immediate_write()  # Critical operation
         self._write_raw(index)
         LOGGER.info(f"Successfully removed media: {slug}")
 
@@ -452,6 +556,7 @@ class MediaIndexManager:
                 index.loop.append(slug)
         
         index.active = slug
+        self._force_immediate_write()  # Critical operation
         self._write_raw(index)
         LOGGER.info(f"Set active media to: {slug}")
 
@@ -494,4 +599,19 @@ class MediaIndexManager:
         return cleanup_count
 
 # Global instance - the clean way to access media index
-media_index = MediaIndexManager() 
+media_index = MediaIndexManager()
+
+@contextmanager
+def batch_operations(media_index_manager: 'MediaIndexManager'):
+    """Context manager to batch multiple media operations before persistence."""
+    media_index_manager._batching = True
+    try:
+        yield
+    finally:
+        media_index_manager._batching = False
+        # Force immediate write after batch
+        if hasattr(media_index_manager, '_batch_dirty') and media_index_manager._batch_dirty:
+            media_index_manager._force_immediate_write()
+            if media_index_manager._cache:
+                media_index_manager._write_raw(media_index_manager._cache)
+            media_index_manager._batch_dirty = False 
