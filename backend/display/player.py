@@ -679,4 +679,32 @@ class DisplayPlayer:
             loop_slugs = media_index.list_loop()
             if not loop_slugs:
                 media_index.set_active(None)
-                self.current_media_loops = 0 
+                self.current_media_loops = 0
+    
+    def handle_media_deletion(self, deleted_slug: str) -> None:
+        """Handle immediate media deletion to prevent frame loading errors."""
+        with self.lock:
+            # Check if the deleted media is currently playing
+            current_active = media_index.get_active()
+            
+            # Stop current sequence immediately if it matches deleted media
+            if self.current_sequence:
+                self.current_sequence.stop()
+                self.current_sequence = None
+            
+            # Clear logged missing frames for deleted media to avoid spam
+            if deleted_slug in self._logged_missing_frames:
+                self._logged_missing_frames.remove(deleted_slug)
+            
+            # Force immediate switch to new active media
+            self.current_media_loops = 0
+            
+            # Log the switch
+            if current_active:
+                new_active = media_index.get_active()
+                if new_active != deleted_slug:
+                    self.logger.info(f"Switched from deleted media {deleted_slug} to {new_active}")
+                else:
+                    self.logger.info(f"No valid media remaining after deleting {deleted_slug}")
+            
+            self.logger.info(f"Handled deletion of media: {deleted_slug}") 

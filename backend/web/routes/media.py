@@ -86,10 +86,14 @@ def create_media_router(
     async def delete_media(slug: str):
         """Delete a media item."""
         try:
-            # Update media index first
+            # Handle display player deletion first (before removing files)
+            if display_player:
+                display_player.handle_media_deletion(slug)
+            
+            # Update media index
             media_index.remove_media(slug)
             
-            # Remove from filesystem
+            # Remove from filesystem AFTER stopping playback
             media_dir = media_processed_dir / slug
             raw_files = list(media_raw_dir.glob(f"*{slug}*"))
             
@@ -100,10 +104,6 @@ def create_media_router(
             for raw_file in raw_files:
                 raw_file.unlink()
                 logger.info(f"Removed raw file: {raw_file}")
-            
-            # Refresh player
-            if display_player:
-                display_player.refresh_media_list()
             
             invalidate_storage_cache()
             invalidate_dashboard_cache()
