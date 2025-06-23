@@ -462,6 +462,12 @@ class DisplayPlayer:
                     for job in relevant_jobs.values()
                 )
                 
+                # CRITICAL: Check if our original job IDs disappeared (completed elsewhere)
+                original_jobs_missing = [jid for jid in job_ids if jid not in processing_jobs]
+                if original_jobs_missing:
+                    self.logger.info(f"🎯 Original jobs completed externally: {[jid[:8] for jid in original_jobs_missing]}")
+                    all_completed = True
+                
                 # Also detect completion if progress hasn't changed for a while
                 any_stalled = any(
                     job.get('progress', 0) >= 90 and elapsed > 60  # 90%+ for over 60 seconds
@@ -470,8 +476,10 @@ class DisplayPlayer:
                 
                 if all_completed or any_at_100 or any_stalled:
                     # Show completion briefly
-                    reason = "completed" if all_completed else "100%" if any_at_100 else "timeout"
-                    self.logger.info(f"Upload progress stopping: {reason}")
+                    reason = "all_completed" if all_completed else "100%" if any_at_100 else "timeout"
+                    if original_jobs_missing:
+                        reason = "jobs_completed_externally"
+                    self.logger.info(f"Upload progress stopping: {reason} - tracked {len(job_ids)} jobs, found {len(relevant_jobs)} relevant")
                     self.show_progress_bar("Upload Complete", 
                                          f"Processed {total_jobs} files", 100)
                     time.sleep(2)

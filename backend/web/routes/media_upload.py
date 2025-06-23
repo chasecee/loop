@@ -289,9 +289,10 @@ async def process_video_file(file: UploadFile, content: bytes, slug: str, media_
 async def process_zip_file(file: UploadFile, content: bytes, slug: str, media_raw_dir: Path, media_processed_dir: Path) -> Dict[str, Any]:
     """Process ZIP file - extract frames and either create new media or update existing video."""
     
-    # Create job for progress tracking
+    # Create job for progress tracking (will coordinate with existing jobs later)
     job_id = str(uuid.uuid4())
     media_index.add_processing_job(job_id, file.filename)
+    logger.info(f"📦 ZIP processing started with job: {job_id[:8]}")
     
     try:
         # 🚀 Safe progress update: extracting
@@ -302,19 +303,38 @@ async def process_zip_file(file: UploadFile, content: bytes, slug: str, media_ra
         original_filename = zip_metadata.get("original_filename", file.filename)
         
         # Check if we have an existing video for these frames
+        # Use the original filename from ZIP metadata, not the ZIP filename
+        zip_original_filename = zip_metadata.get("original_filename", original_filename)
+        logger.info(f"🔍 Looking for existing media with filename: {zip_original_filename}")
+        
         existing_media = None
         all_media = media_index.list_media()
         for media_item in all_media:
-            if media_item.get("filename") == original_filename and media_item.get("processing_status") == "processing":
+            if (media_item.get("filename") == zip_original_filename and 
+                media_item.get("processing_status") == "processing"):
                 existing_media = media_item
+                logger.info(f"🎯 Found existing media: {media_item.get('slug')} for {zip_original_filename}")
                 break
         
         if existing_media:
             # Update existing video/image entry with frame data
             existing_slug = existing_media["slug"]
             
+            # 🔗 CRITICAL: Find the original video job and complete IT, not the ZIP job
+            original_video_job_id = None
+            all_jobs = media_index.list_processing_jobs()
+            for jid, job_data in all_jobs.items():
+                if (job_data.get('filename') == zip_original_filename and 
+                    job_data.get('status') == 'processing'):
+                    original_video_job_id = jid
+                    logger.info(f"🎯 Found original video job to complete: {jid[:8]} for {zip_original_filename}")
+                    break
+            
+            # Use the original video job ID for progress updates
+            progress_job_id = original_video_job_id or job_id
+            
             # 🚀 Safe progress update: finalizing
-            await _safe_progress_update(job_id, 90, "finalizing", f"Updating {zip_metadata.get('type', 'media')} with frame data...", original_filename)
+            await _safe_progress_update(progress_job_id, 90, "finalizing", f"Updating {zip_metadata.get('type', 'media')} with frame data...", zip_original_filename)
             
             # Move frames to existing directory if different
             if slug != existing_slug:
@@ -336,15 +356,27 @@ async def process_zip_file(file: UploadFile, content: bytes, slug: str, media_ra
             })
             
             media_index.add_media(updated_metadata, make_active=False)
-            media_index.complete_processing_job(job_id, True, "")
+            
+            # Complete the ORIGINAL video job, not the ZIP job
+            if original_video_job_id:
+                media_index.complete_processing_job(original_video_job_id, True, "")
+                logger.info(f"✅ Completed original video job: {original_video_job_id[:8]}")
+                
+                # Clean up ZIP job if it's different
+                if job_id != original_video_job_id:
+                    media_index.complete_processing_job(job_id, True, "")
+                    logger.info(f"🧹 Cleaned up ZIP job: {job_id[:8]}")
+            else:
+                media_index.complete_processing_job(job_id, True, "")
+                logger.warning(f"⚠️ No original video job found, completed ZIP job: {job_id[:8]}")
             
             # 🚀 Final broadcast: completion
             try:
-                await broadcaster.processing_progress(job_id, {
+                await broadcaster.processing_progress(progress_job_id, {
                     "progress": 100,
                     "stage": "complete",
                     "message": f"{zip_metadata.get('type', 'Media').title()} processing complete!",
-                    "filename": original_filename
+                    "filename": zip_original_filename
                 })
             except Exception as e:
                 logger.warning(f"Failed to broadcast completion: {e}")
@@ -352,11 +384,12 @@ async def process_zip_file(file: UploadFile, content: bytes, slug: str, media_ra
             # 🚀 CRITICAL: Broadcast update via WebSocket
             try:
                 await broadcaster.media_uploaded(updated_metadata)
-                logger.info(f"✅ Broadcasted {zip_metadata.get('type', 'media')} update: {original_filename}")
+                logger.info(f"✅ Broadcasted {zip_metadata.get('type', 'media')} update: {zip_original_filename}")
             except Exception as e:
                 logger.warning(f"Failed to broadcast media update: {e}")
             
-            return {"slug": existing_slug, "job_id": job_id}
+            # Return the original video job ID so display progress tracking works
+            return {"slug": existing_slug, "job_id": original_video_job_id or job_id}
             
         else:
             # Create new ZIP-only media entry (image or video)
