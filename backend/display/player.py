@@ -382,17 +382,48 @@ class DisplayPlayer:
             # Show initial progress
             self.show_progress_bar("Uploading Media", "Starting upload...", 0)
             
+            # Add timeout to prevent getting stuck forever (30 seconds max)
+            start_time = time.time()
+            max_duration = 30  # 30 seconds - uploads should finish quickly
+            
             while not self.progress_stop_event.is_set():
                 # Get current processing jobs
                 processing_jobs = media_index.list_processing_jobs()
                 
-                # Filter to our job IDs
-                relevant_jobs = {
-                    job_id: job_data for job_id, job_data in processing_jobs.items()
-                    if job_id in job_ids
-                }
+                # Filter to our job IDs - also check for jobs with matching filenames
+                # (in case job IDs were swapped during coordination)
+                relevant_jobs = {}
+                job_filenames = set()
+                
+                # First pass: get jobs by ID
+                for job_id, job_data in processing_jobs.items():
+                    if job_id in job_ids:
+                        relevant_jobs[job_id] = job_data
+                        job_filenames.add(job_data.get('filename', ''))
+                
+                # Second pass: if we lost jobs, find by filename
+                if len(relevant_jobs) < len(job_ids):
+                    for job_id, job_data in processing_jobs.items():
+                        if job_id not in relevant_jobs and job_data.get('filename') in job_filenames:
+                            relevant_jobs[job_id] = job_data
+                            self.logger.info(f"Found related job {job_id} for filename {job_data.get('filename')}")
+                
+                # Debug logging for job states  
+                elapsed = time.time() - start_time
+                self.logger.info(f"Progress check {elapsed:.1f}s: tracking {len(job_ids)} jobs, found {len(relevant_jobs)} relevant")
+                for job_id, job_data in relevant_jobs.items():
+                    status = job_data.get('status', 'unknown')
+                    progress = job_data.get('progress', 0)
+                    stage = job_data.get('stage', 'unknown')
+                    self.logger.info(f"  Job {job_id[:8]}: {status} {progress}% ({stage})")
+                
+                # Check if any of our original job IDs disappeared
+                missing_jobs = [jid for jid in job_ids if jid not in processing_jobs]
+                if missing_jobs:
+                    self.logger.warning(f"Missing jobs: {[jid[:8] for jid in missing_jobs]}")
                 
                 if not relevant_jobs:
+                    self.logger.info("No relevant processing jobs found, stopping progress display")
                     break
                 
                 # Calculate overall progress
@@ -419,17 +450,43 @@ class DisplayPlayer:
                     subtitle = f"Completed {completed_jobs}/{total_jobs} files"
                     self.show_progress_bar("Uploading Media", subtitle, overall_progress)
                 
-                # Check if all jobs completed
+                # Check if all jobs completed (or if we have any jobs at 100%)
                 all_completed = all(
                     job.get('status') in ['completed', 'error'] 
                     for job in relevant_jobs.values()
                 )
                 
-                if all_completed:
+                # More aggressive completion detection
+                any_at_100 = any(
+                    job.get('progress', 0) >= 100 
+                    for job in relevant_jobs.values()
+                )
+                
+                # Also detect completion if progress hasn't changed for a while
+                any_stalled = any(
+                    job.get('progress', 0) >= 90 and elapsed > 20  # 90%+ for over 20 seconds
+                    for job in relevant_jobs.values()
+                )
+                
+                if all_completed or any_at_100 or any_stalled:
                     # Show completion briefly
+                    reason = "completed" if all_completed else "100%" if any_at_100 else "timeout"
+                    self.logger.info(f"Upload progress stopping: {reason}")
                     self.show_progress_bar("Upload Complete", 
                                          f"Processed {total_jobs} files", 100)
                     time.sleep(2)
+                    break
+                
+                # Check timeout
+                if time.time() - start_time > max_duration:
+                    self.logger.warning(f"Upload progress display timed out after {max_duration}s")
+                    self.show_progress_bar("Upload Timeout", "Continuing in background...", 100)
+                    time.sleep(2)
+                    break
+                
+                # Also break if we have no relevant jobs (they were cleaned up)
+                if not relevant_jobs:
+                    self.logger.info("No processing jobs found, stopping progress display")
                     break
                 
                 # Wait before next update

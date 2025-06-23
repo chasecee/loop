@@ -558,13 +558,14 @@ def create_app(
                             existing_media = media_item
                             break
                     
-                    # Also check if there's an active processing job for this media
+                    # Check if there's an active processing job for this media
                     # (indicates this is the second phase of a two-phase upload)
                     processing_jobs = media_index.list_processing_jobs()
                     related_job_id = None
                     for pid, pdata in processing_jobs.items():
-                        if pdata.get("filename") == original_filename and pdata.get("status") == "completed":
+                        if pdata.get("filename") == original_filename and pdata.get("status") == "processing":
                             related_job_id = pid
+                            logger.info(f"Found related processing job {pid} for {original_filename}")
                             break
                     
                     if existing_media:
@@ -578,6 +579,9 @@ def create_app(
                         # Update processing job to show extraction progress
                         if active_job_id:
                             media_index.update_processing_job(active_job_id, 50, "extracting", "Extracting frames from ZIP...")
+                        
+                        # Also pass the correct job ID to process_zip_content for progress updates
+                        current_job_id = active_job_id if active_job_id else job_id
                         
                         # Copy ZIP contents to the existing slug directory  
                         existing_output_dir = Path("media/processed") / existing_slug
@@ -606,8 +610,8 @@ def create_app(
                                 logger.info(f"Moved {len(frame_files)} frame files to existing directory: {existing_frames_dir}")
                                 
                                 # Update processing progress
-                                if active_job_id:
-                                    media_index.update_processing_job(active_job_id, 85, "organizing", "Organizing frame files...")
+                                if current_job_id:
+                                    media_index.update_processing_job(current_job_id, 85, "organizing", "Organizing frame files...")
                             else:
                                 logger.warning(f"No frames directory found in {current_output_dir}")
                             
@@ -639,17 +643,20 @@ def create_app(
                         slugs.append(existing_slug)
                         
                         # Complete the original processing job (not the current ZIP job)
-                        if active_job_id:
-                            media_index.complete_processing_job(active_job_id, True, "")
-                            logger.info(f"Completed two-phase upload processing job: {active_job_id}")
+                        if current_job_id:
+                            # Ensure 100% progress before completion
+                            media_index.update_processing_job(current_job_id, 100, "complete", "Upload and processing finished!")
+                            media_index.complete_processing_job(current_job_id, True, "")
+                            logger.info(f"Completed two-phase upload processing job: {current_job_id}")
                         
-                        # If we used related job, remove the temporary ZIP job
+                        # If we used related job, remove the temporary ZIP job and fix tracking
                         if related_job_id and job_id != related_job_id:
                             media_index.remove_processing_job(job_id)
-                            job_ids.remove(job_id)  # Remove from tracking
+                            job_ids.remove(job_id)  # Remove ZIP job from tracking
+                            job_ids.append(current_job_id)  # Add original job to tracking
                         
                     else:
-                        # Create new entry (no matching video found)
+                        # Create new entry (no matching video found) - ZIP-only upload
                         meta_data = {
                             "slug": slug,
                             "filename": original_filename,
@@ -665,8 +672,10 @@ def create_app(
                         
                         media_index.add_media(meta_data, make_active=True)
                         slugs.append(slug)
-                    
-                    media_index.complete_processing_job(job_id, True)
+                        
+                        # Complete the ZIP-only job
+                        media_index.update_processing_job(job_id, 100, "complete", "ZIP processing complete!")
+                        media_index.complete_processing_job(job_id, True)
                     
                 else:
                     # Process as original video file (for frontend previews)
