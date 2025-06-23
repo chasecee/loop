@@ -594,9 +594,16 @@ def create_app(
                                     shutil.rmtree(existing_frames_dir)
                                     logger.info(f"Removed old frames directory: {existing_frames_dir}")
                                 
-                                # Move new frames
-                                current_frames_dir.rename(existing_frames_dir)
-                                logger.info(f"Moved frames to existing directory: {existing_frames_dir}")
+                                # Create target directory
+                                existing_frames_dir.mkdir(parents=True, exist_ok=True)
+                                
+                                # Move all frame files instead of renaming directory
+                                frame_files = list(current_frames_dir.glob("*"))
+                                for frame_file in frame_files:
+                                    target_file = existing_frames_dir / frame_file.name
+                                    frame_file.rename(target_file)
+                                
+                                logger.info(f"Moved {len(frame_files)} frame files to existing directory: {existing_frames_dir}")
                                 
                                 # Update processing progress
                                 if active_job_id:
@@ -625,6 +632,7 @@ def create_app(
                             "frame_count": zip_metadata.get("frame_count", 510),
                             "width": zip_metadata.get("width", 320),
                             "height": zip_metadata.get("height", 240),
+                            "processing_status": "completed",  # Mark as fully processed
                         })
                         
                         media_index.add_media(updated_meta, make_active=False)  # Update, don't change active status
@@ -652,6 +660,7 @@ def create_app(
                             "frame_count": zip_metadata.get("frame_count", 510),
                             "width": zip_metadata.get("width", 320),
                             "height": zip_metadata.get("height", 240),
+                            "processing_status": "completed",  # ZIP-only uploads are complete
                         }
                         
                         media_index.add_media(meta_data, make_active=True)
@@ -680,6 +689,7 @@ def create_app(
                         "size": len(content),
                         "uploadedAt": datetime.utcnow().isoformat() + "Z",
                         "url": f"/media/raw/{slug}_{file.filename}",  # Point to original video in raw/
+                        "processing_status": "processing",  # Mark as still processing until frames arrive
                     }
 
                     media_index.add_media(metadata, make_active=True)
