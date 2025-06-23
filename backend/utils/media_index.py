@@ -394,7 +394,7 @@ class MediaIndexManager:
 
     def update_processing_job(self, job_id: str, progress: float, stage: str, message: str) -> None:
         """Update processing job progress."""
-        LOGGER.debug(f"Updating processing job {job_id}: {progress}% - {stage} - {message}")
+        LOGGER.info(f"Updating processing job {job_id}: {progress}% - {stage} - {message}")
         index = self._read_raw()
         if job_id in index.processing:
             old_progress = index.processing[job_id].get("progress", 0)
@@ -404,9 +404,9 @@ class MediaIndexManager:
                 "message": message,
                 "timestamp": time.time()
             })
+            self._force_immediate_write()  # CRITICAL: Progress updates must persist immediately
             self._write_raw(index)
-            if progress != old_progress:
-                LOGGER.debug(f"Processing job {job_id} progress: {old_progress}% -> {progress}%")
+            LOGGER.info(f"Processing job {job_id} progress: {old_progress}% -> {progress}%")
         else:
             LOGGER.warning(f"Attempted to update non-existent processing job: {job_id}")
 

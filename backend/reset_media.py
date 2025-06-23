@@ -3,20 +3,64 @@
 Reset Media Script - Clear all media files and index to start fresh.
 
 This script will:
-- Delete media/index.json
-- Clear media/processed/ directory
+- Delete media/index.json (includes jobs)
+- Clear media/processed/ directory  
 - Clear media/raw/ directory
 - Reset to a clean state
 
-Usage: python3 reset_media.py
+Usage: 
+  python3 reset_media.py              # Reset everything
+  python3 reset_media.py --jobs-only  # Reset only processing jobs
 """
 
 import shutil
 import sys
+import json
 from pathlib import Path
+
+def reset_jobs_only():
+    """Reset only processing jobs, keep media files."""
+    print("🧹 LOOP Jobs Reset Script")
+    print("=" * 40)
+    
+    response = input("⚠️  This will DELETE ALL processing jobs but keep media. Continue? (y/N): ")
+    if response.lower() not in ['y', 'yes']:
+        print("❌ Jobs reset cancelled.")
+        return
+    
+    media_dir = Path("media")
+    index_file = media_dir / "index.json"
+    
+    if not index_file.exists():
+        print("❌ No media index found.")
+        return
+    
+    try:
+        # Read current index
+        with open(index_file, "r") as f:
+            data = json.load(f)
+        
+        # Clear only processing jobs
+        job_count = len(data.get("processing", {}))
+        data["processing"] = {}
+        
+        # Write back
+        with open(index_file, "w") as f:
+            json.dump(data, f, indent=2)
+        
+        print(f"✅ Cleared {job_count} processing jobs")
+        print("📱 Media files preserved, only jobs reset")
+        
+    except Exception as e:
+        print(f"❌ Failed to reset jobs: {e}")
 
 def main():
     """Reset all media files and index."""
+    # Check for jobs-only flag
+    if len(sys.argv) > 1 and sys.argv[1] == "--jobs-only":
+        reset_jobs_only()
+        return
+        
     print("🧹 LOOP Media Reset Script")
     print("=" * 40)
     
