@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter
 
 from ..core.models import DashboardData, DeviceStatus, PlayerStatus, WiFiStatus, UpdateStatus, StorageInfo
 from ..core.storage import get_dir_size
@@ -20,7 +20,7 @@ logger = get_logger("web.dashboard")
 # Aggressive caching for Pi Zero 2 performance
 _dashboard_cache: Optional[DashboardData] = None
 _cache_timestamp: float = 0
-_cache_ttl: float = 5.0  # 5 second cache TTL - much more aggressive than before
+_cache_ttl: float = 5.0  # 5 second cache TTL
 
 def create_dashboard_router(
     display_player: DisplayPlayer = None,
@@ -59,8 +59,7 @@ def create_dashboard_router(
         return device_status
     
     def get_storage_info():
-        """Get storage information - separate from dashboard cache."""
-        # Only called when actually needed (settings modal open)
+        """Get storage information - completely separate from dashboard."""
         total, used, free = shutil.disk_usage("/")
 
         backend_root = Path(__file__).resolve().parent.parent.parent
@@ -80,24 +79,17 @@ def create_dashboard_router(
         )
     
     @router.get("", response_model=DashboardData)
-    async def get_dashboard(include_storage: bool = Query(False, description="Include storage info (only needed for settings)")):
-        """Get consolidated dashboard data with optional storage info."""
+    async def get_dashboard():
+        """Get consolidated dashboard data - no storage included for performance."""
         global _dashboard_cache, _cache_timestamp
         
         current_time = time.time()
         
-        # Return cached data if it's still valid and storage requirements match
-        if (_dashboard_cache and 
-            (current_time - _cache_timestamp) < _cache_ttl and
-            (not include_storage or (_dashboard_cache.storage is not None))):
-            
-            # If storage is requested but not in cache, we need to rebuild
-            if include_storage and not _dashboard_cache.storage:
-                pass  # Continue to rebuild
-            else:
-                return _dashboard_cache
+        # Return cached data if it's still valid
+        if _dashboard_cache and (current_time - _cache_timestamp) < _cache_ttl:
+            return _dashboard_cache
         
-        # Cache miss - rebuild dashboard data
+        # Cache miss - rebuild dashboard data (fast, no storage)
         start_time = time.time()
         
         # System status
@@ -106,9 +98,6 @@ def create_dashboard_router(
         # Media / loop / processing data
         dashboard_data = media_index.get_dashboard_data()
 
-        # Storage data - only calculate if requested
-        storage_payload = get_storage_info() if include_storage else None
-
         dashboard_result = DashboardData(
             status=device_status,
             media=dashboard_data["media"],
@@ -116,7 +105,6 @@ def create_dashboard_router(
             loop=dashboard_data["loop"],
             last_updated=dashboard_data["last_updated"],
             processing=dashboard_data["processing"],
-            storage=storage_payload,
         )
         
         # Cache the result
@@ -124,14 +112,13 @@ def create_dashboard_router(
         _cache_timestamp = current_time
         
         build_time = time.time() - start_time
-        storage_note = " (with storage)" if include_storage else " (no storage)"
-        logger.debug(f"Dashboard data rebuilt in {build_time*1000:.1f}ms{storage_note}")
+        logger.debug(f"Dashboard data rebuilt in {build_time*1000:.1f}ms (no storage)")
         
         return dashboard_result
     
     @router.get("/storage", response_model=StorageInfo)
     async def get_storage():
-        """Get storage information separately - for settings modal."""
+        """Get storage information separately - for settings modal only."""
         return get_storage_info()
     
     return router

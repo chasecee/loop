@@ -92,14 +92,13 @@ class StorageInfo(BaseModel):
     units: str = "bytes"
 
 class DashboardData(BaseModel):
-    """Combined dashboard data - matches frontend DashboardData interface."""
+    """Combined dashboard data - storage now separate for performance."""
     status: DeviceStatus
     media: List[MediaItem]  # List of MediaItem objects
     active: Optional[str]
     loop: List[str]
     last_updated: Optional[int]
     processing: Optional[Dict[str, ProcessingJobResponse]] = None  # Processing jobs dict
-    storage: Optional[StorageInfo] = None  # Optional - only included when requested
 
 class APIResponse(BaseModel):
     """Standard API response format - matches frontend APIResponse interface."""
