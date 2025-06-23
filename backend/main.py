@@ -351,7 +351,7 @@ class LOOPApplication:
                 app,
                 host=self.config.web.host,
                 port=self.config.web.port,
-                log_level="warning",  # Reduce noise
+                log_level="info",  # Enable INFO logs to see our debug output
                 access_log=False,
                 # Connection management settings
                 timeout_keep_alive=5,  # Reduce keep-alive timeout from default 20s

@@ -216,21 +216,30 @@ async def process_video_file(file: UploadFile, content: bytes, slug: str, media_
     
     # Create job for progress tracking
     job_id = str(uuid.uuid4())
+    logger.info(f"🎬 STARTING process_video_file for {file.filename}, job_id: {job_id}")
     media_index.add_processing_job(job_id, file.filename)
+    logger.info(f"🎬 Job {job_id} added to media index")
     
     try:
+        logger.info(f"🎬 About to call _safe_progress_update for uploading - job {job_id}")
         # 🚀 Safe progress update: uploading
         await _safe_progress_update(job_id, 0, "uploading", "Uploading video...", file.filename)
+        logger.info(f"🎬 Completed _safe_progress_update for uploading - job {job_id}")
         
         # Save to raw directory for frontend preview
+        logger.info(f"🎬 About to save file to {media_raw_dir} - job {job_id}")
         raw_path = media_raw_dir / f"{slug}_{file.filename}"
         with open(raw_path, "wb") as f:
             f.write(content)
+        logger.info(f"🎬 File saved to {raw_path} - job {job_id}")
         
+        logger.info(f"🎬 About to call _safe_progress_update for uploaded - job {job_id}")
         # 🚀 Safe progress update: uploaded
         await _safe_progress_update(job_id, 30, "uploaded", "Video uploaded, waiting for frame data...", file.filename)
+        logger.info(f"🎬 Completed _safe_progress_update for uploaded - job {job_id}")
         
         # Create metadata (incomplete until frames arrive)
+        logger.info(f"🎬 Creating metadata - job {job_id}")
         metadata = {
             "slug": slug,
             "filename": file.filename,
@@ -242,20 +251,25 @@ async def process_video_file(file: UploadFile, content: bytes, slug: str, media_
         }
         
         # Add to media index
+        logger.info(f"🎬 Adding metadata to media index - job {job_id}")
         media_index.add_media(metadata, make_active=True)
+        logger.info(f"🎬 Metadata added to media index - job {job_id}")
         
         # 🚀 CRITICAL: Broadcast upload (partial) via WebSocket
         try:
+            logger.info(f"🎬 Broadcasting media upload - job {job_id}")
             await broadcaster.media_uploaded(metadata)
             logger.info(f"✅ Broadcasted video upload: {file.filename}")
         except Exception as e:
             logger.warning(f"Failed to broadcast video upload: {e}")
         
+        logger.info(f"🎬 COMPLETING process_video_file successfully - job {job_id}")
         return {"slug": slug, "job_id": job_id}
         
     except Exception as e:
         error_msg = f"Error processing video {file.filename}: {str(e)}"
         logger.error(error_msg, exc_info=True)
+        logger.error(f"🎬 EXCEPTION in process_video_file - job {job_id}: {e}")
         
         # GUARANTEE job reaches terminal state
         try:
