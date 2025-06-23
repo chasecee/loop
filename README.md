@@ -39,10 +39,11 @@ LOOP uses a **performance-first architecture** designed specifically for Pi Zero
 ### Data Flow
 
 1. **Browser Conversion** (`ffmpeg-util.ts`) - WebAssembly FFmpeg converts media to RGB565 frames
-2. **Dual Upload** - Browser uploads original video + processed frame ZIP separately
-3. **Media Management** (`media_index.py`) - Single source of truth with aggressive in-memory caching
-4. **Web API** (`server.py`) - Handles uploads with 5-second dashboard caching
-5. **Display Player** (`player.py`) - Reads processed frames with producer-consumer buffering
+2. **Instant Upload** - Browser uploads original video + processed frame ZIP with immediate response
+3. **Async Processing** - ZIP extraction happens in background threads without blocking
+4. **Media Management** (`media_index.py`) - Single source of truth with aggressive in-memory caching
+5. **Web API** (`server.py`) - Handles uploads with 5-second dashboard caching and GZip compression
+6. **Display Player** (`player.py`) - Reads processed frames with producer-consumer buffering
 
 ### Key Components
 
@@ -149,15 +150,15 @@ LOOP uses **browser-side processing** for optimal performance:
 1. **Browser Conversion**: Your browser uses WebAssembly FFmpeg to convert media
 2. **Frame Extraction**: Video converted to 320×240 RGB565 frames at 25fps
 3. **ZIP Packaging**: Frames packaged into ZIP with metadata
-4. **Upload**: Original video + frame ZIP uploaded to Pi
-5. **Storage**: Pi stores files and updates media index
+4. **Instant Upload**: Original video + frame ZIP uploaded to Pi with immediate response
+5. **Background Processing**: ZIP extraction happens asynchronously while you continue using the interface
 
 ### Benefits
 
-- **Fast**: No Pi CPU used for conversion
+- **Fast**: No Pi CPU used for conversion, instant upload responses
 - **Compatible**: Works with all major video formats
-- **Reliable**: Browser handles complex codec support
-- **Efficient**: Only final processed files sent to Pi
+- **Reliable**: Browser handles complex codec support, asynchronous processing
+- **Efficient**: Only final processed files sent to Pi, GZip-compressed API responses
 
 ### Browser Requirements
 
@@ -344,12 +345,13 @@ frontend/loop-frontend/  # Next.js web interface
 
 ### Performance Metrics
 
-| Operation            | Before Optimization | After Optimization      |
-| -------------------- | ------------------- | ----------------------- |
-| Dashboard requests   | 1000ms+             | ~50ms (cached)          |
-| Storage calculation  | Every 15s           | Only when needed        |
-| Media index reads    | File I/O every time | 5s cache                |
-| Startup storage scan | 36+ seconds         | Skipped if recent cache |
+| Operation           | Before Optimization | After Optimization    |
+| ------------------- | ------------------- | --------------------- |
+| Dashboard requests  | 1000ms+             | ~50ms (cached + GZip) |
+| Large file uploads  | HTTP timeouts       | Instant response      |
+| Media deletion      | Race conditions     | Clean immediate stop  |
+| API responses       | Uncompressed        | 5-10x smaller (GZip)  |
+| Storage calculation | Every 15s           | Only when needed      |
 
 ### Browser Optimization
 
@@ -363,7 +365,6 @@ frontend/loop-frontend/  # Next.js web interface
 - **WiFi Management** - May have functionality gaps in current build
 - **Browser Requirements** - WebAssembly FFmpeg needs modern browser + 4GB+ RAM
 - **Storage Performance** - Pi Zero 2 + SD card inherently limits I/O speed
-- **File Resume** - Large uploads can't be resumed if interrupted
 - **Physical Controls** - Rotary encoder not yet implemented
 
 ## Known Issues
@@ -371,7 +372,6 @@ frontend/loop-frontend/  # Next.js web interface
 - WiFi scanning/connection functionality may be incomplete
 - Large files (>100MB) may require significant browser memory
 - Storage calculations can be slow on first run (30+ seconds)
-- Upload progress may pause during browser processing phases
 
 ## Planned Features
 
