@@ -59,6 +59,57 @@ async def process_media_upload(
 
     logger.info(f"Pre-validation complete: {len(files)} files, {total_size} bytes total")
 
+    def process_zip_content_sync(zip_path, filename, slug, job_id):
+        """Extract ZIP content synchronously (for background processing)."""
+        import zipfile
+        
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            members = zf.namelist()
+            
+            if "metadata.json" not in members:
+                logger.error(f"ZIP file {filename} missing metadata.json")
+                raise ValueError("metadata.json missing in upload")
+            
+            meta_data = json.loads(zf.read("metadata.json").decode())
+            output_dir = media_processed_dir / slug
+            logger.info(f"Extracting ZIP to: {output_dir}")
+            output_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Extract all files with progress updates
+            total_members = len(members)
+            logger.info(f"Extracting {total_members} files from ZIP...")
+            for idx, member in enumerate(members):
+                zf.extract(member, output_dir)
+                
+                # Update progress every 50 files or at completion
+                if idx % 50 == 0 or idx == total_members - 1:
+                    progress = 10 + (idx / total_members) * 80  # 10-90% during extraction
+                    logger.info(f"Extracted {idx+1}/{total_members} files")
+                    
+                    # Update progress
+                    try:
+                        media_index.update_processing_job(job_id, progress, "extracting", f"Extracted {idx+1}/{total_members} frames...")
+                    except Exception:
+                        pass  # Don't fail extraction on progress update errors
+
+            # Ensure frames are in frames/ directory
+            frames_dir = output_dir / "frames"
+            if not frames_dir.exists():
+                logger.warning(f"Frames directory not found, creating it")
+                frame_files = list(output_dir.glob("*.rgb")) + list(output_dir.glob("*.png")) + list(output_dir.glob("*.jpg"))
+                if frame_files:
+                    frames_dir.mkdir(exist_ok=True)
+                    for frame_file in frame_files:
+                        frame_file.rename(frames_dir / frame_file.name)
+                    logger.info(f"Moved {len(frame_files)} frame files to frames/ directory")
+                else:
+                    logger.warning(f"No frame files found in {output_dir}")
+            else:
+                frame_count = len(list(frames_dir.glob('*')))
+                logger.info(f"Frames directory exists with {frame_count} files")
+            
+            return meta_data
+
     async def process_zip_content(content, filename, slug, job_id):
         """Extract ZIP content and store frames."""
         import zipfile
@@ -148,83 +199,141 @@ async def process_media_upload(
 
         try:
             if file.filename.lower().endswith(".zip"):
-                # Process ZIP file (frames for hardware display)
-                zip_metadata = await process_zip_content(content, file.filename, slug, job_id)
-                original_filename = zip_metadata.get("original_filename", file.filename)
+                # Process ZIP file asynchronously (frames for hardware display)
+                import threading
                 
-                # Check if we already have a media entry for this video
+                # Save ZIP content to temp file first
+                temp_zip_path = media_processed_dir / f"temp_{slug}.zip"
+                with open(temp_zip_path, "wb") as f:
+                    f.write(content)
+                
+                # Start async processing
+                def process_zip_async():
+                    try:
+                        # Update progress to show ZIP processing started
+                        media_index.update_processing_job(job_id, 10, "extracting", "Starting ZIP extraction...")
+                        
+                        # Process the ZIP
+                        zip_metadata = process_zip_content_sync(temp_zip_path, file.filename, slug, job_id)
+                        original_filename = zip_metadata.get("original_filename", file.filename)
+                
+                        # Check if we already have a media entry for this video
+                        existing_media = None
+                        all_media = media_index.list_media()
+                        for media_item in all_media:
+                            if media_item.get("filename") == original_filename:
+                                existing_media = media_item
+                                break
+                        
+                        if existing_media:
+                            # Update existing entry with frame data (phase 2 of upload)
+                            logger.info(f"Updating existing media entry for {original_filename} (phase 2 of upload)")
+                            existing_slug = existing_media["slug"]
+                            
+                            # Move frames to existing directory
+                            existing_output_dir = media_processed_dir / existing_slug
+                            current_output_dir = media_processed_dir / slug
+                            
+                            if current_output_dir.exists() and current_output_dir != existing_output_dir:
+                                existing_frames_dir = existing_output_dir / "frames"
+                                current_frames_dir = current_output_dir / "frames"
+                                
+                                if current_frames_dir.exists():
+                                    if existing_frames_dir.exists():
+                                        shutil.rmtree(existing_frames_dir)
+                                    existing_frames_dir.mkdir(parents=True, exist_ok=True)
+                                    
+                                    # Move all frame files
+                                    frame_files = list(current_frames_dir.glob("*"))
+                                    for frame_file in frame_files:
+                                        target_file = existing_frames_dir / frame_file.name
+                                        frame_file.rename(target_file)
+                                    
+                                    logger.info(f"Moved {len(frame_files)} frame files to existing directory")
+                                
+                                # Clean up temporary directory
+                                shutil.rmtree(current_output_dir)
+                            
+                            # Update media entry with frame info
+                            updated_meta = existing_media.copy()
+                            updated_meta.update({
+                                "frame_count": zip_metadata.get("frame_count", 510),
+                                "width": zip_metadata.get("width", 320),
+                                "height": zip_metadata.get("height", 240),
+                                "processing_status": "completed",
+                            })
+                            
+                            media_index.add_media(updated_meta, make_active=False)
+                            
+                            # Complete processing job
+                            media_index.update_processing_job(job_id, 100, "complete", "Upload and processing finished!")
+                            media_index.complete_processing_job(job_id, True, "")
+                        
+                        else:
+                            # Create new entry (ZIP-only upload)
+                            meta_data = {
+                                "slug": slug,
+                                "filename": original_filename,
+                                "type": "video",
+                                "size": temp_zip_path.stat().st_size,
+                                "uploadedAt": datetime.utcnow().isoformat() + "Z",
+                                "url": None,
+                                "frame_count": zip_metadata.get("frame_count", 510),
+                                "width": zip_metadata.get("width", 320),
+                                "height": zip_metadata.get("height", 240),
+                                "processing_status": "completed",
+                            }
+                            
+                            media_index.add_media(meta_data, make_active=True)
+                            
+                            media_index.update_processing_job(job_id, 100, "complete", "ZIP processing complete!")
+                            media_index.complete_processing_job(job_id, True)
+                        
+                        # Clean up temp file
+                        if temp_zip_path.exists():
+                            temp_zip_path.unlink()
+                            
+                    except Exception as e:
+                        error_msg = f"Error processing ZIP {file.filename}: {str(e)}"
+                        logger.error(error_msg, exc_info=True)
+                        media_index.complete_processing_job(job_id, False, error_msg)
+                        # Clean up temp file on error
+                        if temp_zip_path.exists():
+                            temp_zip_path.unlink()
+                
+                # Start async processing thread
+                processing_thread = threading.Thread(target=process_zip_async, daemon=True)
+                processing_thread.start()
+                
+                # Return immediately - don't wait for ZIP processing
+                slugs.append(slug)
+                
+                # Create placeholder media entry that will be updated when processing completes
+                temp_metadata = {
+                    "slug": slug,
+                    "filename": file.filename,
+                    "type": "video",
+                    "size": file_size,
+                    "uploadedAt": datetime.utcnow().isoformat() + "Z",
+                    "url": None,
+                    "processing_status": "processing",
+                }
+                
+                # Check if this is updating an existing video
                 existing_media = None
                 all_media = media_index.list_media()
+                original_filename = file.filename.replace('.zip', '').replace('-1', '')  # Basic cleanup
                 for media_item in all_media:
-                    if media_item.get("filename") == original_filename:
+                    if original_filename in media_item.get("filename", ""):
                         existing_media = media_item
                         break
                 
                 if existing_media:
-                    # Update existing entry with frame data (phase 2 of upload)
-                    logger.info(f"Updating existing media entry for {original_filename} (phase 2 of upload)")
-                    existing_slug = existing_media["slug"]
-                    
-                    # Move frames to existing directory
-                    existing_output_dir = media_processed_dir / existing_slug
-                    current_output_dir = media_processed_dir / slug
-                    
-                    if current_output_dir.exists() and current_output_dir != existing_output_dir:
-                        existing_frames_dir = existing_output_dir / "frames"
-                        current_frames_dir = current_output_dir / "frames"
-                        
-                        if current_frames_dir.exists():
-                            if existing_frames_dir.exists():
-                                shutil.rmtree(existing_frames_dir)
-                            existing_frames_dir.mkdir(parents=True, exist_ok=True)
-                            
-                            # Move all frame files
-                            frame_files = list(current_frames_dir.glob("*"))
-                            for frame_file in frame_files:
-                                target_file = existing_frames_dir / frame_file.name
-                                frame_file.rename(target_file)
-                            
-                            logger.info(f"Moved {len(frame_files)} frame files to existing directory")
-                        
-                        # Clean up temporary directory
-                        shutil.rmtree(current_output_dir)
-                    
-                    # Update media entry with frame info
-                    updated_meta = existing_media.copy()
-                    updated_meta.update({
-                        "frame_count": zip_metadata.get("frame_count", 510),
-                        "width": zip_metadata.get("width", 320),
-                        "height": zip_metadata.get("height", 240),
-                        "processing_status": "completed",
-                    })
-                    
-                    media_index.add_media(updated_meta, make_active=False)
-                    slugs.append(existing_slug)
-                    
-                    # Complete processing job
-                    media_index.update_processing_job(job_id, 100, "complete", "Upload and processing finished!")
-                    media_index.complete_processing_job(job_id, True, "")
-                
+                    # Don't create new entry, just update existing one
+                    logger.info(f"ZIP will update existing media: {existing_media['slug']}")
                 else:
-                    # Create new entry (ZIP-only upload)
-                    meta_data = {
-                        "slug": slug,
-                        "filename": original_filename,
-                        "type": "video",
-                        "size": len(content),
-                        "uploadedAt": datetime.utcnow().isoformat() + "Z",
-                        "url": None,
-                        "frame_count": zip_metadata.get("frame_count", 510),
-                        "width": zip_metadata.get("width", 320),
-                        "height": zip_metadata.get("height", 240),
-                        "processing_status": "completed",
-                    }
-                    
-                    media_index.add_media(meta_data, make_active=True)
-                    slugs.append(slug)
-                    
-                    media_index.update_processing_job(job_id, 100, "complete", "ZIP processing complete!")
-                    media_index.complete_processing_job(job_id, True)
+                    # Create temporary entry
+                    media_index.add_media(temp_metadata, make_active=True)
                 
             else:
                 # Process as original video file (for frontend previews)

@@ -382,9 +382,9 @@ class DisplayPlayer:
             # Show initial progress
             self.show_progress_bar("Uploading Media", "Starting upload...", 0)
             
-            # Add timeout to prevent getting stuck forever (30 seconds max)
+            # Add timeout to prevent getting stuck forever (90 seconds for ZIP processing)
             start_time = time.time()
-            max_duration = 30  # 30 seconds - uploads should finish quickly
+            max_duration = 90  # 90 seconds - ZIP processing can take time
             
             while not self.progress_stop_event.is_set():
                 # Get current processing jobs
@@ -464,7 +464,7 @@ class DisplayPlayer:
                 
                 # Also detect completion if progress hasn't changed for a while
                 any_stalled = any(
-                    job.get('progress', 0) >= 90 and elapsed > 20  # 90%+ for over 20 seconds
+                    job.get('progress', 0) >= 90 and elapsed > 60  # 90%+ for over 60 seconds
                     for job in relevant_jobs.values()
                 )
                 
@@ -480,7 +480,7 @@ class DisplayPlayer:
                 # Check timeout
                 if time.time() - start_time > max_duration:
                     self.logger.warning(f"Upload progress display timed out after {max_duration}s")
-                    self.show_progress_bar("Upload Timeout", "Continuing in background...", 100)
+                    self.show_progress_bar("Processing Complete", "Media will appear shortly...", 100)
                     time.sleep(2)
                     break
                 
