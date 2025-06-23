@@ -104,4 +104,74 @@ class ErrorHandlingMiddleware(BaseHTTPMiddleware):
                     "code": exc.__class__.__name__,
                     "timestamp": int(time.time())
                 }
-            ) 
+            )
+
+
+class ConditionalGZipMiddleware(BaseHTTPMiddleware):
+    """
+    GZip compression that only compresses responses, not file uploads.
+    Skips compression for file upload requests to avoid memory issues.
+    """
+    
+    def __init__(self, app, minimum_size: int = 1000):
+        super().__init__(app)
+        self.minimum_size = minimum_size
+    
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        
+        # Skip compression for file uploads
+        if (request.method == "POST" and 
+            request.url.path == "/api/media" and 
+            request.headers.get("content-type", "").startswith("multipart/form-data")):
+            logger.debug("Skipping gzip compression for file upload")
+            return response
+        
+        # Skip compression for already compressed files or non-compressible content
+        content_type = response.headers.get("content-type", "")
+        if (content_type.startswith("image/") or 
+            content_type.startswith("video/") or
+            content_type.startswith("application/zip") or
+            content_type.startswith("application/octet-stream")):
+            return response
+        
+        # Only compress text-based responses (JSON, HTML, CSS, JS)
+        if not (content_type.startswith("application/json") or
+                content_type.startswith("text/") or
+                content_type.startswith("application/javascript")):
+            return response
+        
+        # Check if client accepts gzip
+        accept_encoding = request.headers.get("accept-encoding", "")
+        if "gzip" not in accept_encoding:
+            return response
+        
+        # Get response body
+        body = b""
+        async for chunk in response.body_iterator:
+            body += chunk
+        
+        # Skip compression if body is too small
+        if len(body) < self.minimum_size:
+            return Response(
+                content=body,
+                status_code=response.status_code,
+                headers=dict(response.headers),
+                media_type=response.media_type
+            )
+        
+        # Compress the response
+        import gzip
+        compressed_body = gzip.compress(body)
+        
+        # Update headers
+        headers = dict(response.headers)
+        headers["content-encoding"] = "gzip"
+        headers["content-length"] = str(len(compressed_body))
+        
+        return Response(
+            content=compressed_body,
+            status_code=response.status_code,
+            headers=headers,
+            media_type=response.media_type
+        ) 
