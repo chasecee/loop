@@ -424,7 +424,7 @@ class LOOPApplication:
             # Show welcome message
             if self.display_player:
                 try:
-                    self.display_player.show_message("LOOP Ready!", duration=3.0)
+                    self.display_player.show_simple_message("LOOP Ready!", color=0x07E0, duration=3.0)
                 except Exception:
                     pass
             

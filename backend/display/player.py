@@ -27,7 +27,7 @@ class DisplayPlayer:
         self.media_config = media_config
         self.logger = get_logger("player")
         
-        # Media management - SIMPLIFIED: no more caching
+        # Media management
         self.media_dir = Path("media/processed")
         self.current_sequence: Optional[FrameSequence] = None
         
@@ -39,15 +39,15 @@ class DisplayPlayer:
         self.loop_mode = "all"  # "all" or "one"
         
         # Per-media loop tracking
-        self.current_media_loops = 0  # How many times current media has looped
-        self.static_image_display_time = float(media_config.static_image_duration_sec)  # Configurable static image duration
+        self.current_media_loops = 0
+        self.static_image_display_time = float(media_config.static_image_duration_sec)
         
-        # Processing progress display
+        # Upload progress display
         self.showing_progress = False
         self.progress_thread: Optional[threading.Thread] = None
         self.progress_stop_event = threading.Event()
         
-        # Event-based pause handling (eliminates busy-waiting)
+        # Event-based pause handling
         self.pause_event = threading.Event()
         self.pause_event.set()  # Start unpaused
         
@@ -55,20 +55,13 @@ class DisplayPlayer:
         self.playback_thread: Optional[threading.Thread] = None
         self.lock = threading.Lock()
         
-        # Status display
-        self.frame_buffer = FrameBuffer(display_config.width, display_config.height)
+        # Track logged missing frames to avoid spam
+        self._logged_missing_frames = set()
         
-        # Pre-generate status message frames for performance (no runtime PIL operations)
-        self._status_frames = self._pregenerate_status_frames()
-        
-        self.logger.info("Display player initialized (simplified architecture)")
+        self.logger.info("Display player initialized")
     
     def _wait_interruptible(self, duration: float) -> bool:
-        """Wait for duration but return immediately if interrupted or paused.
-        
-        Returns:
-            True if wait completed normally, False if interrupted
-        """
+        """Wait for duration but return immediately if interrupted or paused."""
         if duration <= 0:
             return True
         
@@ -84,7 +77,6 @@ class DisplayPlayer:
             
             # Check if we got paused during the wait
             if not self.pause_event.is_set():
-                # We got paused, wait for unpause
                 if not self.pause_event.wait(timeout=0.1):
                     continue  # Still paused, check again
             
@@ -95,74 +87,6 @@ class DisplayPlayer:
                 time.sleep(sleep_time)
         
         return True  # Completed normally
-    
-    def _pregenerate_status_frames(self) -> Dict[str, bytes]:
-        """Pre-generate common status message frames to avoid runtime PIL operations."""
-        frames = {}
-        
-        # Common status messages to pre-generate
-        messages = [
-            ("No Media", "Add media files to start playback"),
-            ("Processing", "Converting media files..."),
-            ("Paused", "Playback paused"),
-            ("Loading", "Loading media..."),
-            ("Error", "Media playback error")
-        ]
-        
-        try:
-            from PIL import Image, ImageDraw, ImageFont
-            
-            for title, subtitle in messages:
-                # Create image
-                image = Image.new('RGB', (self.display_config.width, self.display_config.height), (0, 0, 0))
-                draw = ImageDraw.Draw(image)
-                
-                # Try to load fonts
-                try:
-                    title_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 20)
-                    subtitle_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 14)
-                except (OSError, IOError):
-                    try:
-                        title_font = ImageFont.load_default()
-                        subtitle_font = ImageFont.load_default()
-                    except (OSError, IOError) as e:
-                        self.logger.debug(f"Default font loading failed: {e}")
-                        title_font = None
-                        subtitle_font = None
-                
-                if title_font and subtitle_font:
-                    # Draw title
-                    title_bbox = draw.textbbox((0, 0), title, font=title_font)
-                    title_width = title_bbox[2] - title_bbox[0]
-                    title_x = (self.display_config.width - title_width) // 2
-                    title_y = self.display_config.height // 2 - 30
-                    draw.text((title_x, title_y), title, fill=(255, 255, 255), font=title_font)
-                    
-                    # Draw subtitle
-                    subtitle_bbox = draw.textbbox((0, 0), subtitle, font=subtitle_font)
-                    subtitle_width = subtitle_bbox[2] - subtitle_bbox[0]
-                    subtitle_x = (self.display_config.width - subtitle_width) // 2
-                    subtitle_y = title_y + 35
-                    draw.text((subtitle_x, subtitle_y), subtitle, fill=(200, 200, 200), font=subtitle_font)
-                
-                # Convert to RGB565 bytes directly (no PNG conversion)
-                import numpy as np
-                img_array = np.array(image, dtype=np.uint8)
-                r = img_array[:, :, 0].astype(np.uint16)
-                g = img_array[:, :, 1].astype(np.uint16)
-                b = img_array[:, :, 2].astype(np.uint16)
-                rgb565 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
-                frame_data = rgb565.astype('>u2').tobytes()
-                
-                frames[title.lower()] = frame_data
-                
-        except Exception as e:
-            self.logger.warning(f"Failed to pre-generate status frames: {e}")
-            # Return empty dict - fallback to basic display
-            return {}
-        
-        self.logger.info(f"Pre-generated {len(frames)} status message frames")
-        return frames
     
     def get_current_loop_media(self) -> List[Dict]:
         """Get current loop media from authoritative source."""
@@ -181,10 +105,6 @@ class DisplayPlayer:
             return loop_slugs.index(active_slug)
         except ValueError:
             return 0
-    
-    def get_current_media_slug(self) -> Optional[str]:
-        """Get the slug of the currently active media."""
-        return media_index.get_active()
     
     def load_current_sequence(self) -> bool:
         """Load the current media sequence."""
@@ -210,7 +130,14 @@ class DisplayPlayer:
         frames_dir = self.media_dir / media_slug / "frames"
         
         if not frames_dir.exists():
-            self.logger.error(f"Frames directory not found: {frames_dir}")
+            # Log only once per media to avoid spam
+            if media_slug not in self._logged_missing_frames:
+                self.logger.warning(f"Frames directory not found for {media_info.get('filename', media_slug)}: {frames_dir}")
+                self.logger.info(f"Media {media_slug} is video-only (no processed frames)")
+                self._logged_missing_frames.add(media_slug)
+            
+            # Show message for video-only media
+            self.show_simple_message("Video Only", color=0x07E0, duration=3.0)
             return False
         
         try:
@@ -219,12 +146,16 @@ class DisplayPlayer:
             fps = media_info.get('fps', 25)  # Default 25fps
             frame_duration = 1.0 / fps
             
-            # Create frame sequence with simplified constructor
+            # Create frame sequence
             self.current_sequence = FrameSequence(frames_dir, frame_count, frame_duration)
             
             if self.current_sequence.get_frame_count() == 0:
                 self.logger.error(f"No frames found in {frames_dir}")
                 return False
+
+            # Clear the logged missing frames for this media since it loaded successfully
+            if media_slug in self._logged_missing_frames:
+                self._logged_missing_frames.remove(media_slug)
 
             self.logger.info(f"Loaded media: {media_info.get('original_filename', media_slug)}")
             return True
@@ -332,77 +263,45 @@ class DisplayPlayer:
             self.logger.info(f"Loop mode changed to: {self.loop_mode}")
             return self.loop_mode
     
-    def get_loop_mode(self) -> str:
-        """Get current loop mode."""
-        return self.loop_mode
-    
-    def show_message(self, message: str, duration: float = 2.0, color: int = 0xFFFF) -> None:
-        """Display a message on screen temporarily using pre-generated frames."""
+    def show_simple_message(self, message: str, color: int = 0xFFFF, duration: float = 2.0) -> None:
+        """Display a simple colored message on screen."""
         try:
-            # Try to use pre-generated frame first (MUCH faster - no PIL operations)
-            message_key = message.lower()
-            if message_key in self._status_frames:
-                frame_data = self._status_frames[message_key]
-                self.display_driver.display_frame(frame_data)
-                if duration > 0:
-                    time.sleep(duration)
-                return
-            
-            # Fallback to simple colored fill for unknown messages (fast)
-            self.display_driver.fill_screen(0x0000)  # Black background
+            # Simple colored fill for messages (fast, no PIL operations)
+            self.display_driver.fill_screen(color)
             if duration > 0:
                 time.sleep(duration)
-            
         except Exception as e:
             self.logger.error(f"Failed to show message: {e}")
     
-    def show_progress_bar(self, title: str, subtitle: str, progress: float, color: Optional[int] = None) -> None:
+
+    
+    def show_progress_bar(self, title: str, subtitle: str, progress: float) -> None:
         """Display a progress bar with title and subtitle."""
-        # Use configured color if none provided
-        if color is None:
-            color = self.display_config.progress_color
         try:
             # Create image
             image = Image.new('RGB', (self.display_config.width, self.display_config.height), (0, 0, 0))
             draw = ImageDraw.Draw(image)
             
-            # Try to load fonts
+            # Try to load fonts (with fallback)
             try:
                 title_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 20)
                 subtitle_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 14)
             except (OSError, IOError):
-                try:
-                    title_font = ImageFont.load_default()
-                    subtitle_font = ImageFont.load_default()
-                except (OSError, IOError) as e:
-                    self.logger.debug(f"Default font loading failed: {e}")
-                    title_font = None
-                    subtitle_font = None
-            
-            # Convert RGB565 color to RGB888
-            if isinstance(color, int):
-                r = (color >> 11) << 3
-                g = ((color >> 5) & 0x3F) << 2
-                b = (color & 0x1F) << 3
-                rgb_color = (r, g, b)
-            else:
-                rgb_color = color
+                title_font = subtitle_font = ImageFont.load_default()
             
             # Draw title
             if title_font:
                 bbox = draw.textbbox((0, 0), title, font=title_font)
                 title_width = bbox[2] - bbox[0]
                 title_x = (self.display_config.width - title_width) // 2
-                title_y = 40
-                draw.text((title_x, title_y), title, fill=(255, 255, 255), font=title_font)
+                draw.text((title_x, 40), title, fill=(255, 255, 255), font=title_font)
             
-            # Draw subtitle
+            # Draw subtitle  
             if subtitle_font and subtitle:
                 bbox = draw.textbbox((0, 0), subtitle, font=subtitle_font)
                 subtitle_width = bbox[2] - bbox[0]
                 subtitle_x = (self.display_config.width - subtitle_width) // 2
-                subtitle_y = 80
-                draw.text((subtitle_x, subtitle_y), subtitle, fill=(200, 200, 200), font=subtitle_font)
+                draw.text((subtitle_x, 80), subtitle, fill=(200, 200, 200), font=subtitle_font)
             
             # Draw progress bar
             bar_width = 180
@@ -417,8 +316,13 @@ class DisplayPlayer:
             # Progress bar fill
             fill_width = int((progress / 100.0) * bar_width)
             if fill_width > 0:
+                # Use configured progress color
+                color = self.display_config.progress_color
+                r = (color >> 11) << 3
+                g = ((color >> 5) & 0x3F) << 2  
+                b = (color & 0x1F) << 3
                 draw.rectangle([bar_x, bar_y, bar_x + fill_width, bar_y + bar_height], 
-                             fill=rgb_color)
+                             fill=(r, g, b))
             
             # Progress percentage
             progress_text = f"{int(progress)}%"
@@ -426,10 +330,9 @@ class DisplayPlayer:
                 bbox = draw.textbbox((0, 0), progress_text, font=title_font)
                 progress_width = bbox[2] - bbox[0]
                 progress_x = (self.display_config.width - progress_width) // 2
-                progress_y = 180
-                draw.text((progress_x, progress_y), progress_text, fill=(255, 255, 255), font=title_font)
+                draw.text((progress_x, 180), progress_text, fill=(255, 255, 255), font=title_font)
             
-            # Convert to RGB565 format
+            # Convert to RGB565 format and display
             decoder = FrameDecoder(self.display_config.width, self.display_config.height)
             buffer = io.BytesIO()
             image.save(buffer, format='PNG')
@@ -444,16 +347,11 @@ class DisplayPlayer:
             self.logger.error(f"Failed to show progress bar: {e}")
     
     def start_processing_display(self, job_ids: List[str]) -> None:
-        """Start displaying processing progress for given job IDs."""
-        self.logger.info(f"start_processing_display called with job_ids: {job_ids}")
-        
-        # Check if progress display is enabled in config
+        """Start displaying upload progress for given job IDs."""
         if not self.display_config.show_progress:
-            self.logger.warning("Processing progress display disabled in config")
             return
         
         if self.showing_progress:
-            self.logger.info("Progress display already showing, stopping previous")
             self.stop_processing_display()
         
         self.showing_progress = True
@@ -465,32 +363,27 @@ class DisplayPlayer:
             daemon=True
         )
         self.progress_thread.start()
-        self.logger.info(f"✅ Started processing display thread for {len(job_ids)} jobs")
+        self.logger.info(f"Started upload progress display for {len(job_ids)} jobs")
     
     def stop_processing_display(self) -> None:
-        """Stop displaying processing progress."""
+        """Stop displaying upload progress."""
         if self.showing_progress:
             self.showing_progress = False
             self.progress_stop_event.set()
             
             if self.progress_thread:
                 self.progress_thread.join(timeout=2)
-                if self.progress_thread.is_alive():
-                    self.logger.warning("Processing display thread did not stop gracefully")
             
-            self.logger.info("Stopped processing display")
+            self.logger.info("Stopped upload progress display")
     
     def _processing_display_loop(self, job_ids: List[str]) -> None:
-        """Loop that displays processing progress."""
+        """Loop that displays upload progress."""
         try:
-            self.logger.info(f"🎨 Processing display loop started for jobs: {job_ids}")
-            
-            # Immediately show initial progress to take over display
-            self.show_progress_bar("Processing Media", "Starting conversion...", 0)
-            self.logger.info("📊 Showed initial progress bar")
+            # Show initial progress
+            self.show_progress_bar("Uploading Media", "Starting upload...", 0)
             
             while not self.progress_stop_event.is_set():
-                # Get processing jobs
+                # Get current processing jobs
                 processing_jobs = media_index.list_processing_jobs()
                 
                 # Filter to our job IDs
@@ -500,7 +393,6 @@ class DisplayPlayer:
                 }
                 
                 if not relevant_jobs:
-                    self.logger.info("No relevant jobs found, stopping display loop")
                     break
                 
                 # Calculate overall progress
@@ -508,12 +400,9 @@ class DisplayPlayer:
                 completed_jobs = sum(1 for job in relevant_jobs.values() 
                                    if job.get('status') in ['completed', 'error'])
                 
-                if total_jobs > 0:
-                    overall_progress = (completed_jobs / total_jobs) * 100
-                else:
-                    overall_progress = 100
+                overall_progress = (completed_jobs / total_jobs) * 100 if total_jobs > 0 else 100
                 
-                # Find an active job for current status
+                # Find active job for status
                 active_job = None
                 for job in relevant_jobs.values():
                     if job.get('status') == 'processing':
@@ -522,59 +411,52 @@ class DisplayPlayer:
                 
                 if active_job:
                     # Show individual job progress
-                    title = "Processing Media"
-                    subtitle = f"{active_job.get('stage', 'Processing')}"
-                    if 'message' in active_job and active_job['message']:
-                        subtitle = active_job['message'][:30] + "..." if len(active_job['message']) > 30 else active_job['message']
-                    
+                    subtitle = active_job.get('stage', 'Processing')
                     job_progress = active_job.get('progress', 0)
-                    self.show_progress_bar(title, subtitle, job_progress)
+                    self.show_progress_bar("Uploading Media", subtitle, job_progress)
                 else:
                     # Show overall progress
-                    title = "Processing Media"
                     subtitle = f"Completed {completed_jobs}/{total_jobs} files"
-                    self.show_progress_bar(title, subtitle, overall_progress)
+                    self.show_progress_bar("Uploading Media", subtitle, overall_progress)
                 
-                # Check if all jobs are completed
+                # Check if all jobs completed
                 all_completed = all(
                     job.get('status') in ['completed', 'error'] 
                     for job in relevant_jobs.values()
                 )
                 
                 if all_completed:
-                    # Show completion message briefly
-                    self.show_progress_bar("Processing Complete", 
+                    # Show completion briefly
+                    self.show_progress_bar("Upload Complete", 
                                          f"Processed {total_jobs} files", 100)
                     time.sleep(2)
                     break
                 
                 # Wait before next update
-                if not self.progress_stop_event.wait(1.0):  # 1 second update interval
-                    continue
-                else:
+                if self.progress_stop_event.wait(1.0):
                     break
                     
         except Exception as e:
-            self.logger.error(f"Error in processing display loop: {e}")
+            self.logger.error(f"Error in upload progress display: {e}")
         finally:
             self.showing_progress = False
     
     def show_no_media_message(self) -> None:
         """Show a message when no media is available."""
-        self.show_message("No Media", duration=0, color=0x07E0)  # Green text - matches pre-generated frame
+        self.show_simple_message("No Media", color=0x07E0, duration=0)  # Green, persistent
     
     def run(self) -> None:
-        """Main playback loop - FIXED to respect loop counts and proper timing."""
-        self.logger.info("Starting fixed playback loop")
+        """Main playback loop."""
+        self.logger.info("Starting playback loop")
         
         while self.running:
             try:
-                # Don't interfere with processing display
+                # Don't interfere with upload progress display
                 if self.showing_progress:
                     time.sleep(0.5)
                     continue
                 
-                # Get current loop state fresh every cycle
+                # Get current loop state
                 loop_slugs = media_index.list_loop()
                 
                 # Check if we have media to play
@@ -589,161 +471,100 @@ class DisplayPlayer:
                         # Failed to load, try next media or wait
                         if len(loop_slugs) > 1:
                             self.next_media()
+                            time.sleep(2)
                         else:
-                            time.sleep(1)
+                            time.sleep(5)  # Wait longer for single media to reduce spam
                         continue
                     # Reset loop counter when loading new media
                     self.current_media_loops = 0
                 
-                # Snapshot the current sequence to avoid race conditions where another
-                # thread sets self.current_sequence to None mid-playback (e.g. during
-                # a refresh or media switch).  Holding a local reference ensures we
-                # either finish the current playback iteration or fail gracefully
-                # without triggering AttributeError: 'NoneType' object has no attribute ...
+                # Snapshot sequence to avoid race conditions
                 sequence = self.current_sequence
-
-                # In extremely rare cases the sequence may have been cleared between
-                # the checks above and this assignment. Safeguard and retry loading
-                # if that happens.
                 if sequence is None:
-                    self.logger.debug("Sequence cleared mid-cycle; reloading.")
                     continue
 
                 frame_count = sequence.get_frame_count()
                 is_static_image = frame_count == 1 and sequence.get_frame_duration(0) == 0.0
                 
                 if is_static_image:
-                    # Display static image for the configured duration
+                    # Display static image for configured duration
                     frame_data = sequence.get_next_frame(timeout=2.0)
                     if frame_data:
-                        self.logger.info(f"Displaying static image for {self.static_image_display_time} seconds")
                         self.display_driver.display_frame(frame_data)
-                        
-                        # Efficient interruptible wait (no busy-waiting)
-                        start_time = time.time()
-                        wait_completed = self._wait_interruptible(self.static_image_display_time)
-                        actual_time = time.time() - start_time
-                        
-                        if wait_completed:
-                            self.logger.info(f"Static image display completed after {actual_time:.1f}s")
-                        else:
-                            self.logger.info(f"Static image interrupted after {actual_time:.1f}s")
+                        self._wait_interruptible(self.static_image_display_time)
                 else:
-                    # Play all frames in animated sequence
+                    # Play animated sequence
                     sequence_completed = True
-                    frame_times = []  # Track frame performance for diagnostics
                     
                     for frame_idx in range(frame_count):
-                        frame_start = time.time()
-                        
-                        if not self.running:
+                        if not self.running or self.showing_progress:
                             sequence_completed = False
                             break
                         
-                        # Don't interfere with processing display
-                        if self.showing_progress:
-                            sequence_completed = False
-                            break
-                        
-                        # Handle pause efficiently (no busy-waiting)
+                        # Handle pause efficiently
                         if self.paused and self.running and not self.showing_progress:
-                            self.pause_event.wait()  # Block until unpaused
+                            self.pause_event.wait()
                         
                         if not self.running or self.showing_progress:
                             sequence_completed = False
                             break
                         
-                        # Get frame data and duration
+                        # Get and display frame
                         frame_data = sequence.get_next_frame(timeout=2.0)
                         frame_duration = sequence.get_frame_duration(frame_idx)
                         
                         if not frame_data:
-                            self.logger.error(f"Failed to get frame {frame_idx} from queue")
                             sequence_completed = False
                             break
                         
-                        # CRITICAL PATH: Display frame as fast as possible
+                        # Display frame
                         display_start = time.time()
                         self.display_driver.display_frame(frame_data)
                         display_time = time.time() - display_start
                         
-                        # FRAME TIMING: Use the most restrictive timing (either media duration or framerate)
-                        if frame_duration > 0:
-                            # Media has specific timing (GIF frames)
-                            target_frame_time = frame_duration
-                        else:
-                            # Use configured framerate
-                            target_frame_time = 1.0 / self.frame_rate
-                        
-                        # Calculate remaining sleep time after display
+                        # Frame timing
+                        target_frame_time = frame_duration if frame_duration > 0 else (1.0 / self.frame_rate)
                         sleep_time = max(0, target_frame_time - display_time)
                         
                         if sleep_time > 0:
                             time.sleep(sleep_time)
-                        
-                        # Performance tracking
-                        total_frame_time = time.time() - frame_start
-                        frame_times.append((display_time, total_frame_time))
-                        
-                        # Log performance every 30 frames for diagnostics
-                        if len(frame_times) >= 30:
-                            avg_display = sum(times[0] for times in frame_times) / len(frame_times)
-                            avg_total = sum(times[1] for times in frame_times) / len(frame_times)
-                            actual_fps = 1.0 / avg_total if avg_total > 0 else 0
-                            self.logger.debug(f"Frame performance: {actual_fps:.1f} FPS (display: {avg_display*1000:.1f}ms, total: {avg_total*1000:.1f}ms)")
-                            frame_times = []  # Reset for next batch
                     
                     if not sequence_completed:
-                        continue  # Skip loop logic if sequence was interrupted
+                        continue
                 
-                # Increment loop counter after completing one full playthrough
+                # Handle loop logic after completing sequence
                 self.current_media_loops += 1
-                self.logger.info(f"Completed loop {self.current_media_loops}/{self.loop_count if self.loop_count > 0 else '∞'} of current media")
                 
-                # Decide what to do next based on loop configuration
                 should_continue_current_media = True
                 
                 if self.loop_mode == "one":
-                    # Loop one mode - check if we should keep looping this media
+                    # Loop one mode - keep looping current media
                     if self.loop_count > 0 and self.current_media_loops >= self.loop_count:
-                        # Finished required loops for this media, but stay on it
-                        self.current_media_loops = 0  # Reset for next round
-                    # Always continue with same media in "one" mode
-                    should_continue_current_media = True
+                        self.current_media_loops = 0
                 else:
-                    # Loop all mode - check if we should move to next media
-                    current_loop_slugs = media_index.list_loop()  # Re-check in case it changed
+                    # Loop all mode - decide whether to switch media
+                    current_loop_slugs = media_index.list_loop()
                     
                     if len(current_loop_slugs) <= 1:
-                        # Only one media item - keep looping it
+                        # Only one media - keep looping
                         if self.loop_count > 0 and self.current_media_loops >= self.loop_count:
-                            self.current_media_loops = 0  # Reset for next round
-                        should_continue_current_media = True
+                            self.current_media_loops = 0
                     else:
-                        # Multiple media items - check if we should switch
+                        # Multiple media - check if should switch
                         if not self.media_config.auto_advance_enabled:
-                            # Auto-advance disabled - stay on current media
                             should_continue_current_media = True
                         elif self.loop_count <= 0:
-                            # Infinite loops - play each media once then move to next
+                            # Infinite loops - play once then move to next
                             should_continue_current_media = False
                         elif self.current_media_loops >= self.loop_count:
                             # Completed required loops - move to next
                             should_continue_current_media = False
-                        else:
-                            # Still need more loops of current media
-                            should_continue_current_media = True
                 
                 if not should_continue_current_media:
-                    # Time to switch to next media
-                    self.logger.info(f"Switching to next media (mode: {self.loop_mode}, loops completed: {self.current_media_loops})")
+                    # Switch to next media
                     self.next_media()
-                    # Clear current sequence to force reload of next media
                     self.current_sequence = None
                     self.current_media_loops = 0
-                else:
-                    # Continue with same media - just loop again (no sequence reload needed)
-                    self.logger.debug(f"Continuing current media loop (mode: {self.loop_mode})")
                 
             except Exception as e:
                 self.logger.error(f"Error in playback loop: {e}")
@@ -763,17 +584,15 @@ class DisplayPlayer:
         """Stop the display player."""
         if self.running:
             self.running = False
-            self.stop_processing_display()  # Stop progress display too
+            self.stop_processing_display()
             
-            # Stop the frame producer thread
+            # Stop current sequence
             if self.current_sequence:
                 self.current_sequence.stop()
                 self.current_sequence = None
 
             if self.playback_thread:
                 self.playback_thread.join(timeout=5)
-                if self.playback_thread.is_alive():
-                    self.logger.warning("Playback thread did not stop gracefully")
             self.logger.info("Display player stopped")
     
     def get_status(self) -> Dict:
@@ -793,17 +612,14 @@ class DisplayPlayer:
         }
     
     def refresh_media_list(self) -> None:
-        """Refresh the media list - now just clears current sequence to force reload."""
-        self.logger.info("Refreshing media list (clearing current sequence)")
+        """Refresh the media list by clearing current sequence to force reload."""
         with self.lock:
-            # Simply clear the current sequence to force reload on next cycle
             if self.current_sequence:
                 self.current_sequence.stop()
             self.current_sequence = None
             
-            # If no media exists, ensure we're in a clean state
+            # If no media exists, clear active media
             loop_slugs = media_index.list_loop()
             if not loop_slugs:
-                self.logger.info("No media in loop, clearing active media")
                 media_index.set_active(None)
                 self.current_media_loops = 0 

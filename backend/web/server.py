@@ -496,8 +496,12 @@ def create_app(
                             frames_dir.mkdir(exist_ok=True)
                             for frame_file in frame_files:
                                 frame_file.rename(frames_dir / frame_file.name)
+                            logger.info(f"Moved {len(frame_files)} frame files to frames/ directory")
+                        else:
+                            logger.warning(f"No frame files found in {output_dir}")
                     else:
-                        logger.info(f"Frames directory exists with {len(list(frames_dir.glob('*')))} files")
+                        frame_count = len(list(frames_dir.glob('*')))
+                        logger.info(f"Frames directory exists with {frame_count} files")
                     
                     return meta_data
 
@@ -559,18 +563,31 @@ def create_app(
                             current_frames_dir = current_output_dir / "frames"
                             
                             if current_frames_dir.exists():
+                                # Remove old frames if they exist
                                 if existing_frames_dir.exists():
                                     shutil.rmtree(existing_frames_dir)
+                                    logger.info(f"Removed old frames directory: {existing_frames_dir}")
+                                
+                                # Move new frames
                                 current_frames_dir.rename(existing_frames_dir)
                                 logger.info(f"Moved frames to existing directory: {existing_frames_dir}")
+                            else:
+                                logger.warning(f"No frames directory found in {current_output_dir}")
                             
                             # Copy metadata
                             current_metadata = current_output_dir / "metadata.json"
                             if current_metadata.exists():
-                                current_metadata.rename(existing_output_dir / "metadata.json")
+                                existing_metadata = existing_output_dir / "metadata.json"
+                                if existing_metadata.exists():
+                                    existing_metadata.unlink()
+                                current_metadata.rename(existing_metadata)
+                                logger.info(f"Updated metadata file: {existing_metadata}")
                             
                             # Clean up temporary directory
                             shutil.rmtree(current_output_dir)
+                            logger.info(f"Cleaned up temporary directory: {current_output_dir}")
+                        else:
+                            logger.info(f"Using new directory for frames: {current_output_dir}")
                         
                         # Update media entry with frame info
                         updated_meta = existing_media.copy()
