@@ -479,13 +479,23 @@ def create_app(
                     logger.info(f"Extracting ZIP to: {output_dir}")
                     output_dir.mkdir(parents=True, exist_ok=True)
                     
-                    # Extract all files
+                    # Extract all files with progress updates
                     total_members = len(members)
                     logger.info(f"Extracting {total_members} files from ZIP...")
                     for idx, member in enumerate(members):
                         zf.extract(member, output_dir)
-                        if idx % 100 == 0 or idx == total_members - 1:
+                        
+                        # Update progress every 50 files or at completion
+                        if idx % 50 == 0 or idx == total_members - 1:
+                            progress = 50 + (idx / total_members) * 35  # 50-85% during extraction
                             logger.info(f"Extracted {idx+1}/{total_members} files")
+                            
+                            # Update progress if we have a job_id
+                            if job_id:
+                                try:
+                                    media_index.update_processing_job(job_id, progress, "extracting", f"Extracted {idx+1}/{total_members} frames...")
+                                except Exception:
+                                    pass  # Don't fail extraction on progress update errors
 
                     # Ensure frames are in frames/ directory
                     frames_dir = output_dir / "frames"
@@ -548,10 +558,26 @@ def create_app(
                             existing_media = media_item
                             break
                     
+                    # Also check if there's an active processing job for this media
+                    # (indicates this is the second phase of a two-phase upload)
+                    processing_jobs = media_index.list_processing_jobs()
+                    related_job_id = None
+                    for pid, pdata in processing_jobs.items():
+                        if pdata.get("filename") == original_filename and pdata.get("status") == "completed":
+                            related_job_id = pid
+                            break
+                    
                     if existing_media:
                         # Update existing entry with frame data
-                        logger.info(f"Updating existing media entry for {original_filename}")
+                        logger.info(f"Updating existing media entry for {original_filename} (phase 2 of upload)")
                         existing_slug = existing_media["slug"]
+                        
+                        # Use the related processing job ID if available, otherwise current job ID
+                        active_job_id = related_job_id if related_job_id else job_id
+                        
+                        # Update processing job to show extraction progress
+                        if active_job_id:
+                            media_index.update_processing_job(active_job_id, 50, "extracting", "Extracting frames from ZIP...")
                         
                         # Copy ZIP contents to the existing slug directory  
                         existing_output_dir = Path("media/processed") / existing_slug
@@ -571,6 +597,10 @@ def create_app(
                                 # Move new frames
                                 current_frames_dir.rename(existing_frames_dir)
                                 logger.info(f"Moved frames to existing directory: {existing_frames_dir}")
+                                
+                                # Update processing progress
+                                if active_job_id:
+                                    media_index.update_processing_job(active_job_id, 85, "organizing", "Organizing frame files...")
                             else:
                                 logger.warning(f"No frames directory found in {current_output_dir}")
                             
@@ -599,6 +629,16 @@ def create_app(
                         
                         media_index.add_media(updated_meta, make_active=False)  # Update, don't change active status
                         slugs.append(existing_slug)
+                        
+                        # Complete the original processing job (not the current ZIP job)
+                        if active_job_id:
+                            media_index.complete_processing_job(active_job_id, True, "")
+                            logger.info(f"Completed two-phase upload processing job: {active_job_id}")
+                        
+                        # If we used related job, remove the temporary ZIP job
+                        if related_job_id and job_id != related_job_id:
+                            media_index.remove_processing_job(job_id)
+                            job_ids.remove(job_id)  # Remove from tracking
                         
                     else:
                         # Create new entry (no matching video found)
@@ -644,7 +684,11 @@ def create_app(
 
                     media_index.add_media(metadata, make_active=True)
                     slugs.append(slug)
-                    media_index.complete_processing_job(job_id, True)
+                    
+                    # Don't complete the job yet - wait for frame data (ZIP upload)
+                    # Just update progress to show video upload completed
+                    media_index.update_processing_job(job_id, 30, "uploaded", f"Video uploaded, waiting for frame data...")
+                    logger.info(f"Video upload completed for {file.filename}, waiting for frame data")
                     
             except Exception as e:
                 error_msg = f"Error processing {file.filename}: {str(e)}"
@@ -668,13 +712,8 @@ def create_app(
             except Exception as e:
                 logger.warning(f"Failed to start processing display: {e}")
 
-        # Stop progress overlay
-        if display_player:
-            try:
-                logger.info("Stopping processing display")
-                display_player.stop_processing_display()
-            except Exception as e:
-                logger.warning(f"Failed to stop processing display: {e}")
+        # Don't stop progress overlay immediately - let it continue until jobs are complete
+        # The display player will automatically stop when all jobs finish
 
         # Refresh player display in background to avoid blocking HTTP response
         if display_player:

@@ -33,10 +33,17 @@ def main():
     
     removed_count = 0
     
-    # Remove index file
+    # Remove index file and any temp files
     if index_file.exists():
         index_file.unlink()
         print(f"✅ Removed media index: {index_file}")
+        removed_count += 1
+    
+    # Clean up any orphaned temp files
+    temp_files = list(media_dir.glob("*.tmp"))
+    for temp_file in temp_files:
+        temp_file.unlink()
+        print(f"✅ Removed temp file: {temp_file}")
         removed_count += 1
     
     # Clear raw directory

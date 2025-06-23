@@ -16,7 +16,7 @@ Your pocket-sized animation companion! LOOP is a Wi-Fi enabled display that brin
 ### Easy Control
 
 - Modern web interface with drag & drop uploads
-- Real-time progress tracking during uploads
+- Real-time conversion progress in your browser
 - Browse your media library with instant previews
 - Loop queue management - drag to reorder, click to activate
 - Playback controls: play/pause, next/previous, loop modes
@@ -30,14 +30,30 @@ Your pocket-sized animation companion! LOOP is a Wi-Fi enabled display that brin
 
 ## Architecture
 
-LOOP uses a clean, authority-based architecture:
+LOOP uses a modern browser-first architecture that keeps the Pi lightweight:
 
-- **`media_index.py`** - Single source of truth for all media state, loop ordering, and active media
-- **`server.py`** - Web API that respects media_index authority for all state changes
-- **`player.py`** - Display controller that reads from media_index, never modifies state directly
-- **`convert.py`** - Media processing engine that only reports progress, doesn't manage state
+### Data Flow
 
-This ensures consistency and prevents race conditions across the system.
+1. **Browser Conversion** (`ffmpeg-util.ts`) - WebAssembly FFmpeg converts media to RGB565 frames
+2. **File Upload** - Browser uploads original video + processed frame ZIP to Pi
+3. **Media Management** (`media_index.py`) - Single source of truth for media state and loop ordering
+4. **Web API** (`server.py`) - Handles uploads and state changes, respects media_index authority
+5. **Display Player** (`player.py`) - Reads processed frames for Pi display, never modifies state
+
+### Key Components
+
+- **`media_index.py`** - Authoritative media state manager with in-memory caching
+- **`server.py`** - FastAPI web server handling uploads and API requests
+- **`player.py`** - Display controller that reads from media_index
+- **`ffmpeg-util.ts`** - Browser-side media processing using WebAssembly FFmpeg
+- **`spiout.py`** - Hardware driver for Waveshare ILI9341 displays
+
+This architecture ensures:
+
+- **Fast uploads** - No Pi CPU spent on conversion
+- **Consistency** - Single source of truth prevents race conditions
+- **Scalability** - Browser does the heavy lifting
+- **Reliability** - Pi focuses on display and file management
 
 ## Hardware Setup
 
@@ -86,6 +102,7 @@ The installer will:
 - Install Python dependencies and system packages
 - Set up the systemd service
 - Configure SPI for the display
+- Deploy the pre-built web interface
 - Show you the IP address when ready
 
 ### 3. First Time Setup
@@ -96,9 +113,9 @@ The installer will:
    - Open any website and configure WiFi via the captive portal
 
 2. **Upload Media**:
-   - Visit LOOP's web interface at `http://[pi-ip]:8000`
+   - Visit LOOP's web interface at `http://[pi-ip]`
    - Drag and drop your GIFs, videos, and images
-   - Watch real-time conversion progress
+   - Watch real-time conversion progress in your browser
    - Media automatically joins the loop queue
 
 ### 4. Updates
@@ -110,6 +127,31 @@ cd /home/pi/loop
 git pull
 sudo systemctl restart loop
 ```
+
+## Media Processing
+
+LOOP uses **browser-side processing** for optimal performance:
+
+### Conversion Process
+
+1. **Browser Conversion**: Your browser uses WebAssembly FFmpeg to convert media
+2. **Frame Extraction**: Video converted to 320×240 RGB565 frames at 25fps
+3. **ZIP Packaging**: Frames packaged into ZIP with metadata
+4. **Upload**: Original video + frame ZIP uploaded to Pi
+5. **Storage**: Pi stores files and updates media index
+
+### Benefits
+
+- **Fast**: No Pi CPU used for conversion
+- **Compatible**: Works with all major video formats
+- **Reliable**: Browser handles complex codec support
+- **Efficient**: Only final processed files sent to Pi
+
+### Browser Requirements
+
+- **Modern browser** with WebAssembly support (Chrome 57+, Firefox 52+, Safari 11+)
+- **Sufficient RAM** for video processing (4GB+ recommended for large files)
+- **JavaScript enabled** for the web interface
 
 ## Loop Management
 
@@ -132,20 +174,22 @@ LOOP's media management is powerful yet simple:
 
 Key settings in `backend/config/config.json`:
 
-- `loop_count`: How many times each media repeats (default: 3)
+- `loop_count`: How many times each media repeats (default: 2)
 - `static_image_duration_sec`: How long static images display (default: 10)
 - `auto_advance_enabled`: Whether to automatically advance (default: true)
+- `max_file_size_mb`: Maximum file size for uploads (default: 200MB)
 
 ## Controls
 
 ### Web Interface
 
 - **Upload**: Drag & drop files anywhere on the page
+- **Real-time Progress**: See conversion progress in your browser
 - **Play/Pause**: Click the play button or use API
 - **Next/Previous**: Navigation buttons
 - **Activate Media**: Click on any media item to jump to it
 - **Loop Management**: Drag to reorder, toggle loop modes
-- **Progress Tracking**: Real-time upload and conversion progress
+- **System Settings**: Brightness, WiFi, updates
 
 ### API Endpoints
 
@@ -163,8 +207,11 @@ DELETE /api/loop/{slug}      # Remove from loop
 
 # Media management
 GET /api/media               # List all media
-POST /api/media             # Upload new media
+POST /api/media             # Upload processed media
 DELETE /api/media/{slug}    # Delete media
+
+# System status (consolidated)
+GET /api/dashboard          # All system status in one call
 ```
 
 ## Troubleshooting
@@ -183,6 +230,13 @@ cd /home/pi/loop/backend
 source ../venv/bin/activate
 python test_display_progress.py
 ```
+
+### Upload Problems?
+
+- **Check browser compatibility** - WebAssembly FFmpeg requires modern browser
+- **Verify file size** - Large files may need more time/memory
+- **Monitor browser console** - Check for JavaScript errors
+- **Try smaller files** - Test with simple GIF first
 
 ### Service Problems?
 
@@ -210,7 +264,7 @@ Check storage via the web interface or:
 df -h
 
 # Clean up orphaned media files
-curl -X POST http://localhost:8000/api/media/cleanup
+curl -X POST http://localhost/api/media/cleanup
 ```
 
 ## Development
@@ -237,18 +291,38 @@ npm run dev
 backend/
 ├── config/          # Configuration management
 ├── display/         # Display drivers and player
-├── utils/           # Media conversion and indexing
+├── utils/           # Media indexing and utilities
 ├── web/             # FastAPI server and SPA
 └── boot/            # WiFi and system setup
 
 frontend/loop-frontend/  # Next.js web interface
+├── lib/ffmpeg-util.ts   # Browser-side media processing
+├── components/          # UI components
+└── app/                 # Pages and routing
 ```
+
+## Performance
+
+### Pi Optimization
+
+- **In-memory caching** for media index operations
+- **Batch operations** for multiple uploads
+- **Deferred persistence** to reduce SD card writes
+- **Request deduplication** for polling endpoints
+- **Conservative memory usage** with cleanup
+
+### Browser Optimization
+
+- **WebAssembly FFmpeg** for native-speed conversion
+- **Progressive upload** with real-time progress
+- **Chunked processing** to handle large files
+- **Memory management** to prevent browser crashes
 
 ## Current Limitations
 
 - Physical controls (rotary encoder) not yet implemented
-- Video format support limited to common formats
-- Performance depends on Pi model and media complexity
+- Browser-side processing requires modern browser with sufficient RAM
+- Large video files may take time to process in browser
 - No advanced scheduling features yet
 
 ## Planned Features
@@ -256,7 +330,7 @@ frontend/loop-frontend/  # Next.js web interface
 - Physical rotary encoder controls
 - Advanced scheduling and automation
 - Mobile app companion
-- More media format support
+- Offline conversion support
 - Custom display effects
 
 ## Contributing
@@ -278,6 +352,8 @@ LOOP is open source under the MIT License. See [LICENSE](LICENSE) for details.
 ## Thanks
 
 - **Waveshare** for excellent displays
+- **FFmpeg** team for the amazing media processing library
+- **WebAssembly** community for making browser-side processing possible
 - **FastAPI** for the speedy web framework
 - **Raspberry Pi Foundation** for amazing hardware
 - **Contributors** for making LOOP better
