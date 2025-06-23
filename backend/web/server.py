@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 
 from config.schema import Config
 from display.player import DisplayPlayer
@@ -51,6 +52,9 @@ def create_app(
     app.add_middleware(RequestLoggingMiddleware)
     app.add_middleware(ConcurrencyLimitMiddleware, max_concurrent=config.web.max_concurrent_requests if config else 12)
     app.add_middleware(ErrorHandlingMiddleware)
+    
+    # Gzip compression for JSON/text responses (5-10x smaller transfers!)
+    app.add_middleware(GZipMiddleware, minimum_size=1000)
     
     # CORS middleware (outermost)
     app.add_middleware(
