@@ -129,7 +129,7 @@ async def process_single_file(file: UploadFile, media_raw_dir: Path, media_proce
 
 
 async def process_image_file(file: UploadFile, content: bytes, slug: str, media_raw_dir: Path, media_processed_dir: Path) -> Dict[str, Any]:
-    """Process image file - immediate completion."""
+    """Process image file - save for frontend preview, wait for ZIP frames."""
     
     # Create job for progress tracking
     job_id = str(uuid.uuid4())
@@ -139,8 +139,8 @@ async def process_image_file(file: UploadFile, content: bytes, slug: str, media_
     try:
         await broadcaster.processing_progress(job_id, {
             "progress": 0,
-            "stage": "processing",
-            "message": "Processing image...",
+            "stage": "uploading",
+            "message": "Uploading image...",
             "filename": file.filename
         })
     except Exception as e:
@@ -155,26 +155,15 @@ async def process_image_file(file: UploadFile, content: bytes, slug: str, media_
         # 🚀 Broadcast progress update
         try:
             await broadcaster.processing_progress(job_id, {
-                "progress": 50,
-                "stage": "processing", 
-                "message": "Saving image...",
+                "progress": 30,
+                "stage": "uploaded",
+                "message": "Image uploaded, waiting for frame data...",
                 "filename": file.filename
             })
         except Exception as e:
             logger.warning(f"Failed to broadcast progress: {e}")
         
-        # Create processed directory and save frame
-        processed_dir = media_processed_dir / slug
-        processed_dir.mkdir(parents=True, exist_ok=True)
-        frames_dir = processed_dir / "frames"
-        frames_dir.mkdir(exist_ok=True)
-        
-        # Save as single frame for hardware display
-        frame_path = frames_dir / "frame_000000.jpg"
-        with open(frame_path, "wb") as f:
-            f.write(content)
-        
-        # Create complete metadata
+        # Create metadata (incomplete until frames arrive)
         metadata = {
             "slug": slug,
             "filename": file.filename,
@@ -182,30 +171,13 @@ async def process_image_file(file: UploadFile, content: bytes, slug: str, media_
             "size": len(content),
             "uploadedAt": datetime.utcnow().isoformat() + "Z",
             "url": f"/media/raw/{slug}_{file.filename}",
-            "frame_count": 1,
-            "width": 320,
-            "height": 240,
-            "processing_status": "completed",
+            "processing_status": "processing",
         }
         
         # Add to media index
         media_index.add_media(metadata, make_active=True)
         
-        # Complete job
-        media_index.complete_processing_job(job_id, True, "")
-        
-        # 🚀 Broadcast completion progress
-        try:
-            await broadcaster.processing_progress(job_id, {
-                "progress": 100,
-                "stage": "complete",
-                "message": "Image processing complete!",
-                "filename": file.filename
-            })
-        except Exception as e:
-            logger.warning(f"Failed to broadcast completion: {e}")
-        
-        # 🚀 CRITICAL: Broadcast upload completion via WebSocket
+        # 🚀 CRITICAL: Broadcast upload (partial) via WebSocket
         try:
             await broadcaster.media_uploaded(metadata)
             logger.info(f"✅ Broadcasted image upload: {file.filename}")
@@ -342,7 +314,7 @@ async def process_zip_file(file: UploadFile, content: bytes, slug: str, media_ra
                 break
         
         if existing_media:
-            # Update existing video entry with frame data
+            # Update existing video/image entry with frame data
             existing_slug = existing_media["slug"]
             
             # 🚀 Broadcast progress update
@@ -350,7 +322,7 @@ async def process_zip_file(file: UploadFile, content: bytes, slug: str, media_ra
                 await broadcaster.processing_progress(job_id, {
                     "progress": 90,
                     "stage": "finalizing",
-                    "message": "Updating video with frame data...",
+                    "message": f"Updating {zip_metadata.get('type', 'media')} with frame data...",
                     "filename": original_filename
                 })
             except Exception as e:
@@ -369,7 +341,7 @@ async def process_zip_file(file: UploadFile, content: bytes, slug: str, media_ra
             # Update metadata
             updated_metadata = existing_media.copy()
             updated_metadata.update({
-                "frame_count": zip_metadata.get("frame_count", 510),
+                "frame_count": zip_metadata.get("frame_count", 1),
                 "width": zip_metadata.get("width", 320),
                 "height": zip_metadata.get("height", 240),
                 "processing_status": "completed",
@@ -383,7 +355,7 @@ async def process_zip_file(file: UploadFile, content: bytes, slug: str, media_ra
                 await broadcaster.processing_progress(job_id, {
                     "progress": 100,
                     "stage": "complete",
-                    "message": "Frame processing complete!",
+                    "message": f"{zip_metadata.get('type', 'Media').title()} processing complete!",
                     "filename": original_filename
                 })
             except Exception as e:
@@ -392,20 +364,20 @@ async def process_zip_file(file: UploadFile, content: bytes, slug: str, media_ra
             # 🚀 CRITICAL: Broadcast update via WebSocket
             try:
                 await broadcaster.media_uploaded(updated_metadata)
-                logger.info(f"✅ Broadcasted video update: {original_filename}")
+                logger.info(f"✅ Broadcasted {zip_metadata.get('type', 'media')} update: {original_filename}")
             except Exception as e:
-                logger.warning(f"Failed to broadcast video update: {e}")
+                logger.warning(f"Failed to broadcast media update: {e}")
             
             return {"slug": existing_slug, "job_id": job_id}
             
         else:
-            # Create new ZIP-only media entry
+            # Create new ZIP-only media entry (image or video)
             # 🚀 Broadcast progress update
             try:
                 await broadcaster.processing_progress(job_id, {
                     "progress": 90,
                     "stage": "finalizing",
-                    "message": "Creating new media entry...",
+                    "message": f"Creating new {zip_metadata.get('type', 'media')} entry...",
                     "filename": original_filename
                 })
             except Exception as e:
@@ -414,11 +386,11 @@ async def process_zip_file(file: UploadFile, content: bytes, slug: str, media_ra
             metadata = {
                 "slug": slug,
                 "filename": original_filename,
-                "type": "video",
+                "type": zip_metadata.get("type", "video"),  # Use type from metadata
                 "size": len(content),
                 "uploadedAt": datetime.utcnow().isoformat() + "Z",
-                "url": None,  # No video preview for ZIP-only uploads
-                "frame_count": zip_metadata.get("frame_count", 510),
+                "url": None,  # No preview for ZIP-only uploads
+                "frame_count": zip_metadata.get("frame_count", 1),
                 "width": zip_metadata.get("width", 320),
                 "height": zip_metadata.get("height", 240),
                 "processing_status": "completed",
@@ -432,7 +404,7 @@ async def process_zip_file(file: UploadFile, content: bytes, slug: str, media_ra
                 await broadcaster.processing_progress(job_id, {
                     "progress": 100,
                     "stage": "complete",
-                    "message": "ZIP processing complete!",
+                    "message": f"ZIP processing complete!",
                     "filename": original_filename
                 })
             except Exception as e:
