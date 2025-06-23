@@ -52,7 +52,7 @@ class EncoderConfig:
 @dataclass
 class MediaConfig:
     """Media configuration."""
-    max_file_size_mb: int = 50
+    max_file_size_mb: int = 200  # Increased for large converted ZIP files
     active_media: Optional[str] = None
     loop_count: int = 2  # Loop each media 2 times before advancing (was -1)
     static_image_duration_sec: int = 10  # How long to display static images

@@ -440,9 +440,9 @@ def create_app(
                 total_size += file_size
                 logger.info(f"File {file.filename}: {file_size} bytes")
                 
-                if file_size > 100 * 1024 * 1024:  # 100MB limit per file
+                if file_size > 250 * 1024 * 1024:  # 250MB limit per file (for large ZIP files)
                     logger.warning(f"File {file.filename} too large: {file_size} bytes")
-                    raise HTTPException(status_code=413, detail=f"{file.filename} is too large (max 100 MB)")
+                    raise HTTPException(status_code=413, detail=f"{file.filename} is too large (max 250 MB)")
                     
             except HTTPException:
                 raise
@@ -460,31 +460,9 @@ def create_app(
         slugs: list[str] = []
         job_ids: list[str] = []  # Track job IDs for display progress
 
-        # Group files by batch (ZIP + original video pairs)
-        zip_files = [f for f in files if f.filename.lower().endswith(".zip")]
-        other_files = [f for f in files if not f.filename.lower().endswith(".zip")]
-        
-        # Process files in pairs when possible
-        processed_pairs = set()
-        for zip_file in zip_files:
-            # Try to find matching original video file
-            zip_id = zip_file.filename.split('.')[0]  # Extract job ID from ZIP filename
-            original_file = next((f for f in other_files if zip_id in zip_file.filename), None)
-            
-            if original_file:
-                # Process as a pair (ZIP + original)
-                await process_file_pair(zip_file, original_file, job_ids, slugs)
-                processed_pairs.add(zip_file.filename)
-                processed_pairs.add(original_file.filename)
-            else:
-                # Process ZIP alone
-                await process_single_file(zip_file, job_ids, slugs)
-                processed_pairs.add(zip_file.filename)
-        
-        # Process remaining files individually
-        for file in other_files:
-            if file.filename not in processed_pairs:
-                await process_single_file(file, job_ids, slugs)
+        # Process all files individually (they come separately now)
+        for file in files:
+            await process_single_file(file, job_ids, slugs)
 
     async def process_zip_content(content, filename, slug, job_id):
         """Extract ZIP content and store frames."""
@@ -530,57 +508,7 @@ def create_app(
                 
                 return meta_data
 
-    async def process_file_pair(zip_file, original_file, job_ids, slugs):
-        """Process a ZIP file with its corresponding original video."""
-        logger.info(f"Processing file pair: {zip_file.filename} + {original_file.filename}")
-        
-        # Read both files
-        zip_content = await zip_file.read()
-        original_content = await original_file.read()
-        
-        # Create slug based on original filename
-        sanitized = Path(original_file.filename).stem.replace(" ", "_").lower()
-        slug = f"{sanitized}_{uuid.uuid4().hex[:8]}"
-        logger.info(f"Generated slug for pair: {slug}")
 
-        # Create job
-        job_id = str(uuid.uuid4())
-        job_ids.append(job_id)
-        logger.info(f"Created processing job {job_id} for {zip_file.filename} + {original_file.filename}")
-        media_index.add_processing_job(job_id, original_file.filename)
-
-        try:
-            # Process ZIP file (extract frames)
-            zip_metadata = await process_zip_content(zip_content, zip_file.filename, slug, job_id)
-            
-            # Store original video for frontend preview
-            raw_video_path = media_raw_dir / f"{slug}_{original_file.filename}"
-            with open(raw_video_path, "wb") as f:
-                f.write(original_content)
-            logger.info(f"Saved original video: {raw_video_path}")
-            
-            # Create metadata with URL pointing to original video
-            meta_data = {
-                "slug": slug,
-                "filename": original_file.filename,
-                "type": original_file.content_type or "video/mp4",
-                "size": len(original_content),
-                "uploadedAt": datetime.utcnow().isoformat() + "Z",
-                "url": f"/media/raw/{slug}_{original_file.filename}",  # Point to original video
-                "frame_count": zip_metadata.get("frame_count", 510),
-                "width": zip_metadata.get("width", 320),
-                "height": zip_metadata.get("height", 240),
-            }
-            
-            media_index.add_media(meta_data, make_active=True)
-            slugs.append(slug)
-            media_index.complete_processing_job(job_id, True)
-            
-        except Exception as e:
-            error_msg = f"Error processing file pair: {str(e)}"
-            logger.error(error_msg, exc_info=True)
-            media_index.complete_processing_job(job_id, False, error_msg)
-            raise HTTPException(status_code=500, detail=error_msg)
 
     async def process_single_file(file, job_ids, slugs):
         """Process a single file (original logic)."""
@@ -613,39 +541,89 @@ def create_app(
 
         try:
             if file.filename.lower().endswith(".zip"):
-                # Process ZIP file (frames only, no original video)
+                # Process ZIP file (frames for hardware display)
                 zip_metadata = await process_zip_content(content, file.filename, slug, job_id)
+                original_filename = zip_metadata.get("original_filename", file.filename)
                 
-                meta_data = {
-                    "slug": slug,
-                    "filename": zip_metadata.get("original_filename", file.filename),
-                    "type": "video",
-                    "size": len(content),
-                    "uploadedAt": datetime.utcnow().isoformat() + "Z",
-                    "url": None,  # No video URL available for ZIP-only uploads
-                    "frame_count": zip_metadata.get("frame_count", 510),
-                    "width": zip_metadata.get("width", 320),
-                    "height": zip_metadata.get("height", 240),
-                }
+                # Check if we already have a media entry for this video
+                existing_media = None
+                all_media = media_index.list_media()
+                for media_item in all_media:
+                    if media_item.get("filename") == original_filename:
+                        existing_media = media_item
+                        break
                 
-                media_index.add_media(meta_data, make_active=True)
-                slugs.append(slug)
+                if existing_media:
+                    # Update existing entry with frame data
+                    logger.info(f"Updating existing media entry for {original_filename}")
+                    existing_slug = existing_media["slug"]
+                    
+                    # Copy ZIP contents to the existing slug directory  
+                    existing_output_dir = Path("media/processed") / existing_slug
+                    current_output_dir = Path("media/processed") / slug
+                    
+                    if current_output_dir.exists() and current_output_dir != existing_output_dir:
+                        # Move frames to existing directory
+                        existing_frames_dir = existing_output_dir / "frames"
+                        current_frames_dir = current_output_dir / "frames"
+                        
+                        if current_frames_dir.exists():
+                            if existing_frames_dir.exists():
+                                shutil.rmtree(existing_frames_dir)
+                            current_frames_dir.rename(existing_frames_dir)
+                            logger.info(f"Moved frames to existing directory: {existing_frames_dir}")
+                        
+                        # Copy metadata
+                        current_metadata = current_output_dir / "metadata.json"
+                        if current_metadata.exists():
+                            current_metadata.rename(existing_output_dir / "metadata.json")
+                        
+                        # Clean up temporary directory
+                        shutil.rmtree(current_output_dir)
+                    
+                    # Update media entry with frame info
+                    updated_meta = existing_media.copy()
+                    updated_meta.update({
+                        "frame_count": zip_metadata.get("frame_count", 510),
+                        "width": zip_metadata.get("width", 320),
+                        "height": zip_metadata.get("height", 240),
+                    })
+                    
+                    media_index.add_media(updated_meta, make_active=False)  # Update, don't change active status
+                    slugs.append(existing_slug)
+                    
+                else:
+                    # Create new entry (no matching video found)
+                    meta_data = {
+                        "slug": slug,
+                        "filename": original_filename,
+                        "type": "video",
+                        "size": len(content),
+                        "uploadedAt": datetime.utcnow().isoformat() + "Z",
+                        "url": None,  # No video URL available for ZIP-only uploads
+                        "frame_count": zip_metadata.get("frame_count", 510),
+                        "width": zip_metadata.get("width", 320),
+                        "height": zip_metadata.get("height", 240),
+                    }
+                    
+                    media_index.add_media(meta_data, make_active=True)
+                    slugs.append(slug)
+                
                 media_index.complete_processing_job(job_id, True)
                 
             else:
-                # Process as raw video file
-                output_dir = Path("media/processed") / slug
-                output_dir.mkdir(parents=True, exist_ok=True)
-
-                # Save as video.mp4 inside its folder for consistency
-                out_path = output_dir / "video.mp4"
-                with open(out_path, "wb") as out_f:
+                # Process as original video file (for frontend previews)
+                # Store in raw/ directory for frontend access
+                raw_video_path = media_raw_dir / f"{slug}_{file.filename}"
+                with open(raw_video_path, "wb") as f:
                     chunk_size = 1024 * 1024  # 1MB chunks
                     bytes_written = 0
                     while bytes_written < len(content):
                         chunk = content[bytes_written:bytes_written + chunk_size]
-                        out_f.write(chunk)
+                        f.write(chunk)
                         bytes_written += len(chunk)
+                
+                logger.info(f"Saved original video: {raw_video_path}")
 
                 metadata = {
                     "slug": slug,
@@ -653,7 +631,7 @@ def create_app(
                     "type": file.content_type or "video/mp4",
                     "size": len(content),
                     "uploadedAt": datetime.utcnow().isoformat() + "Z",
-                    "url": f"/media/processed/{slug}/video.mp4",
+                    "url": f"/media/raw/{slug}_{file.filename}",  # Point to original video in raw/
                 }
 
                 media_index.add_media(metadata, make_active=True)
