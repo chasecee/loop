@@ -8,6 +8,7 @@ from .media import create_media_router
 from .playback import create_playback_router, create_display_router
 from .updates import create_updates_router
 from .wifi import create_wifi_router
+from .websocket import create_websocket_router
 
 def register_routers(app, display_player=None, wifi_manager=None, updater=None, config=None):
     """Register all routers with the FastAPI app."""
@@ -25,4 +26,5 @@ def register_routers(app, display_player=None, wifi_manager=None, updater=None, 
     app.include_router(create_playback_router(display_player, config))
     app.include_router(create_display_router(display_player, config))
     app.include_router(create_wifi_router(wifi_manager, config))
-    app.include_router(create_updates_router(updater)) 
+    app.include_router(create_updates_router(updater))
+    app.include_router(create_websocket_router()) 

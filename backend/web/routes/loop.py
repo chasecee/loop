@@ -3,6 +3,7 @@
 from fastapi import APIRouter, HTTPException
 
 from ..core.models import APIResponse, AddToLoopPayload, LoopOrderPayload
+from ..core.events import broadcaster
 from display.player import DisplayPlayer
 from utils.media_index import media_index
 from utils.logger import get_logger
@@ -31,6 +32,15 @@ def create_loop_router(display_player: DisplayPlayer = None) -> APIRouter:
             if display_player:
                 display_player.refresh_media_list()
             invalidate_dashboard_cache()
+            
+            # Broadcast loop update via WebSocket
+            try:
+                import asyncio
+                loop_data = media_index.list_loop()
+                asyncio.create_task(broadcaster.loop_updated(loop_data))
+            except Exception as e:
+                logger.debug(f"WebSocket broadcast failed: {e}")
+            
             return APIResponse(
                 success=True,
                 message="Added to loop",
@@ -46,6 +56,15 @@ def create_loop_router(display_player: DisplayPlayer = None) -> APIRouter:
         if display_player:
             display_player.refresh_media_list()
         invalidate_dashboard_cache()
+        
+        # Broadcast loop update via WebSocket
+        try:
+            import asyncio
+            loop_data = media_index.list_loop()
+            asyncio.create_task(broadcaster.loop_updated(loop_data))
+        except Exception as e:
+            logger.debug(f"WebSocket broadcast failed: {e}")
+        
         return APIResponse(
             success=True,
             message="Loop reordered",

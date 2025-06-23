@@ -14,6 +14,7 @@ from fastapi import Depends
 
 from ..core.models import APIResponse, AddToLoopPayload, ProcessingJobResponse
 from ..core.storage import invalidate_storage_cache
+from ..core.events import broadcaster
 from display.player import DisplayPlayer
 from utils.media_index import media_index
 from utils.logger import get_logger

@@ -152,14 +152,21 @@ class MediaIndexManager:
         self._persistence_timer.start()
     
     def _read_raw(self) -> MediaIndex:
-        """Read the media index with in-memory caching."""
+        """Read the media index with aggressive in-memory caching for Pi Zero 2 performance."""
         with self._cache_lock:
-            # Check if we can use cache
+            # Check if we can use cache - be much more aggressive about caching
             if self._cache and not self._cache_dirty:
-                # Check if file was modified since last read
+                # Skip file stat check if cache is recent enough (5 seconds)
+                cache_age = time.time() - self._last_file_read
+                if cache_age < 5.0:  # 5 second aggressive cache
+                    return self._cache
+                
+                # Only check file modification if cache is older
                 try:
                     file_mtime = self.index_path.stat().st_mtime
                     if file_mtime <= self._last_file_read:
+                        # Update cache timestamp to extend aggressive cache period
+                        self._last_file_read = time.time()
                         return self._cache
                 except (OSError, FileNotFoundError):
                     pass

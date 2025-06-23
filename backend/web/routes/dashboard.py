@@ -9,6 +9,7 @@ from fastapi import APIRouter
 
 from ..core.models import DashboardData, DeviceStatus, PlayerStatus, WiFiStatus, UpdateStatus, StorageInfo
 from ..core.storage import get_dir_size
+from ..core.events import broadcaster
 from display.player import DisplayPlayer
 from boot.wifi import WiFiManager
 from deployment.updater import SystemUpdater
@@ -113,6 +114,20 @@ def create_dashboard_router(
         
         build_time = time.time() - start_time
         logger.debug(f"Dashboard data rebuilt in {build_time*1000:.1f}ms (no storage)")
+        
+        # Broadcast dashboard update via WebSocket (fire and forget)
+        try:
+            import asyncio
+            asyncio.create_task(broadcaster.dashboard_updated({
+                "status": device_status.dict(),
+                "media": dashboard_data["media"],
+                "active": dashboard_data["active"],
+                "loop": dashboard_data["loop"],
+                "last_updated": dashboard_data["last_updated"],
+                "processing": dashboard_data["processing"]
+            }))
+        except Exception as e:
+            logger.debug(f"WebSocket broadcast failed: {e}")
         
         return dashboard_result
     
