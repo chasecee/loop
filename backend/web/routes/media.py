@@ -18,6 +18,7 @@ from display.player import DisplayPlayer
 from utils.media_index import media_index
 from utils.logger import get_logger
 from .media_upload import process_media_upload
+from .dashboard import invalidate_dashboard_cache
 
 logger = get_logger("web.media")
 
@@ -57,6 +58,7 @@ def create_media_router(
         )
         
         invalidate_storage_cache()
+        invalidate_dashboard_cache()
         
         return APIResponse(
             success=True, 
@@ -74,6 +76,7 @@ def create_media_router(
             media_index.add_to_loop(slug)  # Ensure in loop
             media_index.set_active(slug)
             display_player.set_active_media(slug)
+            invalidate_dashboard_cache()
             return APIResponse(success=True, message=f"Activated media: {slug}")
         except KeyError:
             raise HTTPException(status_code=404, detail="Media not found")
@@ -102,6 +105,7 @@ def create_media_router(
                 display_player.refresh_media_list()
             
             invalidate_storage_cache()
+            invalidate_dashboard_cache()
             
             return APIResponse(success=True, message=f"Deleted media: {slug}")
             
@@ -120,6 +124,7 @@ def create_media_router(
             
             if cleanup_count:
                 invalidate_storage_cache()
+                invalidate_dashboard_cache()
             
             return APIResponse(
                 success=True,

@@ -1,6 +1,24 @@
 # Web Server
 
-FastAPI web server (`server.py`) that powers LOOP's web interface and API.
+Modular FastAPI web server that powers LOOP's web interface and API.
+
+## Structure
+
+```
+backend/web/
+├── core/                    # Core utilities
+│   ├── models.py           # Pydantic request/response models
+│   ├── middleware.py       # HTTP middleware classes
+│   └── storage.py          # Storage calculation utilities
+├── routes/                  # API route modules
+│   ├── media.py            # Media management endpoints
+│   ├── loop.py             # Loop queue management
+│   ├── playback.py         # Playback controls + display settings
+│   ├── wifi.py             # WiFi network management
+│   ├── updates.py          # System update endpoints
+│   └── dashboard.py        # Consolidated dashboard data
+└── server.py               # Main app factory (122 lines)
+```
 
 ## Core Functions
 

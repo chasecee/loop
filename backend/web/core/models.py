@@ -99,7 +99,7 @@ class DashboardData(BaseModel):
     loop: List[str]
     last_updated: Optional[int]
     processing: Optional[Dict[str, ProcessingJobResponse]] = None  # Processing jobs dict
-    storage: StorageInfo
+    storage: Optional[StorageInfo] = None  # Optional - only included when requested
 
 class APIResponse(BaseModel):
     """Standard API response format - matches frontend APIResponse interface."""

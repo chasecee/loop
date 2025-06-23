@@ -6,6 +6,7 @@ from ..core.models import APIResponse, AddToLoopPayload, LoopOrderPayload
 from display.player import DisplayPlayer
 from utils.media_index import media_index
 from utils.logger import get_logger
+from .dashboard import invalidate_dashboard_cache
 
 logger = get_logger("web.loop")
 
@@ -29,6 +30,7 @@ def create_loop_router(display_player: DisplayPlayer = None) -> APIRouter:
             media_index.add_to_loop(payload.slug)
             if display_player:
                 display_player.refresh_media_list()
+            invalidate_dashboard_cache()
             return APIResponse(
                 success=True,
                 message="Added to loop",
@@ -43,6 +45,7 @@ def create_loop_router(display_player: DisplayPlayer = None) -> APIRouter:
         media_index.reorder_loop(payload.loop)
         if display_player:
             display_player.refresh_media_list()
+        invalidate_dashboard_cache()
         return APIResponse(
             success=True,
             message="Loop reordered",
@@ -55,6 +58,7 @@ def create_loop_router(display_player: DisplayPlayer = None) -> APIRouter:
         media_index.remove_from_loop(slug)
         if display_player:
             display_player.refresh_media_list()
+        invalidate_dashboard_cache()
         return APIResponse(
             success=True,
             message="Removed from loop",

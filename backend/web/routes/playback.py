@@ -6,6 +6,7 @@ from ..core.models import APIResponse, DisplaySettingsPayload
 from display.player import DisplayPlayer
 from config.schema import Config
 from utils.logger import get_logger
+from .dashboard import invalidate_dashboard_cache
 
 logger = get_logger("web.playback")
 
@@ -39,6 +40,7 @@ def create_playback_router(
             raise HTTPException(status_code=503, detail="Display player not available")
         
         display_player.next_media()
+        invalidate_dashboard_cache()
         return APIResponse(success=True, message="Switched to next media")
     
     @router.post("/previous", response_model=APIResponse)
@@ -48,6 +50,7 @@ def create_playback_router(
             raise HTTPException(status_code=503, detail="Display player not available")
         
         display_player.previous_media()
+        invalidate_dashboard_cache()
         return APIResponse(success=True, message="Switched to previous media")
     
     @router.post("/loop-mode", response_model=APIResponse)
