@@ -638,11 +638,10 @@ def create_app(
         slugs: list[str] = []
         job_ids: list[str] = []  # Track job IDs for display progress
 
-        # Use batching for multiple files to reduce I/O
-        with batch_operations(media_index):
-            # Process all files individually (they come separately now)
-            for file in files:
-                await process_single_file(file, job_ids, slugs)
+        # Process all files individually (they come separately now)
+        # Note: Removed batching to avoid index persistence issues
+        for file in files:
+            await process_single_file(file, job_ids, slugs)
 
         # Start progress overlay once  
         if display_player and not display_player.showing_progress and job_ids:
@@ -665,7 +664,17 @@ def create_app(
             def refresh_player_async():
                 try:
                     logger.info("Refreshing player media list")
+                    
+                    # Debug: Check media before refresh
+                    current_media = media_index.list_media()
+                    logger.info(f"Media before refresh: {len(current_media)} items")
+                    
                     display_player.refresh_media_list()
+                    
+                    # Debug: Check media after refresh
+                    current_media_after = media_index.list_media()
+                    logger.info(f"Media after refresh: {len(current_media_after)} items")
+                    
                     if slugs:
                         logger.info(f"Setting active media to: {slugs[-1]}")
                         display_player.set_active_media(slugs[-1])

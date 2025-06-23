@@ -221,30 +221,31 @@ class MediaIndexManager:
                 index.active = index.loop[0] if index.loop else None
                 self._write_to_disk(index)
 
-            # Clean up old processing jobs (more aggressive cleanup: 5 minutes for completed, limit total jobs)
+            # Clean up old processing jobs (conservative cleanup to avoid race conditions)
             current_time = time.time()
             old_jobs = []
             completed_jobs = []
             
+            # Much more conservative cleanup to avoid interfering with active operations
             for job_id, job_data in index.processing.items():
                 job_timestamp = job_data.get("timestamp", 0)
                 job_status = job_data.get("status", "processing")
                 job_age = current_time - job_timestamp
                 
-                # Remove completed/error jobs after 5 minutes
-                if job_status in ["completed", "error"] and job_age > 300:
+                # Only clean up very old completed jobs (30 minutes for completed/error)
+                if job_status in ["completed", "error"] and job_age > 1800:
                     old_jobs.append(job_id)
-                # Remove very old processing jobs (30 minutes)
-                elif job_age > 1800:
+                # Remove extremely old processing jobs (2 hours)
+                elif job_age > 7200:
                     old_jobs.append(job_id)
-                # Track completed jobs for size limiting
+                # Track completed jobs for size limiting (keep more for debugging)
                 elif job_status in ["completed", "error"]:
                     completed_jobs.append((job_id, job_timestamp))
             
-            # Limit total completed jobs to prevent memory buildup (keep max 20 most recent)
-            if len(completed_jobs) > 20:
+            # Limit total completed jobs to prevent memory buildup (keep max 50 most recent)
+            if len(completed_jobs) > 50:
                 completed_jobs.sort(key=lambda x: x[1])  # Sort by timestamp
-                old_jobs.extend([job_id for job_id, _ in completed_jobs[:-20]])
+                old_jobs.extend([job_id for job_id, _ in completed_jobs[:-50]])
             
             # Remove old jobs
             for job_id in old_jobs:
@@ -267,16 +268,17 @@ class MediaIndexManager:
             self._cache = index
             self._cache_dirty = True
             
-            # Check if we're in batching mode
-            if self._batching:
+            # Check if we're in batching mode and this is not a critical operation
+            if self._batching and not hasattr(self, '_immediate_write_needed'):
                 self._batch_dirty = True
                 return
             
-            # For critical operations, write immediately
+            # For critical operations, write immediately even in batch mode
             # For less critical ones, rely on periodic persistence
             if hasattr(self, '_immediate_write_needed'):
                 self._write_to_disk(index)
                 self._cache_dirty = False
+                self._batch_dirty = False  # Clear batch dirty flag too
                 delattr(self, '_immediate_write_needed')
 
     def _write_to_disk(self, index: MediaIndex) -> None:
@@ -379,6 +381,7 @@ class MediaIndexManager:
             "message": "Initializing conversion...",
             "timestamp": time.time()
         }
+        self._force_immediate_write()  # Critical operation
         self._write_raw(index)
         LOGGER.info(f"Processing job added successfully: {job_id}")
 
@@ -413,6 +416,7 @@ class MediaIndexManager:
                 "status": "completed" if success else "error",
                 "timestamp": time.time()
             })
+            self._force_immediate_write()  # Critical operation
             self._write_raw(index)
             LOGGER.info(f"Processing job {job_id} status: {old_status} -> {'completed' if success else 'error'}")
         else:
@@ -609,9 +613,10 @@ def batch_operations(media_index_manager: 'MediaIndexManager'):
         yield
     finally:
         media_index_manager._batching = False
-        # Force immediate write after batch
+        # Force immediate write after batch only if there are pending changes
         if hasattr(media_index_manager, '_batch_dirty') and media_index_manager._batch_dirty:
-            media_index_manager._force_immediate_write()
             if media_index_manager._cache:
-                media_index_manager._write_raw(media_index_manager._cache)
+                # Don't force immediate write flag since we're doing the final batch write
+                media_index_manager._write_to_disk(media_index_manager._cache)
+                media_index_manager._cache_dirty = False
             media_index_manager._batch_dirty = False 
