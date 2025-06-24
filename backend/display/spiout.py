@@ -5,6 +5,7 @@ from pathlib import Path
 from PIL import Image
 from typing import Optional, Union
 import spidev
+import struct
 
 # Add the Waveshare library path to Python's search path
 sys.path.append(str(Path(__file__).parent.parent.parent / 'waveshare' / 'LCD_Module_RPI_code' / 'RaspberryPi' / 'python'))
@@ -116,18 +117,24 @@ class ILI9341Driver:
             return
 
     def fill_screen(self, color: int = 0x0000) -> None:
-        """Fill the screen with a color."""
+        """Fill the screen with a color - optimized RGB565 version."""
         if not self.initialized:
             self.init()
             
-        if self.disp:
-            r = ((color >> 11) & 0x1F) << 3
-            g = ((color >> 5) & 0x3F) << 2
-            b = (color & 0x1F) << 3
+        if not self.disp:
+            return
             
-            # Create a 320x240 image to match the config
-            image = Image.new('RGB', (320, 240), (r, g, b))
-            self.disp.ShowImage(image)
+        # Create RGB565 buffer directly (320x240 pixels = 153,600 bytes)
+        width, height = 320, 240
+        frame_data = bytearray(width * height * 2)
+        color_bytes = struct.pack('>H', color)
+        
+        # Fill buffer with color
+        for i in range(0, len(frame_data), 2):
+            frame_data[i:i+2] = color_bytes
+        
+        # Use existing RGB565 display path - much faster than PIL conversion
+        self.display_frame(bytes(frame_data))
 
     def set_backlight(self, level: Union[int, bool]) -> None:
         """Set backlight brightness - hardware PWM only.

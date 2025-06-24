@@ -3,7 +3,8 @@ fastapi==0.104.1
 uvicorn==0.24.0
 python-multipart==0.0.6
 
-# WebSocket support is built into FastAPI - no additional dependency needed
+# WebSocket support - uvicorn needs websockets library for WebSocket handling
+websockets==12.0
 
 # Image/video processing
 pillow==10.1.0

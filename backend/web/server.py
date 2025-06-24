@@ -96,6 +96,13 @@ def create_app(
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="SPA not built/deployed")
     
+    # Favicon route to prevent 404 spam
+    @app.get("/favicon.ico")
+    async def favicon():
+        """Return 204 No Content for favicon requests."""
+        from fastapi import Response
+        return Response(status_code=204)
+    
     # Register all API routes
     register_routers(app, display_player, wifi_manager, updater, config)
     

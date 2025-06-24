@@ -3,13 +3,18 @@
 import io
 import time
 import threading
+import struct
 from typing import Optional, Tuple, Dict, Any
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 from config.schema import DisplayConfig
-from display.framebuf import FrameDecoder
 from utils.logger import get_logger
+
+
+def _rgb888_to_rgb565(r: int, g: int, b: int) -> int:
+    """Convert RGB888 to RGB565 format efficiently."""
+    return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
 
 
 class MessageDisplay:
@@ -24,16 +29,13 @@ class MessageDisplay:
         # Cache for fonts to avoid reloading
         self._font_cache: Dict[Tuple[str, int], Any] = {}
         
-        # Frame decoder for converting PIL images to display format
-        self.decoder = FrameDecoder(self.config.width, self.config.height)
-        
         # Message queue and display thread
         self._message_queue = []
         self._display_lock = threading.Lock()
         self._current_message = None
         self._message_end_time = 0
         
-        self.logger.info("Message display system initialized")
+        self.logger.info("Message display system initialized (optimized RGB565)")
     
     def _get_font(self, size: int, bold: bool = False) -> Any:
         """Get a font with caching. Falls back to default if system fonts unavailable."""
@@ -70,51 +72,76 @@ class MessageDisplay:
         self._font_cache[cache_key] = font
         return font
     
+    def _create_text_image_rgb565(self, title: str, subtitle: str = "", 
+                                 bg_color: Tuple[int, int, int] = (0, 0, 0),
+                                 text_color: Tuple[int, int, int] = (255, 255, 255),
+                                 title_size: int = 24, subtitle_size: int = 16) -> Optional[bytes]:
+        """Create RGB565 buffer with text - much faster than PIL conversion."""
+        try:
+            width, height = self.config.width, self.config.height
+            
+            # Convert colors to RGB565 once
+            bg_rgb565 = _rgb888_to_rgb565(*bg_color)
+            text_rgb565 = _rgb888_to_rgb565(*text_color)
+            
+            # Create RGB565 frame buffer (2 bytes per pixel)
+            frame_data = bytearray(width * height * 2)
+            bg_bytes = struct.pack('>H', bg_rgb565)
+            
+            # Fill with background color
+            for i in range(0, len(frame_data), 2):
+                frame_data[i:i+2] = bg_bytes
+            
+            # For complex text rendering, we still need PIL temporarily
+            # but we'll convert more efficiently
+            if title or subtitle:
+                # Create PIL image for text rendering only
+                pil_image = Image.new('RGB', (width, height), bg_color)
+                draw = ImageDraw.Draw(pil_image)
+                
+                # Get fonts
+                title_font = self._get_font(title_size, bold=True)
+                subtitle_font = self._get_font(subtitle_size, bold=False)
+                
+                # Calculate text positioning
+                y_offset = 60  # Start 60px from top
+                
+                # Draw title (centered)
+                if title and title_font:
+                    bbox = draw.textbbox((0, 0), title, font=title_font)
+                    title_width = bbox[2] - bbox[0]
+                    title_height = bbox[3] - bbox[1]
+                    title_x = (width - title_width) // 2
+                    draw.text((title_x, y_offset), title, fill=text_color, font=title_font)
+                    y_offset += title_height + 20
+                
+                # Draw subtitle (centered)
+                if subtitle and subtitle_font:
+                    bbox = draw.textbbox((0, 0), subtitle, font=subtitle_font)
+                    subtitle_width = bbox[2] - bbox[0]
+                    subtitle_x = (width - subtitle_width) // 2
+                    draw.text((subtitle_x, y_offset), subtitle, fill=text_color, font=subtitle_font)
+                
+                # Convert PIL to RGB565 efficiently - process row by row
+                rgb_data = pil_image.tobytes()
+                for i in range(0, len(rgb_data), 3):
+                    r, g, b = rgb_data[i], rgb_data[i+1], rgb_data[i+2]
+                    rgb565 = _rgb888_to_rgb565(r, g, b)
+                    pixel_offset = (i // 3) * 2
+                    frame_data[pixel_offset:pixel_offset+2] = struct.pack('>H', rgb565)
+            
+            return bytes(frame_data)
+            
+        except Exception as e:
+            self.logger.error(f"Failed to create RGB565 text image: {e}")
+            return None
+
     def _create_text_image(self, title: str, subtitle: str = "", 
                           bg_color: Tuple[int, int, int] = (0, 0, 0),
                           text_color: Tuple[int, int, int] = (255, 255, 255),
                           title_size: int = 24, subtitle_size: int = 16) -> Optional[bytes]:
-        """Create an image with text and convert to display format."""
-        try:
-            # Create image with black background
-            image = Image.new('RGB', (self.config.width, self.config.height), bg_color)
-            draw = ImageDraw.Draw(image)
-            
-            # Get fonts
-            title_font = self._get_font(title_size, bold=True)
-            subtitle_font = self._get_font(subtitle_size, bold=False)
-            
-            # Calculate text positioning
-            y_offset = 60  # Start 60px from top
-            
-            # Draw title (centered)
-            if title and title_font:
-                bbox = draw.textbbox((0, 0), title, font=title_font)
-                title_width = bbox[2] - bbox[0]
-                title_height = bbox[3] - bbox[1]
-                title_x = (self.config.width - title_width) // 2
-                draw.text((title_x, y_offset), title, fill=text_color, font=title_font)
-                y_offset += title_height + 20
-            
-            # Draw subtitle (centered)
-            if subtitle and subtitle_font:
-                bbox = draw.textbbox((0, 0), subtitle, font=subtitle_font)
-                subtitle_width = bbox[2] - bbox[0]
-                subtitle_x = (self.config.width - subtitle_width) // 2
-                draw.text((subtitle_x, y_offset), subtitle, fill=text_color, font=subtitle_font)
-            
-            # Convert to display format
-            buffer = io.BytesIO()
-            image.save(buffer, format='PNG')
-            buffer.seek(0)
-            frame_data = self.decoder.decode_image_bytes(buffer.getvalue())
-            buffer.close()
-            
-            return frame_data
-            
-        except Exception as e:
-            self.logger.error(f"Failed to create text image: {e}")
-            return None
+        """Create an image with text - optimized RGB565 version."""
+        return self._create_text_image_rgb565(title, subtitle, bg_color, text_color, title_size, subtitle_size)
     
     def show_message(self, title: str, subtitle: str = "", duration: float = 3.0,
                     bg_color: Tuple[int, int, int] = (0, 0, 0),
@@ -189,9 +216,22 @@ class MessageDisplay:
     def show_progress_bar(self, title: str, subtitle: str, progress: float) -> None:
         """Display a progress bar with title and subtitle."""
         try:
-            # Create image
-            image = Image.new('RGB', (self.config.width, self.config.height), (0, 0, 0))
-            draw = ImageDraw.Draw(image)
+            # Create RGB565 buffer directly for better performance
+            width, height = self.config.width, self.config.height
+            frame_data = bytearray(width * height * 2)
+            
+            # Background color (black)
+            bg_rgb565 = _rgb888_to_rgb565(0, 0, 0)
+            bg_bytes = struct.pack('>H', bg_rgb565)
+            
+            # Fill with background
+            for i in range(0, len(frame_data), 2):
+                frame_data[i:i+2] = bg_bytes
+            
+            # For text and progress bar, we'll still use PIL temporarily for complex rendering
+            # but convert more efficiently
+            pil_image = Image.new('RGB', (width, height), (0, 0, 0))
+            draw = ImageDraw.Draw(pil_image)
             
             # Get fonts
             title_font = self._get_font(20, bold=True)
@@ -203,7 +243,7 @@ class MessageDisplay:
             if title and title_font:
                 bbox = draw.textbbox((0, 0), title, font=title_font)
                 title_width = bbox[2] - bbox[0]
-                title_x = (self.config.width - title_width) // 2
+                title_x = (width - title_width) // 2
                 draw.text((title_x, y_pos), title, fill=(255, 255, 255), font=title_font)
                 y_pos += 35
             
@@ -211,14 +251,14 @@ class MessageDisplay:
             if subtitle and subtitle_font:
                 bbox = draw.textbbox((0, 0), subtitle, font=subtitle_font)
                 subtitle_width = bbox[2] - bbox[0]
-                subtitle_x = (self.config.width - subtitle_width) // 2
+                subtitle_x = (width - subtitle_width) // 2
                 draw.text((subtitle_x, y_pos), subtitle, fill=(200, 200, 200), font=subtitle_font)
                 y_pos += 30
             
             # Draw progress bar
             bar_width = 180
             bar_height = 20
-            bar_x = (self.config.width - bar_width) // 2
+            bar_x = (width - bar_width) // 2
             bar_y = y_pos + 10
             
             # Progress bar background
@@ -241,18 +281,20 @@ class MessageDisplay:
             if title_font:
                 bbox = draw.textbbox((0, 0), progress_text, font=title_font)
                 progress_width = bbox[2] - bbox[0]
-                progress_x = (self.config.width - progress_width) // 2
+                progress_x = (width - progress_width) // 2
                 draw.text((progress_x, bar_y + 35), progress_text, fill=(255, 255, 255), font=title_font)
             
-            # Convert to RGB565 format and display
-            buffer = io.BytesIO()
-            image.save(buffer, format='PNG')
-            buffer.seek(0)
-            frame_data = self.decoder.decode_image_bytes(buffer.getvalue())
-            buffer.close()
+            # Convert PIL to RGB565 efficiently - direct pixel conversion
+            rgb_data = pil_image.tobytes()
+            for i in range(0, len(rgb_data), 3):
+                r, g, b = rgb_data[i], rgb_data[i+1], rgb_data[i+2]
+                rgb565 = _rgb888_to_rgb565(r, g, b)
+                pixel_offset = (i // 3) * 2
+                frame_data[pixel_offset:pixel_offset+2] = struct.pack('>H', rgb565)
             
+            # Display the frame
             if frame_data:
-                self.display_driver.display_frame(frame_data)
+                self.display_driver.display_frame(bytes(frame_data))
             
         except Exception as e:
             self.logger.error(f"Failed to show progress bar: {e}")
