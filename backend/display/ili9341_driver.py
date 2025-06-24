@@ -192,14 +192,14 @@ class ILI9341Display:
         self.command(0x2A)
         self.data(x_start >> 8)
         self.data(x_start & 0xFF)
-        self.data(x_end >> 8)
+        self.data((x_end - 1) >> 8)
         self.data((x_end - 1) & 0xFF)
         
         # Set row address
         self.command(0x2B)
         self.data(y_start >> 8)
         self.data(y_start & 0xFF)
-        self.data(x_end >> 8)
+        self.data((y_end - 1) >> 8)
         self.data((y_end - 1) & 0xFF)
         
         # Memory write command
