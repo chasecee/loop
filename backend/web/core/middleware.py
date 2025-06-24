@@ -31,6 +31,15 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         start_time = time.perf_counter()
         response: Response = await call_next(request)
         duration_ms = (time.perf_counter() - start_time) * 1000
+        
+        # Skip logging for static assets to reduce noise
+        if (request.url.path.startswith("/_next") or 
+            request.url.path.startswith("/assets") or
+            request.url.path.startswith("/media/raw") or
+            request.url.path.startswith("/media/processed") or
+            request.url.path.endswith(('.js', '.css', '.woff', '.woff2', '.png', '.jpg', '.svg'))):
+            return response
+        
         logger.info(f"{request.method} {request.url.path} - {response.status_code} ({duration_ms:.2f} ms)")
         return response
 
