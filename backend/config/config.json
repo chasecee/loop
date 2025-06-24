@@ -17,8 +17,8 @@
     "show_progress": true,
     "progress_color": 1984,
     "brightness": 100,
-    "backlight_freq": 2000,
-    "spi_speed_hz": 64000000
+    "backlight_freq": 1000,
+    "spi_speed_hz": 55000000
   },
   "wifi": {
     "ssid": "",
