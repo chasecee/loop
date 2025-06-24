@@ -114,8 +114,6 @@ def main():
     
     print("=" * 40)
     print(f"🎉 Media reset complete! Removed {removed_count} items.")
-    print("📱 You can now upload media to test the new optimized format.")
-    print("🚀 The system will use the new efficient metadata structure.")
 
 if __name__ == "__main__":
     main() 

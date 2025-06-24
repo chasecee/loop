@@ -30,6 +30,17 @@ async def process_media_upload_v2(
 ) -> Dict[str, Any]:
     """Simplified, bulletproof media upload processing."""
     
+    # Pause playback during the upload to avoid frame-missing glitches
+    playback_paused = False
+    if display_player:
+        try:
+            if not display_player.is_paused():
+                display_player.pause()
+                playback_paused = True
+        except Exception:
+            # Non-fatal – continue processing
+            pass
+    
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
 
@@ -67,21 +78,35 @@ async def process_media_upload_v2(
                     pass
             continue
     
-    # Refresh display if we got anything
+    # Refresh display if we added anything; choose an item that is ready for
+    # playback (i.e. not mere raw video without frames).
     if results and display_player:
         try:
             display_player.refresh_media_list()
-            # Set last uploaded as active
-            if results:
-                display_player.set_active_media(results[-1]['slug'])
+
+            # Pick the most recently completed item (status != "uploaded") to
+            # become active. If none meet the criteria, skip activation to
+            # avoid the "missing frames" stall.
+            for result in reversed(results):
+                if result.get("status") != "uploaded":
+                    display_player.set_active_media(result["slug"])
+                    break
         except Exception as e:
             logger.warning(f"Display refresh failed: {e}")
     
-    return {
-        "success": len(results) > 0,
-        "processed": len(results),
-        "last_slug": results[-1]['slug'] if results else None
-    }
+    # Ensure playback resumes even if an error occurred
+    try:
+        return {
+            "success": len(results) > 0,
+            "processed": len(results),
+            "last_slug": results[-1]['slug'] if results else None
+        }
+    finally:
+        if display_player and playback_paused:
+            try:
+                display_player.resume()
+            except Exception:
+                pass
 
 
 async def process_single_file_v2(file: UploadFile, media_raw_dir: Path, media_processed_dir: Path) -> Optional[Dict[str, Any]]:
@@ -153,17 +178,20 @@ async def process_media_v2(file: UploadFile, content: bytes, slug: str, media_ra
         "size": len(content),
         "uploadedAt": datetime.utcnow().isoformat() + "Z",
         "url": f"/media/raw/{slug}_{file.filename}",
-        "processing_status": "uploaded",  # Just uploaded, no processing needed
+        "processing_status": "uploaded",  # Raw upload – will be updated once ZIP arrives
         "frame_count": 1,  # Default for images
         "width": 320,
         "height": 240
     }
     
-    # Add to media index
-    media_index.add_media(metadata, make_active=True)
-    
-    # Broadcast to dashboard
-    await broadcaster.media_uploaded(metadata)
+    # Decide whether this item should become active immediately.
+    # Video uploads are typically followed by a matching ZIP containing pre-rendered
+    # RGB frames. If we make the raw video active right away the DisplayPlayer will
+    # try (and fail) to load frames, causing a visible freeze. Images and other
+    # non-video types can be made active immediately.
+    is_video = metadata["type"].startswith("video/")
+
+    media_index.add_media(metadata, make_active=not is_video)
     
     # Only log completion, not processing start
     logger.info(f"✅ Media uploaded: {file.filename}")
@@ -179,18 +207,45 @@ async def process_zip_v2(file: UploadFile, content: bytes, slug: str, media_proc
     
     try:
         # Extract ZIP and get metadata
-        metadata = await extract_zip_frames_v2(content, slug, media_processed_dir)
-        
-        # Add to media index
+        # First, peek into metadata.json to find original filename so we can merge.
+
+        import zipfile, json, tempfile, asyncio
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_zip_path = Path(tmpdir) / "upload.zip"
+            with open(tmp_zip_path, "wb") as f:
+                f.write(content)
+
+            with zipfile.ZipFile(tmp_zip_path, "r") as zf:
+                if "metadata.json" not in zf.namelist():
+                    raise ValueError("metadata.json missing in ZIP")
+
+                zip_metadata_raw = json.loads(zf.read("metadata.json").decode())
+
+        original_filename = zip_metadata_raw.get("original_filename", file.filename.replace(".zip", ""))
+
+        # Check for existing raw upload with same filename
+        existing_slug = None
+        for s, m in media_index.get_media_dict().items():
+            if m.get("filename") == original_filename:
+                existing_slug = s
+                break
+
+        target_slug = existing_slug or slug
+
+        # Now actually extract frames to the target slug directory
+        metadata = await extract_zip_frames_v2(content, target_slug, media_processed_dir)
+
+        # If we found an existing raw entry, overwrite it in-place (same slug)
+        # Otherwise this acts like new add_media.
         media_index.add_media(metadata, make_active=True)
-        
+
         # Broadcast completion
         await broadcaster.media_uploaded(metadata)
         
         # Only log completion
         logger.info(f"✅ ZIP processed: {file.filename}")
         
-        return {"slug": slug, "status": "completed"}
+        return {"slug": target_slug, "status": "completed"}
         
     except Exception as e:
         logger.error(f"ZIP processing failed: {file.filename}: {e}")

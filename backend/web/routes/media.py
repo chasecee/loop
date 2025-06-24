@@ -104,27 +104,58 @@ def create_media_router(
             # Handle display player deletion first (before removing files)
             if display_player:
                 display_player.handle_media_deletion(slug)
-            
-            # Update media index
+
+            # Fetch metadata BEFORE removal so we can identify duplicates
+            all_media = media_index.get_media_dict()
+            deleted_meta = all_media.get(slug, {})
+
+            # Perform primary removal
             media_index.remove_media(slug)
-            
+
             # Remove from filesystem AFTER stopping playback
             media_dir = media_processed_dir / slug
             raw_files = list(media_raw_dir.glob(f"*{slug}*"))
-            
+
             if media_dir.exists():
                 shutil.rmtree(media_dir)
                 logger.info(f"Removed processed directory: {media_dir}")
-            
+
             for raw_file in raw_files:
                 raw_file.unlink()
                 logger.info(f"Removed raw file: {raw_file}")
-            
+
+            # ALSO remove any duplicate raw upload that shares the same filename
+            if deleted_meta.get("filename"):
+                dup_slug = next(
+                    (
+                        s
+                        for s, m in all_media.items()
+                        if s != slug
+                        and m.get("filename") == deleted_meta["filename"]
+                        and m.get("processing_status") == "uploaded"
+                    ),
+                    None,
+                )
+
+                if dup_slug:
+                    logger.info(f"Deleting duplicate raw upload: {dup_slug}")
+                    media_index.remove_media(dup_slug)
+
+                    dup_dir = media_processed_dir / dup_slug
+                    if dup_dir.exists():
+                        shutil.rmtree(dup_dir)
+                        logger.info(f"Removed processed directory: {dup_dir}")
+
+                    dup_raw_files = list(media_raw_dir.glob(f"*{dup_slug}*"))
+                    for rf in dup_raw_files:
+                        rf.unlink()
+                        logger.info(f"Removed raw file: {rf}")
+
             invalidate_storage_cache()
             invalidate_dashboard_cache()
-            
+
             return APIResponse(success=True, message=f"Deleted media: {slug}")
-            
+
         except Exception as e:
             logger.error(f"Failed to delete media {slug}: {e}")
             raise HTTPException(status_code=500, detail=str(e))

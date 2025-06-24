@@ -766,3 +766,22 @@ class DisplayPlayer:
         self.logger.warning("No valid media found in entire loop - all media missing frames")
         self.show_message("No Media Available", "All media missing frames", duration=5.0)
         return False 
+
+    # ------------------------------------------------------------
+    # Explicit pause / resume helpers for external callers
+    # ------------------------------------------------------------
+    def pause(self) -> None:
+        """Pause playback (idempotent)."""
+        with self.lock:
+            if not self.paused:
+                self.paused = True
+                self.pause_event.clear()
+                self.logger.info("Playback paused (external)")
+
+    def resume(self) -> None:
+        """Resume playback if currently paused."""
+        with self.lock:
+            if self.paused:
+                self.paused = False
+                self.pause_event.set()
+                self.logger.info("Playback resumed (external)") 
