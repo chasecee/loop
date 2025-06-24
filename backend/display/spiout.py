@@ -1,26 +1,14 @@
-"""SPI display driver for Waveshare 2.4" LCD Module - Simplified."""
+"""SPI display driver for ILI9341 2.4" LCD Module - Clean implementation."""
 
-import sys
-from pathlib import Path
 from PIL import Image
 from typing import Optional, Union
-import spidev
 import struct
 from contextlib import contextmanager
 
-# Add the Waveshare library path to Python's search path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "waveshare" / "LCD_Module_RPI_code" / "RaspberryPi" / "python" / "lib"))
-
 from config.schema import DisplayConfig
 from display.memory_pool import get_frame_buffer_pool, get_spi_chunk_pool
+from display.ili9341_driver import ILI9341Display
 from utils.logger import get_logger
-
-try:
-    from LCD_2inch4 import LCD_2inch4
-    WAVESHARE_AVAILABLE = True
-except ImportError:
-    WAVESHARE_AVAILABLE = False
-    LCD_2inch4 = None
 
 class ILI9341Driver:
     """Driver for ILI9341 display with memory pool optimization."""
@@ -29,11 +17,11 @@ class ILI9341Driver:
         """Initialize the display driver."""
         self.config = config
         self.logger = get_logger("display")
-        self.disp: Optional[LCD_2inch4] = None
+        self.disp: Optional[ILI9341Display] = None
         self.initialized = False
         
         self.logger.info(
-            f"Initializing Waveshare 2.4\" LCD driver with pins "
+            f"Initializing ILI9341 2.4\" LCD driver with pins "
             f"RST={self.config.rst_pin}, DC={self.config.dc_pin}, BL={self.config.bl_pin} "
             f"on SPI bus {self.config.spi_bus}, device {self.config.spi_device}"
         )
@@ -52,28 +40,21 @@ class ILI9341Driver:
         """Initialize the display hardware."""
         if self.initialized:
             return
-        
-        if not WAVESHARE_AVAILABLE:
-            self.logger.error("Waveshare library not available - display disabled")
-            return
 
         self.logger.info("Initializing LCD...")
         try:
-            self.disp = LCD_2inch4(
+            self.disp = ILI9341Display(
                 rst=self.config.rst_pin,
                 dc=self.config.dc_pin,
-                bl=self.config.bl_pin
+                bl=self.config.bl_pin,
+                spi_bus=self.config.spi_bus,
+                spi_device=self.config.spi_device,
+                bl_freq=self.config.backlight_freq
             )
             self.disp.Init()
             self.disp.clear()
             # Mark as initialized before controlling backlight to avoid recursion
             self.initialized = True
-            # Increase PWM frequency to minimize visible flicker
-            try:
-                if hasattr(self.disp, "bl_Frequency"):
-                    self.disp.bl_Frequency(self.config.backlight_freq)
-            except Exception as freq_err:
-                self.logger.debug(f"Unable to set backlight PWM frequency: {freq_err}")
             # Set initial brightness from config after initialization
             self.set_backlight(self.config.brightness)
             self.logger.info("LCD initialized successfully")
@@ -81,7 +62,7 @@ class ILI9341Driver:
             self.logger.error(f"Failed to initialize LCD: {e}")
             self.initialized = False
             self.disp = None
-            raise RuntimeError("Could not initialize Waveshare display") from e
+            raise RuntimeError("Could not initialize ILI9341 display") from e
 
     def display_frame(self, frame_data: bytes) -> None:
         """Display a frame of RGB565 pixel data - optimized with memory pools."""
@@ -193,4 +174,4 @@ class ILI9341Driver:
         if self.initialized and self.disp:
             self.disp.module_exit()
             self.initialized = False
-            self.logger.info("Waveshare display driver cleaned up") 
+            self.logger.info("ILI9341 display driver cleaned up") 

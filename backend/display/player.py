@@ -52,7 +52,7 @@ class DisplayPlayer:
         
         # Event-based pause handling
         self.pause_event = threading.Event()
-        self.pause_event.set()  # Start unpaused
+        self.pause_event.set()
         
         # Threading
         self.playback_thread: Optional[threading.Thread] = None
@@ -61,7 +61,22 @@ class DisplayPlayer:
         # Track logged missing frames to avoid spam
         self._logged_missing_frames = set()
         
+        # Display hardware detection
+        self.display_available = self._check_display_availability()
+        if not self.display_available:
+            self.logger.warning("Display hardware not available - running in demo mode")
+        
         self.logger.info("Display player initialized")
+    
+    def _check_display_availability(self) -> bool:
+        """Check if display hardware is actually available."""
+        try:
+            # Try to initialize and test display
+            self.display_driver.init()
+            return self.display_driver.initialized
+        except Exception as e:
+            self.logger.debug(f"Display hardware not available: {e}")
+            return False
     
     def _wait_interruptible(self, duration: float) -> bool:
         """Wait for duration but return immediately if interrupted or paused."""
@@ -493,7 +508,11 @@ class DisplayPlayer:
                     # Display static image for configured duration
                     frame_data = sequence.get_next_frame(timeout=2.0)
                     if frame_data:
-                        self.display_driver.display_frame(frame_data)
+                        if self.display_available:
+                            self.display_driver.display_frame(frame_data)
+                        else:
+                            # Demo mode - simulate display with longer delay
+                            self.logger.debug("Demo mode: simulating static image display")
                         self._wait_interruptible(self.static_image_display_time)
                 else:
                     # Play animated sequence
@@ -520,9 +539,19 @@ class DisplayPlayer:
                             sequence_completed = False
                             break
                         
-                        # Display frame
+                        # Display frame with hardware availability check
                         display_start = time.time()
-                        self.display_driver.display_frame(frame_data)
+                        if self.display_available:
+                            try:
+                                self.display_driver.display_frame(frame_data)
+                            except Exception as e:
+                                # Display failed - mark hardware as unavailable
+                                self.display_available = False
+                                self.logger.warning(f"Display hardware failed, switching to demo mode: {e}")
+                        else:
+                            # Demo mode - simulate frame display timing
+                            time.sleep(0.001)  # Minimal delay to simulate display processing
+                        
                         display_time = time.time() - display_start
                         
                         # Frame timing
