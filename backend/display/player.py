@@ -626,6 +626,12 @@ class DisplayPlayer:
             if self.playback_thread:
                 self.playback_thread.join(timeout=5)
             self.logger.info("Display player stopped")
+
+            # Stop the message display worker thread gracefully
+            try:
+                self.message_display.stop()
+            except Exception:
+                pass
     
     def get_status(self) -> Dict:
         """Get current playback status."""

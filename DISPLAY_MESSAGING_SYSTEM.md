@@ -108,6 +108,9 @@ display_player.show_progress_bar("Converting", "video.mp4", 75.0)
 - Thread-safe message display
 - Non-blocking message updates
 - Automatic cleanup
+- Thread-safe display I/O (guarded by lock)
+- Non-blocking message APIs (producer/consumer queue)
+- Background worker thread handles timing & graceful cleanup
 
 ### **Hardware Integration**
 
@@ -192,6 +195,7 @@ logger.error("Upload failed")
 
 ## 🔍 **Implementation Notes**
 
+- **Queue-driven**: All public APIs push frames onto an internal queue; the worker thread renders them.
 - **No blocking**: Messages don't interrupt media playback
 - **Automatic fallback**: If text rendering fails, shows colored screen
 - **Performance**: Font caching and efficient RGB565 conversion

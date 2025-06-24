@@ -31,13 +31,19 @@ class MessageDisplay:
         # Cache for fonts to avoid reloading
         self._font_cache: Dict[Tuple[str, int], Any] = {}
         
-        # Message queue and display thread
-        self._message_queue = []
-        self._display_lock = threading.Lock()
-        self._current_message = None
-        self._message_end_time = 0
+        # Thread-safe producer/consumer queue for display tasks
+        import queue
+        self._queue: "queue.Queue[Tuple[bytes, float]]" = queue.Queue(maxsize=32)
         
-        self.logger.info("Message display system initialized (optimized RGB565 + memory pool)")
+        # Lock to ensure only one thread talks to the display hardware at a time
+        self._display_lock = threading.Lock()
+        
+        # Worker thread that pulls from queue and handles timing
+        self._worker_running = True
+        self._worker_thread = threading.Thread(target=self._worker_loop, name="MessageDisplayWorker", daemon=True)
+        self._worker_thread.start()
+        
+        self.logger.info("Message display system initialized (async queue mode)")
     
     @contextmanager
     def _get_frame_buffer(self):
@@ -165,15 +171,14 @@ class MessageDisplay:
         """Show a text message on the display."""
         try:
             frame_data = self._create_text_image(title, subtitle, bg_color, text_color)
-            if frame_data:
-                self.display_driver.display_frame(frame_data)
-                if duration > 0:
-                    time.sleep(duration)
-            else:
-                # Fallback to solid color if text rendering fails
-                self.display_driver.fill_screen(0x07E0)  # Green
-                if duration > 0:
-                    time.sleep(duration)
+            if frame_data is None:
+                # Fallback solid color frame
+                with self._get_frame_buffer() as fb:
+                    if fb is not None:
+                        solid_color = _rgb888_to_rgb565(*bg_color)
+                        fb[:] = struct.pack('>H', solid_color) * (len(fb) // 2)
+                        frame_data = bytes(fb)
+            self._enqueue_frame(frame_data, duration)
         except Exception as e:
             self.logger.error(f"Failed to show message '{title}': {e}")
     
@@ -312,15 +317,74 @@ class MessageDisplay:
                     pixel_offset = (i // 3) * 2
                     frame_data[pixel_offset:pixel_offset+2] = struct.pack('>H', rgb565)
                 
-                # Display the frame - pass a copy since buffer will be returned to pool
-                self.display_driver.display_frame(bytes(frame_data))
+                # Enqueue the frame (duration 0 = persistent until next update)
+                self._enqueue_frame(bytes(frame_data), 0)
             
         except Exception as e:
             self.logger.error(f"Failed to show progress bar: {e}")
     
     def clear_screen(self, color: int = 0x0000) -> None:
         """Clear the screen with a solid color."""
-        self.display_driver.fill_screen(color)
+        with self._display_lock:
+            self.display_driver.fill_screen(color)
+
+    # ------------------------------------------------------------
+    # Background worker that consumes queued frames and shows them
+    # ------------------------------------------------------------
+    def _worker_loop(self):
+        """Continuously consume the queue and display frames."""
+        # We purposefully keep this loop very simple and robust.
+        while self._worker_running:
+            try:
+                try:
+                    frame_data, duration = self._queue.get(timeout=0.1)
+                except Exception:
+                    continue  # Timeout – allows checking _worker_running periodically
+
+                # Display the frame
+                if frame_data:
+                    with self._display_lock:
+                        try:
+                            self.display_driver.display_frame(frame_data)
+                        except Exception as e:
+                            self.logger.error(f"Display driver error: {e}")
+
+                # Wait for duration (0 means persistent until next task)
+                if duration > 0:
+                    # Sleep in small increments so we can exit promptly on shutdown
+                    end_time = time.time() + duration
+                    while time.time() < end_time and self._worker_running:
+                        time.sleep(0.05)
+                # If duration is 0, block until next item immediately – no extra sleep
+
+            except Exception as e:
+                self.logger.error(f"Message worker loop error: {e}")
+
+    def _enqueue_frame(self, frame_data: Optional[bytes], duration: float):
+        """Put a frame onto the display queue, dropping on overflow to stay responsive."""
+        if frame_data is None:
+            return
+
+        try:
+            # Non-blocking put with small timeout to avoid deadlocks if queue is full
+            self._queue.put((frame_data, duration), timeout=0.1)
+        except Exception:
+            # Queue full – drop the message, but log once
+            self.logger.warning("Message queue full – dropping frame")
+
+    # ------------------------------------------------------------
+    # Public shutdown helper
+    # ------------------------------------------------------------
+    def stop(self):
+        """Stop the background worker thread gracefully."""
+        self._worker_running = False
+        # Unblock queue get() quickly
+        try:
+            self._queue.put_nowait((None, 0))
+        except Exception:
+            pass
+        if self._worker_thread:
+            self._worker_thread.join(timeout=2)
 
 
 # Global message display instance (set by player when initialized)
@@ -360,4 +424,11 @@ def show_processing(filename: str = "") -> None:
 def show_upload(count: int = 1) -> None:
     """Show upload message (convenience function)."""
     if _message_display:
-        _message_display.show_upload_message(count) 
+        _message_display.show_upload_message(count)
+
+
+# Graceful shutdown helper (not used yet, but handy)
+def stop_message_display():
+    """Stop the background worker thread."""
+    if _message_display:
+        _message_display.stop() 
