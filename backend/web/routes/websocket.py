@@ -1,13 +1,13 @@
-"""WebSocket route for real-time LOOP communication."""
+"""WebSocket routes for LOOP web server."""
 
 import json
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from ..core.websocket import manager
-from ..core.events import broadcaster
+from ..core.models import APIResponse
 from utils.logger import get_logger
 from utils.media_index import media_index
 
-logger = get_logger("websocket.route")
+logger = get_logger("web.websocket")
 
 def create_websocket_router() -> APIRouter:
     """Create WebSocket router."""
@@ -16,7 +16,7 @@ def create_websocket_router() -> APIRouter:
     
     @router.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket):
-        """Main WebSocket endpoint for real-time communication."""
+        """Main WebSocket endpoint for real-time updates."""
         conn_id = None
         
         try:
@@ -60,9 +60,18 @@ def create_websocket_router() -> APIRouter:
             if conn_id:
                 manager.disconnect(conn_id)
     
-    @router.get("/ws/stats")
-    async def websocket_stats():
-        """Get WebSocket connection statistics."""
-        return manager.get_stats()
+    @router.get("/api/websocket/status", response_model=APIResponse)
+    async def websocket_status():
+        """Get WebSocket connection status and diagnostics."""
+        stats = manager.get_stats()
+        return APIResponse(
+            success=True,
+            data={
+                "connections": stats,
+                "detailed_rooms": {
+                    room: list(connections) for room, connections in manager.rooms.items()
+                }
+            }
+        )
     
     return router 

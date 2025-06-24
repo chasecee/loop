@@ -70,15 +70,21 @@ class EventBroadcaster:
     
     async def processing_progress(self, job_id: str, progress_data: dict):
         """Broadcast processing progress update."""
-        await manager.broadcast_to_room("progress", {
-            "type": "processing_progress",
-            "data": {
-                "job_id": job_id,
-                **progress_data
+        try:
+            message = {
+                "type": "processing_progress",
+                "data": {
+                    "job_id": job_id,
+                    **progress_data
+                }
             }
-        })
-        
-        logger.debug(f"Processing progress broadcasted: {job_id} - {progress_data.get('progress', 0)}%")
+            
+            await manager.broadcast_to_room("progress", message)
+            logger.info(f"📡 Progress broadcast sent: {job_id[:8]} -> {progress_data.get('progress', 0)}% to progress room")
+            
+        except Exception as e:
+            logger.error(f"Failed to broadcast progress for {job_id}: {e}")
+            raise
     
     async def wifi_status_changed(self, wifi_data: dict):
         """Broadcast WiFi status change."""

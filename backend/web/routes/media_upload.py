@@ -19,16 +19,26 @@ logger = get_logger("web.media")
 
 async def _safe_progress_update(job_id: str, progress: float, stage: str, message: str, filename: str) -> None:
     """Update job progress with error handling."""
+    # Always update job record first (critical)
     try:
         media_index.update_processing_job(job_id, progress, stage, message)
+        logger.info(f"✅ Job record updated: {job_id[:8]} -> {progress}% ({stage})")
+    except Exception as e:
+        logger.error(f"CRITICAL: Failed to update job record {job_id}: {e}")
+        raise  # Don't continue if job record fails
+    
+    # Then attempt WebSocket broadcast (secondary, but important)
+    try:
         await broadcaster.processing_progress(job_id, {
             "progress": progress,
             "stage": stage,
             "message": message,
             "filename": filename
         })
+        logger.info(f"📡 WebSocket broadcast sent: {job_id[:8]} -> {progress}% ({stage})")
     except Exception as e:
-        logger.error(f"Failed to update progress for {job_id}: {e}")
+        logger.error(f"WebSocket broadcast failed for {job_id}: {e}")
+        # Don't raise - job record is already updated
 
 
 async def process_media_upload(

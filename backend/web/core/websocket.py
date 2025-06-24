@@ -91,15 +91,24 @@ class ConnectionManager:
             logger.warning(f"Cannot broadcast to unknown room: {room}")
             return
             
-        connections_to_remove = []
+        room_connections = self.rooms[room].copy()
+        logger.info(f"📡 Broadcasting to {room} room: {len(room_connections)} connections")
         
-        for conn_id in self.rooms[room].copy():
+        if len(room_connections) == 0:
+            logger.warning(f"No connections subscribed to {room} room")
+            return
+            
+        connections_to_remove = []
+        successful_sends = 0
+        
+        for conn_id in room_connections:
             if conn_id not in self.connections:
                 connections_to_remove.append(conn_id)
                 continue
                 
             try:
                 await self._send_to_connection(conn_id, message)
+                successful_sends += 1
             except Exception as e:
                 logger.warning(f"Failed to send to {conn_id}: {e}")
                 connections_to_remove.append(conn_id)
@@ -108,6 +117,8 @@ class ConnectionManager:
         for conn_id in connections_to_remove:
             self.rooms[room].discard(conn_id)
             
+        logger.info(f"📡 Broadcast complete: {successful_sends} successful, {len(connections_to_remove)} failed")
+        
         if connections_to_remove:
             logger.debug(f"Cleaned up {len(connections_to_remove)} dead connections from {room}")
     
