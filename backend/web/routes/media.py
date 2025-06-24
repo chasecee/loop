@@ -18,7 +18,7 @@ from ..core.events import broadcaster
 from display.player import DisplayPlayer
 from utils.media_index import media_index
 from utils.logger import get_logger
-from .media_upload import process_media_upload
+from .media_upload_v2 import process_media_upload_v2
 from .dashboard import invalidate_dashboard_cache
 
 logger = get_logger("web.media")
@@ -51,21 +51,32 @@ def create_media_router(
     
     @router.post("", response_model=APIResponse)
     async def upload_media(files: List[UploadFile] = File(...)):
-        """Upload already-converted media files from the browser."""
-        logger.info(f"Upload started: {len(files)} files received")
+        """Upload media files with v2 simplified processing."""
+        # Log only once to prevent duplicates
+        logger.info(f"🎬 Upload request: {len(files)} files")
         
-        upload_result = await process_media_upload(
-            files, media_raw_dir, media_processed_dir, display_player
-        )
-        
-        invalidate_storage_cache()
-        invalidate_dashboard_cache()
-        
-        return APIResponse(
-            success=True, 
-            message="Upload complete", 
-            data=upload_result
-        )
+        try:
+            # Use new v2 processor - no jobs, no coordination, just works
+            upload_result = await process_media_upload_v2(
+                files, media_raw_dir, media_processed_dir, display_player
+            )
+            
+            # Invalidate caches
+            invalidate_storage_cache()
+            invalidate_dashboard_cache()
+            
+            return APIResponse(
+                success=upload_result["success"], 
+                message=f"Processed {upload_result['processed']} files", 
+                data={
+                    "slug": upload_result["last_slug"],
+                    "job_ids": []  # No jobs in v2 system
+                }
+            )
+            
+        except Exception as e:
+            logger.error(f"Upload failed: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
     
     @router.post("/{slug}/activate", response_model=APIResponse)
     async def activate_media(slug: str):
@@ -135,49 +146,38 @@ def create_media_router(
             logger.error(f"Failed to cleanup media: {e}")
             raise HTTPException(status_code=500, detail=str(e))
     
-    # Processing Progress API
+    # Legacy processing progress endpoints - now simplified since no jobs in v2
     
     @router.get("/progress/{job_id}", response_model=APIResponse)
     async def get_processing_progress(job_id: str):
-        """Get processing progress for a specific job."""
-        job_data = media_index.get_processing_job(job_id)
-        if not job_data:
-            raise HTTPException(status_code=404, detail="Processing job not found")
-        
+        """Get processing progress - simplified for v2 (no jobs)."""
+        # V2 system has no jobs, so always return completed
         return APIResponse(
             success=True,
-            data=job_data
+            data={
+                "job_id": job_id,
+                "status": "completed", 
+                "progress": 100,
+                "stage": "completed",
+                "message": "Upload completed (v2 system)"
+            }
         )
     
     @router.get("/progress", response_model=APIResponse)
     async def get_all_processing_progress():
-        """Get all current processing jobs."""
-        try:
-            jobs = media_index.list_processing_jobs()
-            return APIResponse(
-                success=True,
-                data={"jobs": jobs}
-            )
-        except Exception as e:
-            logger.error(f"Failed to get processing progress: {e}")
-            # Return empty jobs instead of error to prevent frontend polling issues
-            return APIResponse(
-                success=True,
-                data={"jobs": {}},
-                message="Progress data temporarily unavailable"
-            )
+        """Get all processing jobs - simplified for v2."""
+        # V2 system processes everything immediately, no jobs to track
+        return APIResponse(
+            success=True,
+            data={"jobs": {}}
+        )
     
     @router.delete("/progress/{job_id}", response_model=APIResponse)
     async def clear_processing_job(job_id: str):
-        """Clear a completed processing job."""
-        job_data = media_index.get_processing_job(job_id)
-        if not job_data:
-            raise HTTPException(status_code=404, detail="Processing job not found")
-        
-        media_index.remove_processing_job(job_id)
+        """Clear processing job - no-op in v2."""
         return APIResponse(
             success=True,
-            message="Processing job cleared"
+            message="No jobs to clear in v2 system"
         )
     
     return router 
