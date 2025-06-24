@@ -196,6 +196,9 @@ async def process_media_v2(file: UploadFile, content: bytes, slug: str, media_ra
     # Only log completion, not processing start
     logger.info(f"✅ Media uploaded: {file.filename}")
     
+    # Broadcast loop update since we changed loop/active
+    await broadcaster.loop_updated(media_index.list_loop())
+    
     return {"slug": slug, "status": "uploaded"}
 
 
@@ -252,10 +255,15 @@ async def process_zip_v2(file: UploadFile, content: bytes, slug: str, media_proc
 
             media_index.add_media(merged_meta, make_active=True)
             metadata = merged_meta
+
+            # Broadcast loop update since we changed loop/active
+            await broadcaster.loop_updated(media_index.list_loop())
         else:
             # No existing raw upload – treat as fresh entry (but keep size of ZIP)
             metadata = zip_meta
             media_index.add_media(metadata, make_active=True)
+
+            await broadcaster.loop_updated(media_index.list_loop())
 
         # Broadcast completion
         await broadcaster.media_uploaded(metadata)
