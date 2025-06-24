@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import List
 from datetime import datetime
 
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, HTTPException, Request
 from fastapi import Depends
 
 from ..core.models import APIResponse, AddToLoopPayload, ProcessingJobResponse
@@ -50,10 +50,13 @@ def create_media_router(
             raise HTTPException(status_code=500, detail=str(e))
     
     @router.post("", response_model=APIResponse)
-    async def upload_media(files: List[UploadFile] = File(...)):
+    async def upload_media(request: Request, files: List[UploadFile] = File(...)):
         """Upload media files with v2 simplified processing."""
-        # Log only once to prevent duplicates
-        logger.info(f"🎬 Upload request: {len(files)} files")
+        # Generate unique request ID to track duplicates
+        request_id = str(uuid.uuid4())[:8]
+        
+        # Log with request ID to track duplicates
+        logger.info(f"🎬 Upload request [{request_id}]: {len(files)} files")
         
         try:
             # Use new v2 processor - no jobs, no coordination, just works
@@ -65,6 +68,8 @@ def create_media_router(
             invalidate_storage_cache()
             invalidate_dashboard_cache()
             
+            logger.info(f"✅ Upload complete [{request_id}]: {upload_result['processed']} files processed")
+            
             return APIResponse(
                 success=upload_result["success"], 
                 message=f"Processed {upload_result['processed']} files", 
@@ -75,7 +80,7 @@ def create_media_router(
             )
             
         except Exception as e:
-            logger.error(f"Upload failed: {e}")
+            logger.error(f"❌ Upload failed [{request_id}]: {e}")
             raise HTTPException(status_code=500, detail=str(e))
     
     @router.post("/{slug}/activate", response_model=APIResponse)
