@@ -6,7 +6,7 @@ import struct
 from contextlib import contextmanager
 
 from config.schema import DisplayConfig
-from display.memory_pool import get_frame_buffer_pool, get_spi_chunk_pool
+from display.memory_pool import get_frame_buffer_pool
 from display.ili9341_driver import ILI9341Display
 from utils.logger import get_logger
 

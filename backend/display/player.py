@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from config.schema import DisplayConfig, MediaConfig
-from display.framebuf import FrameSequence, FrameDecoder, FrameBuffer
+from display.framebuf import FrameSequence
 from display.spiout import ILI9341Driver
 from display.messages import MessageDisplay, set_message_display
 from utils.logger import get_logger
