@@ -17,7 +17,7 @@ class DisplayConfig:
     framerate: int = 25
     spi_bus: int = 0
     spi_device: int = 0
-    spi_speed_hz: int = 48000000
+    spi_speed_hz: int = 64000000
     rst_pin: int = 27
     dc_pin: int = 25
     bl_pin: int = 18

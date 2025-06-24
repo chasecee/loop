@@ -27,4 +27,4 @@ def register_routers(app, display_player=None, wifi_manager=None, updater=None, 
     app.include_router(create_display_router(display_player, config))
     app.include_router(create_wifi_router(wifi_manager, config))
     app.include_router(create_updates_router(updater))
-    app.include_router(create_websocket_router()) 
+    app.include_router(create_websocket_router(display_player, wifi_manager, updater)) 

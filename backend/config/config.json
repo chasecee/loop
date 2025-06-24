@@ -18,7 +18,7 @@
     "progress_color": 1984,
     "brightness": 100,
     "backlight_freq": 20000,
-    "spi_speed_hz": 48000000,
+    "spi_speed_hz": 64000000,
     "gamma": 1.0
   },
   "wifi": {

@@ -270,27 +270,34 @@ class MediaIndexManager:
             return MediaIndex.empty()
 
     def _write_raw(self, index: MediaIndex) -> None:
-        """Write the media index with caching and batching support."""
+        """Write the media index with immediate persistence for critical operations."""
         with self._cache_lock:
             self._cache = index
             self._cache_dirty = True
             
-            # Check if we're in batching mode and this is not a critical operation
-            if self._batching and not hasattr(self, '_immediate_write_needed'):
-                self._batch_dirty = True
+            # Always write critical operations immediately
+            # Simplified logic: if _force_immediate_write was called, write now
+            if hasattr(self, '_immediate_write_needed'):
+                try:
+                    self._write_to_disk(index)
+                    self._cache_dirty = False
+                    delattr(self, '_immediate_write_needed')
+                    LOGGER.info("Critical operation persisted immediately")
+                except Exception as e:
+                    LOGGER.error(f"CRITICAL: Failed to persist immediate write: {e}")
+                    # Re-raise to ensure calling code knows about the failure
+                    raise
                 return
             
-            # For critical operations, write immediately even in batch mode
-            # For less critical ones, rely on periodic persistence
-            if hasattr(self, '_immediate_write_needed'):
-                self._write_to_disk(index)
-                self._cache_dirty = False
-                self._batch_dirty = False  # Clear batch dirty flag too
-                delattr(self, '_immediate_write_needed')
+            # For non-critical operations, rely on periodic persistence
+            # This will be handled by the background timer
+            LOGGER.debug("Non-critical operation queued for periodic persistence")
 
     def _write_to_disk(self, index: MediaIndex) -> None:
         """Write the media index atomically with proper locking."""
         try:
+            LOGGER.info(f"💾 STARTING DISK WRITE: {len(index.media)} media, {len(index.loop)} loop, path={self.index_path}")
+            
             # Update timestamp
             index.last_updated = int(time.time())
             
@@ -307,30 +314,50 @@ class MediaIndexManager:
                 LOGGER.error("Invalid processing format for writing")
                 return
 
+            # Ensure parent directory exists
+            self.index_path.parent.mkdir(parents=True, exist_ok=True)
+            LOGGER.info(f"💾 Parent directory ensured: {self.index_path.parent}")
+
             # Write to temporary file first for atomic operation
             temp_file = self.index_path.with_suffix('.json.tmp')
+            LOGGER.info(f"💾 Writing to temp file: {temp_file}")
             
             with open(temp_file, "w") as f:
                 fcntl.flock(f.fileno(), fcntl.LOCK_EX)
                 try:
-                    json.dump(index.to_dict(), f, indent=2)
+                    data_to_write = index.to_dict()
+                    LOGGER.info(f"💾 Data to write: media={len(data_to_write['media'])}, loop={len(data_to_write['loop'])}")
+                    json.dump(data_to_write, f, indent=2)
                     f.flush()
                     os.fsync(f.fileno())  # Ensure data is written to disk
+                    LOGGER.info(f"💾 Data written and flushed to temp file")
                 finally:
                     fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
             # Atomic rename
+            LOGGER.info(f"💾 Moving {temp_file} -> {self.index_path}")
             shutil.move(str(temp_file), str(self.index_path))
-            LOGGER.debug(f"Media index written successfully ({len(index.media)} items, {len(index.loop)} in loop, {len(index.processing)} processing)")
+            
+            # Verify the file was written
+            if self.index_path.exists():
+                file_size = self.index_path.stat().st_size
+                LOGGER.info(f"💾 ✅ DISK WRITE SUCCESSFUL: {self.index_path} ({file_size} bytes)")
+            else:
+                LOGGER.error(f"💾 ❌ FILE NOT FOUND AFTER WRITE: {self.index_path}")
 
         except Exception as exc:
-            LOGGER.error(f"Failed to write media index: {exc}")
+            LOGGER.error(f"💾 ❌ FAILED TO WRITE MEDIA INDEX: {exc}")
+            import traceback
+            LOGGER.error(f"💾 Traceback: {traceback.format_exc()}")
             # Clean up temp file if it exists
             if 'temp_file' in locals() and temp_file.exists():
                 try:
                     temp_file.unlink()
+                    LOGGER.info(f"💾 Cleaned up temp file: {temp_file}")
                 except Exception:
                     pass
+            # Re-raise the exception so calling code knows about failure
+            raise
 
     def _force_immediate_write(self) -> None:
         """Mark next write as immediate (for critical operations)."""
@@ -470,22 +497,32 @@ class MediaIndexManager:
         if not slug:
             raise ValueError("Metadata missing slug")
 
+        LOGGER.info(f"🔥 ADDING MEDIA: {slug} (make_active={make_active})")
+        
         index = self._read_raw()
+        LOGGER.info(f"🔥 Current index has {len(index.media)} media items")
         
         # Add to media dict
         index.media[slug] = meta_dict
+        LOGGER.info(f"🔥 Added to media dict, now has {len(index.media)} items")
 
         # Add to loop if requested
         if make_active and slug not in index.loop:
             index.loop.append(slug)
+            LOGGER.info(f"🔥 Added to loop, loop now has {len(index.loop)} items")
 
         # Set as active if it's the first item or explicitly requested
         if make_active and (not index.active or index.active not in index.media):
             index.active = slug
+            LOGGER.info(f"🔥 Set as active: {slug}")
 
+        LOGGER.info(f"🔥 About to force immediate write for {slug}")
         self._force_immediate_write()  # Critical operation
+        
+        LOGGER.info(f"🔥 About to call _write_raw for {slug}")
         self._write_raw(index)
-        LOGGER.info(f"Added media: {slug}")
+        
+        LOGGER.info(f"🔥 MEDIA ADDED SUCCESSFULLY: {slug} (active={index.active}, loop={len(index.loop)})")
 
     def remove_media(self, slug: str) -> None:
         """Remove a media item completely from the index."""
