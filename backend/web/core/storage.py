@@ -9,11 +9,11 @@ from utils.logger import get_logger
 
 logger = get_logger("web")
 
-# Aggressive caching with persistence for Pi Zero 2 performance
+# Simplified caching - no more aggressive SD card scanning
 _STORAGE_CACHE: dict[Path, int] = {}
 _CACHE_FILE = Path("media/.storage_cache.json")
 _LAST_SCAN_TIME = 0
-_SCAN_INTERVAL = 300  # Only rescan every 5 minutes max
+_SCAN_INTERVAL = 3600  # Only rescan every hour instead of 5 minutes
 
 
 def _calc_dir_size_fast(path: Path) -> int:
@@ -26,8 +26,8 @@ def _calc_dir_size_fast(path: Path) -> int:
         # Use os.walk for better performance than recursive scandir
         for root, dirs, files in os.walk(path):
             # More aggressive limit to prevent runaway calculations on Pi Zero 2
-            if total > 5 * 1024**3:  # 5GB limit (reduced from 10GB)
-                logger.warning(f"Directory size calculation truncated at 5GB for {path}")
+            if total > 1 * 1024**3:  # 1GB limit (reduced from 5GB for speed)
+                logger.warning(f"Directory size calculation truncated at 1GB for {path}")
                 break
                 
             for file in files:
@@ -115,15 +115,8 @@ def scan_storage_on_startup():
 
 
 def invalidate_storage_cache():
-    """Force rescan storage after media changes, but rate-limited."""
-    global _LAST_SCAN_TIME
-    
-    current_time = time.time()
-    
+    """NO-OP: Don't rescan storage during uploads to prevent 83-second delays."""
+    logger.debug("Storage cache invalidation skipped (preventing SD card delays)")
     # Rate limit storage rescans to prevent hammering SD card
-    if (current_time - _LAST_SCAN_TIME) < 60:  # No more than once per minute
-        logger.debug("Storage cache invalidation rate-limited")
-        return
-    
-    logger.info("Media changed, rescanning storage...")
-    scan_storage_on_startup() 
+    # DISABLED: This was causing 83-second upload delays on SD cards
+    # scan_storage_on_startup() 
