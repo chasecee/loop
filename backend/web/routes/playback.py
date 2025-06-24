@@ -116,11 +116,6 @@ def create_display_router(
                 response_data["brightness"] = level
                 if config:
                     config.display.brightness = level
-            if payload.gamma is not None:
-                display_player.display_driver.set_gamma(payload.gamma)
-                response_data["gamma"] = payload.gamma
-                if config:
-                    config.display.gamma = payload.gamma
             if config and response_data:
                 config.save()
             return APIResponse(success=True, message="Display settings updated", data=response_data)
@@ -130,11 +125,10 @@ def create_display_router(
     
     @router.get("/brightness", response_model=APIResponse)
     async def get_display_settings():
-        """Get current LCD backlight brightness and gamma."""
+        """Get current LCD backlight brightness."""
         try:
             level = config.display.brightness if config and config.display else 100
-            gamma = config.display.gamma if config and config.display else 2.4
-            return APIResponse(success=True, data={"brightness": level, "gamma": gamma})
+            return APIResponse(success=True, data={"brightness": level})
         except Exception as e:
             logger.error(f"Failed to get brightness: {e}")
             raise HTTPException(status_code=500, detail=str(e))

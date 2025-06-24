@@ -25,7 +25,6 @@ class DisplayConfig:
     progress_color: int = 1984  # Green progress bar color (RGB565)
     brightness: int = 100  # Backlight brightness percentage (0-100)
     backlight_freq: int = 20000  # PWM frequency in Hz to reduce flicker
-    gamma: float = 1.0  # Display gamma for software correction
 
 
 @dataclass

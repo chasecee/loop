@@ -18,7 +18,6 @@ class LoopOrderPayload(BaseModel):
 
 class DisplaySettingsPayload(BaseModel):
     brightness: Optional[int] = None
-    gamma: Optional[float] = None
 
 # Response Models
 

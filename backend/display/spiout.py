@@ -1,11 +1,10 @@
-"""SPI display driver for Waveshare 2.4" LCD Module."""
+"""SPI display driver for Waveshare 2.4" LCD Module - Simplified."""
 
 import sys
 from pathlib import Path
 from PIL import Image
 from typing import Optional, Union
 import spidev
-import numpy as np
 
 # Add the Waveshare library path to Python's search path
 sys.path.append(str(Path(__file__).parent.parent.parent / 'waveshare' / 'LCD_Module_RPI_code' / 'RaspberryPi' / 'python'))
@@ -15,7 +14,7 @@ from config.schema import DisplayConfig
 from utils.logger import get_logger
 
 class ILI9341Driver:
-    """A display driver that writes to the Waveshare 2.4" LCD via SPI."""
+    """A simplified display driver that writes to the Waveshare 2.4" LCD via SPI."""
     
     def __init__(self, config: DisplayConfig):
         """Initialize the display driver."""
@@ -23,11 +22,6 @@ class ILI9341Driver:
         self.logger = get_logger("display")
         self.disp: Optional[LCD_2inch4] = None
         self.initialized = False
-        self._software_brightness: float = 1.0  # extra dimming factor 0-1
-        self._gamma: float = max(0.1, config.gamma) if hasattr(config, "gamma") else 2.4
-        # Precompute gamma LUT (0-255 -> corrected)
-        import numpy as _np
-        self._gamma_lut = (_np.linspace(0, 1, 256) ** (1.0 / self._gamma) * 255).astype(_np.uint8)
         
         self.logger.info(
             f"Initializing Waveshare 2.4\" LCD driver with pins "
@@ -66,7 +60,7 @@ class ILI9341Driver:
             raise RuntimeError("Could not initialize Waveshare display") from e
 
     def display_frame(self, frame_data: bytes) -> None:
-        """Display a frame of RGB565 pixel data."""
+        """Display a frame of RGB565 pixel data - simplified version."""
         if not self.initialized:
             self.init()
         
@@ -85,69 +79,41 @@ class ILI9341Driver:
             )
             return
 
-        # Fast-path is possible when gamma correction is disabled.  Rotation is
-        # now handled by programming the MADCTL register appropriately, so we
-        # do NOT exclude non-zero rotation angles anymore.
-        can_send_raw = abs(self._gamma - 1.0) < 0.05
+        try:
+            # ---------------- Orientation handling ----------------
+            rot = self.config.rotation % 360
+            if rot == 0:
+                madctl = 0x48  # MX | BGR
+                win_w, win_h = self.disp.width, self.disp.height
+            elif rot == 90:
+                madctl = 0x28  # MV | BGR
+                win_w, win_h = self.disp.height, self.disp.width
+            elif rot == 180:
+                madctl = 0x88  # MY | BGR
+                win_w, win_h = self.disp.width, self.disp.height
+            elif rot == 270:
+                # Remove MY to undo the unwanted flip along the long (320-pixel) axis.
+                madctl = 0x68  # MX | MV | BGR
+                win_w, win_h = self.disp.height, self.disp.width
 
-        if can_send_raw:
-            try:
-                # --- optional brightness scaling in RGB565 domain ---
-                if self._software_brightness < 0.999:
-                    # View the buffer as big-endian uint16, make a copy we can mutate
-                    pix = np.frombuffer(frame_data, dtype='>u2').astype(np.uint16)
+            # Program MADCTL register
+            self.disp.command(0x36)
+            self.disp.data(madctl)
 
-                    # Separate 5-6-5 components
-                    r5 = (pix >> 11) & 0x1F
-                    g6 = (pix >> 5) & 0x3F
-                    b5 = pix & 0x1F
+            # Set the drawing window to cover the full panel in the chosen orientation
+            self.disp.SetWindows(0, 0, win_w, win_h)
+            # Switch to data mode
+            self.disp.digital_write(self.disp.DC_PIN, True)
 
-                    factor = self._software_brightness
-                    # Scale each component, clamp to valid range
-                    r5 = np.clip((r5.astype(np.float32) * factor).round(), 0, 31).astype(np.uint16)
-                    g6 = np.clip((g6.astype(np.float32) * factor).round(), 0, 63).astype(np.uint16)
-                    b5 = np.clip((b5.astype(np.float32) * factor).round(), 0, 31).astype(np.uint16)
-
-                    pix = (r5 << 11) | (g6 << 5) | b5
-                    frame_bytes = pix.astype('>u2').tobytes()
-                else:
-                    frame_bytes = frame_data  # no brightness change
-
-                # ---------------- Orientation handling ----------------
-                rot = self.config.rotation % 360
-                if rot == 0:
-                    madctl = 0x48  # MX | BGR
-                    win_w, win_h = self.disp.width, self.disp.height
-                elif rot == 90:
-                    madctl = 0x28  # MV | BGR
-                    win_w, win_h = self.disp.height, self.disp.width
-                elif rot == 180:
-                    madctl = 0x88  # MY | BGR
-                    win_w, win_h = self.disp.width, self.disp.height
-                elif rot == 270:
-                    # Remove MY to undo the unwanted flip along the long (320-pixel) axis.
-                    madctl = 0x68  # MX | MV | BGR
-                    win_w, win_h = self.disp.height, self.disp.width
-
-                # Program MADCTL register
-                self.disp.command(0x36)
-                self.disp.data(madctl)
-
-                # Set the drawing window to cover the full panel in the
-                # chosen orientation.
-                self.disp.SetWindows(0, 0, win_w, win_h)
-                # Switch to data mode
-                self.disp.digital_write(self.disp.DC_PIN, True)
-
-                # Send the buffer in 4 kB chunks (SPI driver limit)
-                for offset in range(0, len(frame_bytes), 4096):
-                    chunk = frame_bytes[offset:offset + 4096]
-                    # spi_writebyte expects a list of ints
-                    self.disp.spi_writebyte(list(chunk))
-                return  # done
-            except Exception as e:
-                self.logger.error(f"Raw RGB565 blit failed: {e}")
-                return  # Skip this frame instead of running the slow fallback
+            # Send the buffer in 4 kB chunks (SPI driver limit)
+            for offset in range(0, len(frame_data), 4096):
+                chunk = frame_data[offset:offset + 4096]
+                # spi_writebyte expects a list of ints
+                self.disp.spi_writebyte(list(chunk))
+                
+        except Exception as e:
+            self.logger.error(f"Frame display failed: {e}")
+            return
 
     def fill_screen(self, color: int = 0x0000) -> None:
         """Fill the screen with a color."""
@@ -164,7 +130,7 @@ class ILI9341Driver:
             self.disp.ShowImage(image)
 
     def set_backlight(self, level: Union[int, bool]) -> None:
-        """Set backlight brightness.
+        """Set backlight brightness - hardware PWM only.
 
         Args:
             level: If bool, True = use configured brightness, False = off.
@@ -177,38 +143,16 @@ class ILI9341Driver:
             return
 
         if type(level) is bool:
-            if level:
-                duty_cycle = 100  # backlight on fully
-                self._software_brightness = self.config.brightness / 100.0
-            else:
-                duty_cycle = 0
-                self._software_brightness = 0.0
+            duty_cycle = self.config.brightness if level else 0
         else:
-            pct = max(0, min(100, int(level)))
-            if pct == 0:
-                duty_cycle = 0
-                self._software_brightness = 0.0
-            else:
-                duty_cycle = 100  # always full backlight to avoid flicker
-                self._software_brightness = pct / 100.0
+            duty_cycle = max(0, min(100, int(level)))
 
         self.disp.bl_DutyCycle(duty_cycle)
-        self.logger.debug(
-            f"Backlight PWM={duty_cycle}%, software_brightness={self._software_brightness:.2f}"
-        )
+        self.logger.debug(f"Backlight PWM set to {duty_cycle}%")
 
     def cleanup(self) -> None:
         """Clean up resources."""
         if self.initialized and self.disp:
             self.disp.module_exit()
             self.initialized = False
-            self.logger.info("Waveshare display driver cleaned up")
-
-    # ------------------- Gamma API --------------------
-    def set_gamma(self, gamma: float) -> None:
-        """Set display gamma (software correction)."""
-        gamma = max(0.1, min(10.0, gamma))
-        self._gamma = gamma
-        import numpy as _np
-        self._gamma_lut = (_np.linspace(0, 1, 256) ** (1.0 / gamma) * 255).astype(_np.uint8)
-        self.logger.info(f"Set software gamma to {gamma:.2f}") 
+            self.logger.info("Waveshare display driver cleaned up") 

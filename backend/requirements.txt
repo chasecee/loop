@@ -8,7 +8,6 @@ python-multipart==0.0.6
 # Image/video processing
 pillow==10.1.0
 imageio==2.33.0
-numpy>=1.22.0  # Updated to support newer Python versions
 
 
 # Hardware interfaces (Pi specific)

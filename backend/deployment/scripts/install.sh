@@ -162,7 +162,10 @@ install_missing_packages \
     libfreetype6-dev \
     liblcms2-dev \
     libopenjp2-7 \
-    libtiff-dev
+    libtiff-dev \
+    libopenblas0 \
+    libopenblas-dev \
+    liblapack-dev
 
 # Set Boot Config path based on OS version
 if [ -f /boot/firmware/config.txt ]; then

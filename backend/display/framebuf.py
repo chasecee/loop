@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import List, Optional, Union, Dict
 from PIL import Image
 import io
-import numpy as np
 import queue
 import threading
 import time
@@ -52,10 +51,12 @@ class FrameBuffer:
     def get_bytes(self) -> bytes:
         """Get frame data as bytes."""
         return bytes(self.data)
-    
 
-    
 
+def _rgb_to_rgb565(r: int, g: int, b: int) -> int:
+    """Convert RGB888 to RGB565 format."""
+    # Pack RGB into 16-bit: RRRRR GGGGGG BBBBB
+    return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
 
 
 class FrameDecoder:
@@ -87,27 +88,7 @@ class FrameDecoder:
         """Decode JPEG file to RGB565."""
         try:
             with Image.open(file_path) as img:
-                # Resize to display dimensions
-                img = img.resize((self.width, self.height), Image.Resampling.LANCZOS)
-                
-                # Convert to RGB if needed
-                if img.mode != 'RGB':
-                    img = img.convert('RGB')
-                
-                # Convert to RGB565 using fast NumPy operations
-                img_array = np.array(img, dtype=np.uint8)
-                
-                # Extract R, G, B channels
-                r = img_array[:, :, 0].astype(np.uint16)
-                g = img_array[:, :, 1].astype(np.uint16)
-                b = img_array[:, :, 2].astype(np.uint16)
-                
-                # Convert to RGB565 using vectorized operations
-                rgb565 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
-                
-                # Convert to big-endian bytes
-                return rgb565.astype('>u2').tobytes()
-        
+                return self._image_to_rgb565(img)
         except Exception as e:
             self.logger.error(f"Failed to decode JPEG file {file_path}: {e}")
             return None
@@ -116,30 +97,32 @@ class FrameDecoder:
         """Decode image from bytes to RGB565."""
         try:
             with Image.open(io.BytesIO(image_data)) as img:
-                # Resize to display dimensions
-                img = img.resize((self.width, self.height), Image.Resampling.LANCZOS)
-                
-                # Convert to RGB if needed
-                if img.mode != 'RGB':
-                    img = img.convert('RGB')
-                
-                # Convert to RGB565 using fast NumPy operations
-                img_array = np.array(img, dtype=np.uint8)
-                
-                # Extract R, G, B channels
-                r = img_array[:, :, 0].astype(np.uint16)
-                g = img_array[:, :, 1].astype(np.uint16)
-                b = img_array[:, :, 2].astype(np.uint16)
-                
-                # Convert to RGB565 using vectorized operations
-                rgb565 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
-                
-                # Convert to big-endian bytes
-                return rgb565.astype('>u2').tobytes()
-        
+                return self._image_to_rgb565(img)
         except Exception as e:
             self.logger.error(f"Failed to decode image bytes: {e}")
             return None
+    
+    def _image_to_rgb565(self, img: Image.Image) -> bytes:
+        """Convert PIL Image to RGB565 bytes - pure Python implementation."""
+        # Resize to display dimensions
+        img = img.resize((self.width, self.height), Image.Resampling.LANCZOS)
+        
+        # Convert to RGB if needed
+        if img.mode != 'RGB':
+            img = img.convert('RGB')
+        
+        # Get raw RGB data
+        rgb_data = img.tobytes()
+        
+        # Convert to RGB565 - process 3 bytes at a time
+        rgb565_data = bytearray()
+        for i in range(0, len(rgb_data), 3):
+            r, g, b = rgb_data[i], rgb_data[i+1], rgb_data[i+2]
+            rgb565 = _rgb_to_rgb565(r, g, b)
+            # Store as big-endian 16-bit
+            rgb565_data.extend(struct.pack('>H', rgb565))
+        
+        return bytes(rgb565_data)
 
 
 class FrameSequence:
@@ -160,7 +143,7 @@ class FrameSequence:
         self._producer_thread = threading.Thread(target=self._produce_frames, daemon=True)
         self._producer_thread.start()
         
-        self.logger.info(f"Initialized sequence with {self.frame_count} frames (producer-consumer buffer)")
+        self.logger.info(f"Initialized sequence with {frame_count} frames (producer-consumer buffer)")
 
     def _get_frame_path(self, frame_idx: int) -> Path:
         """Generate frame path for given index."""
