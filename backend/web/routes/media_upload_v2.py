@@ -232,12 +232,30 @@ async def process_zip_v2(file: UploadFile, content: bytes, slug: str, media_proc
 
         target_slug = existing_slug or slug
 
-        # Now actually extract frames to the target slug directory
-        metadata = await extract_zip_frames_v2(content, target_slug, media_processed_dir)
+        # Extract ZIP frames and get frame-related metadata
+        zip_meta = await extract_zip_frames_v2(content, target_slug, media_processed_dir)
 
-        # If we found an existing raw entry, overwrite it in-place (same slug)
-        # Otherwise this acts like new add_media.
-        media_index.add_media(metadata, make_active=True)
+        if existing_slug:
+            # Merge: preserve size/url/type from original raw upload; update frame info
+            existing_meta = media_index.get_media_dict().get(existing_slug, {})
+
+            merged_meta = {
+                **existing_meta,
+                # fields from ZIP we do want to update/insert
+                "processing_status": "completed",
+                "frame_count": zip_meta.get("frame_count", existing_meta.get("frame_count")),
+                "width": zip_meta.get("width", existing_meta.get("width")),
+                "height": zip_meta.get("height", existing_meta.get("height")),
+                # ensure we have correct slug
+                "slug": existing_slug,
+            }
+
+            media_index.add_media(merged_meta, make_active=True)
+            metadata = merged_meta
+        else:
+            # No existing raw upload – treat as fresh entry (but keep size of ZIP)
+            metadata = zip_meta
+            media_index.add_media(metadata, make_active=True)
 
         # Broadcast completion
         await broadcaster.media_uploaded(metadata)
