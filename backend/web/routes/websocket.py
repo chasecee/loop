@@ -105,7 +105,11 @@ def create_websocket_router(
             pass
             
         except Exception as e:
-            logger.error(f"🔌 WebSocket error for {conn_id}: {e}")
+            # Suppress noisy disconnect errors (1000/1001 are normal closes)
+            if isinstance(e, WebSocketDisconnect):
+                pass
+            else:
+                logger.error(f"🔌 WebSocket error for {conn_id}: {e}")
             
         finally:
             if conn_id:
