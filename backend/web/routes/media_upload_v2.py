@@ -33,7 +33,8 @@ async def process_media_upload_v2(
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
 
-    logger.info(f"🎬 Processing {len(files)} files")
+    # Remove duplicate logging - main router already logs this
+    # logger.info(f"🎬 Processing {len(files)} files")
     
     # Notify display of upload start
     if display_player:
@@ -136,7 +137,8 @@ async def process_single_file_v2(file: UploadFile, media_raw_dir: Path, media_pr
 async def process_media_v2(file: UploadFile, content: bytes, slug: str, media_raw_dir: Path) -> Dict[str, Any]:
     """Process regular media file (image/video) - no jobs, just direct processing."""
     
-    logger.info(f"📁 Processing media: {file.filename} -> {slug}")
+    # Reduce logging verbosity - main router already logs the request
+    logger.debug(f"📁 Processing media: {file.filename} -> {slug}")
     
     # Save file
     raw_path = media_raw_dir / f"{slug}_{file.filename}"
@@ -163,6 +165,7 @@ async def process_media_v2(file: UploadFile, content: bytes, slug: str, media_ra
     # Broadcast to dashboard
     await broadcaster.media_uploaded(metadata)
     
+    # Only log completion, not processing start
     logger.info(f"✅ Media uploaded: {file.filename}")
     
     return {"slug": slug, "status": "uploaded"}
@@ -171,7 +174,8 @@ async def process_media_v2(file: UploadFile, content: bytes, slug: str, media_ra
 async def process_zip_v2(file: UploadFile, content: bytes, slug: str, media_processed_dir: Path) -> Dict[str, Any]:
     """Process ZIP file with frames - complete self-contained processing."""
     
-    logger.info(f"📦 Processing ZIP: {file.filename} -> {slug}")
+    # Reduce logging verbosity
+    logger.debug(f"📦 Processing ZIP: {file.filename} -> {slug}")
     
     try:
         # Extract ZIP and get metadata
@@ -183,6 +187,7 @@ async def process_zip_v2(file: UploadFile, content: bytes, slug: str, media_proc
         # Broadcast completion
         await broadcaster.media_uploaded(metadata)
         
+        # Only log completion
         logger.info(f"✅ ZIP processed: {file.filename}")
         
         return {"slug": slug, "status": "completed"}

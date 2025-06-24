@@ -7,7 +7,7 @@ from typing import Optional
 
 from fastapi import APIRouter
 
-from ..core.models import DashboardData, DeviceStatus, PlayerStatus, WiFiStatus, UpdateStatus, StorageInfo
+from ..core.models import DashboardData, DeviceStatus, PlayerStatus, WiFiStatus, UpdateStatus, StorageInfo, APIResponse
 from ..core.storage import get_dir_size
 from ..core.events import broadcaster
 from display.player import DisplayPlayer
@@ -135,6 +135,24 @@ def create_dashboard_router(
     async def get_storage():
         """Get storage information separately - for settings modal only."""
         return get_storage_info()
+    
+    @router.get("/memory", response_model=APIResponse)
+    async def get_memory_stats():
+        """Get memory pool statistics for performance monitoring."""
+        try:
+            from display.memory_pool import get_memory_stats
+            stats = get_memory_stats()
+            return APIResponse(
+                success=True,
+                data=stats
+            )
+        except Exception as e:
+            logger.warning(f"Failed to get memory stats: {e}")
+            return APIResponse(
+                success=False,
+                message="Memory stats unavailable",
+                data={}
+            )
     
     return router
 

@@ -139,9 +139,9 @@ class DisplayPlayer:
                 self.logger.info(f"Media {media_slug} is video-only (no processed frames)")
                 self._logged_missing_frames.add(media_slug)
             
-            # Show message for video-only media
-            self.message_display.show_message("Video Only", "No frames available", duration=3.0)
-            return False
+            # Don't show error message or return False - this causes switching loop
+            # Instead, try to find next valid media automatically
+            return self._find_and_load_next_valid_media()
         
         try:
             # Get frame info from media metadata
@@ -671,4 +671,63 @@ class DisplayPlayer:
                 else:
                     self.logger.info(f"No valid media remaining after deleting {deleted_slug}")
             
-            self.logger.info(f"Handled deletion of media: {deleted_slug}") 
+            self.logger.info(f"Handled deletion of media: {deleted_slug}")
+    
+    def _find_and_load_next_valid_media(self) -> bool:
+        """Find and load the next valid media with wraparound search."""
+        loop_media = self.get_current_loop_media()
+        current_index = self.get_current_media_index()
+        
+        if not loop_media:
+            self.logger.warning("No media available to load")
+            return False
+        
+        # Search all media in loop with wraparound
+        total_media = len(loop_media)
+        for offset in range(total_media):
+            # Calculate wrapped index (start from current, wrap to beginning)
+            search_index = (current_index + offset) % total_media
+            media_info = loop_media[search_index]
+            media_slug = media_info.get('slug')
+            
+            if not media_slug:
+                continue
+                
+            frames_dir = self.media_dir / media_slug / "frames"
+            
+            if frames_dir.exists():
+                try:
+                    # Get frame info from media metadata
+                    frame_count = media_info.get('frame_count', 0)
+                    fps = media_info.get('fps', 25)  # Default 25fps
+                    frame_duration = 1.0 / fps
+                    
+                    # Create frame sequence
+                    self.current_sequence = FrameSequence(frames_dir, frame_count, frame_duration)
+                    
+                    if self.current_sequence.get_frame_count() == 0:
+                        self.logger.error(f"No frames found in {frames_dir}")
+                        self.current_sequence = None
+                        continue
+
+                    # CRITICAL: Set this media as active to prevent switching loop
+                    media_index.set_active(media_slug)
+
+                    # Clear the logged missing frames for this media since it loaded successfully
+                    if media_slug in self._logged_missing_frames:
+                        self._logged_missing_frames.remove(media_slug)
+
+                    self.logger.info(f"Found and loaded valid media: {media_info.get('original_filename', media_slug)}")
+                    return True
+                    
+                except Exception as e:
+                    self.logger.error(f"Failed to load sequence for {media_slug}: {e}")
+                    if self.current_sequence:
+                        self.current_sequence.stop()
+                        self.current_sequence = None
+                    continue
+        
+        # If we get here, NO media in the loop has valid frames
+        self.logger.warning("No valid media found in entire loop - all media missing frames")
+        self.show_message("No Media Available", "All media missing frames", duration=5.0)
+        return False 

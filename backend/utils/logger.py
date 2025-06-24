@@ -33,6 +33,9 @@ def setup_logger(
     for handler in logger.handlers[:]:
         logger.removeHandler(handler)
     
+    # Disable propagation to prevent duplicate messages from parent loggers
+    logger.propagate = False
+    
     # Detect if running under systemd (which already adds timestamps)
     under_systemd = _is_running_under_systemd()
     

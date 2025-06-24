@@ -6,17 +6,25 @@ from PIL import Image
 from typing import Optional, Union
 import spidev
 import struct
+from contextlib import contextmanager
 
 # Add the Waveshare library path to Python's search path
-sys.path.append(str(Path(__file__).parent.parent.parent / 'waveshare' / 'LCD_Module_RPI_code' / 'RaspberryPi' / 'python'))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "waveshare" / "LCD_Module_RPI_code" / "RaspberryPi" / "python" / "lib"))
 
-from lib.LCD_2inch4 import LCD_2inch4
 from config.schema import DisplayConfig
+from display.memory_pool import get_frame_buffer_pool, get_spi_chunk_pool
 from utils.logger import get_logger
 
+try:
+    from LCD_2inch4 import LCD_2inch4
+    WAVESHARE_AVAILABLE = True
+except ImportError:
+    WAVESHARE_AVAILABLE = False
+    LCD_2inch4 = None
+
 class ILI9341Driver:
-    """A simplified display driver that writes to the Waveshare 2.4" LCD via SPI."""
-    
+    """Driver for ILI9341 display with memory pool optimization."""
+
     def __init__(self, config: DisplayConfig):
         """Initialize the display driver."""
         self.config = config
@@ -30,11 +38,25 @@ class ILI9341Driver:
             f"on SPI bus {self.config.spi_bus}, device {self.config.spi_device}"
         )
     
+    @contextmanager
+    def _get_frame_buffer(self):
+        """Context manager to get and automatically return frame buffer."""
+        pool = get_frame_buffer_pool()
+        buffer = pool.get_buffer()
+        try:
+            yield buffer
+        finally:
+            pool.return_buffer(buffer)
+
     def init(self) -> None:
         """Initialize the display hardware."""
         if self.initialized:
             return
         
+        if not WAVESHARE_AVAILABLE:
+            self.logger.error("Waveshare library not available - display disabled")
+            return
+
         self.logger.info("Initializing LCD...")
         try:
             self.disp = LCD_2inch4(
@@ -58,10 +80,11 @@ class ILI9341Driver:
         except Exception as e:
             self.logger.error(f"Failed to initialize LCD: {e}")
             self.initialized = False
+            self.disp = None
             raise RuntimeError("Could not initialize Waveshare display") from e
 
     def display_frame(self, frame_data: bytes) -> None:
-        """Display a frame of RGB565 pixel data - simplified version."""
+        """Display a frame of RGB565 pixel data - optimized with memory pools."""
         if not self.initialized:
             self.init()
         
@@ -106,35 +129,43 @@ class ILI9341Driver:
             # Switch to data mode
             self.disp.digital_write(self.disp.DC_PIN, True)
 
-            # Send the buffer in 4 kB chunks (SPI driver limit)
+            # Send the buffer in 4 kB chunks using memory pool
+            spi_pool = get_spi_chunk_pool()
             for offset in range(0, len(frame_data), 4096):
-                chunk = frame_data[offset:offset + 4096]
-                # spi_writebyte expects a list of ints
-                self.disp.spi_writebyte(list(chunk))
+                chunk_list = spi_pool.get_chunk_list(frame_data, offset)
+                try:
+                    # spi_writebyte expects a list of ints
+                    self.disp.spi_writebyte(chunk_list)
+                finally:
+                    # Return chunk list to pool
+                    spi_pool.return_chunk_list(chunk_list)
                 
         except Exception as e:
             self.logger.error(f"Frame display failed: {e}")
             return
 
     def fill_screen(self, color: int = 0x0000) -> None:
-        """Fill the screen with a color - optimized RGB565 version."""
+        """Fill the screen with a color - optimized with memory pool."""
         if not self.initialized:
             self.init()
             
         if not self.disp:
             return
             
-        # Create RGB565 buffer directly (320x240 pixels = 153,600 bytes)
-        width, height = 320, 240
-        frame_data = bytearray(width * height * 2)
-        color_bytes = struct.pack('>H', color)
-        
-        # Fill buffer with color
-        for i in range(0, len(frame_data), 2):
-            frame_data[i:i+2] = color_bytes
-        
-        # Use existing RGB565 display path - much faster than PIL conversion
-        self.display_frame(bytes(frame_data))
+        # Use memory pool for frame buffer
+        with self._get_frame_buffer() as frame_data:
+            if frame_data is None:
+                self.logger.error("Failed to get frame buffer from pool")
+                return
+            
+            color_bytes = struct.pack('>H', color)
+            
+            # Fill buffer with color
+            for i in range(0, len(frame_data), 2):
+                frame_data[i:i+2] = color_bytes
+            
+            # Use existing RGB565 display path - pass copy since buffer will be returned
+            self.display_frame(bytes(frame_data))
 
     def set_backlight(self, level: Union[int, bool]) -> None:
         """Set backlight brightness - hardware PWM only.

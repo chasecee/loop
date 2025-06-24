@@ -7,8 +7,10 @@ import struct
 from typing import Optional, Tuple, Dict, Any
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
+from contextlib import contextmanager
 
 from config.schema import DisplayConfig
+from display.memory_pool import get_frame_buffer_pool
 from utils.logger import get_logger
 
 
@@ -35,8 +37,18 @@ class MessageDisplay:
         self._current_message = None
         self._message_end_time = 0
         
-        self.logger.info("Message display system initialized (optimized RGB565)")
+        self.logger.info("Message display system initialized (optimized RGB565 + memory pool)")
     
+    @contextmanager
+    def _get_frame_buffer(self):
+        """Context manager to get and automatically return frame buffer."""
+        pool = get_frame_buffer_pool()
+        buffer = pool.get_buffer()
+        try:
+            yield buffer
+        finally:
+            pool.return_buffer(buffer)
+
     def _get_font(self, size: int, bold: bool = False) -> Any:
         """Get a font with caching. Falls back to default if system fonts unavailable."""
         cache_key = (f"{'bold' if bold else 'regular'}", size)
@@ -76,61 +88,65 @@ class MessageDisplay:
                                  bg_color: Tuple[int, int, int] = (0, 0, 0),
                                  text_color: Tuple[int, int, int] = (255, 255, 255),
                                  title_size: int = 24, subtitle_size: int = 16) -> Optional[bytes]:
-        """Create RGB565 buffer with text - much faster than PIL conversion."""
+        """Create RGB565 buffer with text - using memory pool for efficiency."""
         try:
             width, height = self.config.width, self.config.height
             
             # Convert colors to RGB565 once
             bg_rgb565 = _rgb888_to_rgb565(*bg_color)
-            text_rgb565 = _rgb888_to_rgb565(*text_color)
             
-            # Create RGB565 frame buffer (2 bytes per pixel)
-            frame_data = bytearray(width * height * 2)
-            bg_bytes = struct.pack('>H', bg_rgb565)
-            
-            # Fill with background color
-            for i in range(0, len(frame_data), 2):
-                frame_data[i:i+2] = bg_bytes
-            
-            # For complex text rendering, we still need PIL temporarily
-            # but we'll convert more efficiently
-            if title or subtitle:
-                # Create PIL image for text rendering only
-                pil_image = Image.new('RGB', (width, height), bg_color)
-                draw = ImageDraw.Draw(pil_image)
+            # Use memory pool for frame buffer
+            with self._get_frame_buffer() as frame_data:
+                if frame_data is None:
+                    self.logger.error("Failed to get frame buffer from pool")
+                    return None
                 
-                # Get fonts
-                title_font = self._get_font(title_size, bold=True)
-                subtitle_font = self._get_font(subtitle_size, bold=False)
+                bg_bytes = struct.pack('>H', bg_rgb565)
                 
-                # Calculate text positioning
-                y_offset = 60  # Start 60px from top
+                # Fill with background color
+                for i in range(0, len(frame_data), 2):
+                    frame_data[i:i+2] = bg_bytes
                 
-                # Draw title (centered)
-                if title and title_font:
-                    bbox = draw.textbbox((0, 0), title, font=title_font)
-                    title_width = bbox[2] - bbox[0]
-                    title_height = bbox[3] - bbox[1]
-                    title_x = (width - title_width) // 2
-                    draw.text((title_x, y_offset), title, fill=text_color, font=title_font)
-                    y_offset += title_height + 20
+                # For complex text rendering, we still need PIL temporarily
+                # but we'll convert more efficiently
+                if title or subtitle:
+                    # Create PIL image for text rendering only
+                    pil_image = Image.new('RGB', (width, height), bg_color)
+                    draw = ImageDraw.Draw(pil_image)
+                    
+                    # Get fonts
+                    title_font = self._get_font(title_size, bold=True)
+                    subtitle_font = self._get_font(subtitle_size, bold=False)
+                    
+                    # Calculate text positioning
+                    y_offset = 60  # Start 60px from top
+                    
+                    # Draw title (centered)
+                    if title and title_font:
+                        bbox = draw.textbbox((0, 0), title, font=title_font)
+                        title_width = bbox[2] - bbox[0]
+                        title_height = bbox[3] - bbox[1]
+                        title_x = (width - title_width) // 2
+                        draw.text((title_x, y_offset), title, fill=text_color, font=title_font)
+                        y_offset += title_height + 20
+                    
+                    # Draw subtitle (centered)
+                    if subtitle and subtitle_font:
+                        bbox = draw.textbbox((0, 0), subtitle, font=subtitle_font)
+                        subtitle_width = bbox[2] - bbox[0]
+                        subtitle_x = (width - subtitle_width) // 2
+                        draw.text((subtitle_x, y_offset), subtitle, fill=text_color, font=subtitle_font)
+                    
+                    # Convert PIL to RGB565 efficiently - process row by row
+                    rgb_data = pil_image.tobytes()
+                    for i in range(0, len(rgb_data), 3):
+                        r, g, b = rgb_data[i], rgb_data[i+1], rgb_data[i+2]
+                        rgb565 = _rgb888_to_rgb565(r, g, b)
+                        pixel_offset = (i // 3) * 2
+                        frame_data[pixel_offset:pixel_offset+2] = struct.pack('>H', rgb565)
                 
-                # Draw subtitle (centered)
-                if subtitle and subtitle_font:
-                    bbox = draw.textbbox((0, 0), subtitle, font=subtitle_font)
-                    subtitle_width = bbox[2] - bbox[0]
-                    subtitle_x = (width - subtitle_width) // 2
-                    draw.text((subtitle_x, y_offset), subtitle, fill=text_color, font=subtitle_font)
-                
-                # Convert PIL to RGB565 efficiently - process row by row
-                rgb_data = pil_image.tobytes()
-                for i in range(0, len(rgb_data), 3):
-                    r, g, b = rgb_data[i], rgb_data[i+1], rgb_data[i+2]
-                    rgb565 = _rgb888_to_rgb565(r, g, b)
-                    pixel_offset = (i // 3) * 2
-                    frame_data[pixel_offset:pixel_offset+2] = struct.pack('>H', rgb565)
-            
-            return bytes(frame_data)
+                # Return a copy since frame_data will be returned to pool
+                return bytes(frame_data)
             
         except Exception as e:
             self.logger.error(f"Failed to create RGB565 text image: {e}")
@@ -214,86 +230,89 @@ class MessageDisplay:
         )
     
     def show_progress_bar(self, title: str, subtitle: str, progress: float) -> None:
-        """Display a progress bar with title and subtitle."""
+        """Display a progress bar with title and subtitle - using memory pool."""
         try:
-            # Create RGB565 buffer directly for better performance
             width, height = self.config.width, self.config.height
-            frame_data = bytearray(width * height * 2)
             
-            # Background color (black)
-            bg_rgb565 = _rgb888_to_rgb565(0, 0, 0)
-            bg_bytes = struct.pack('>H', bg_rgb565)
-            
-            # Fill with background
-            for i in range(0, len(frame_data), 2):
-                frame_data[i:i+2] = bg_bytes
-            
-            # For text and progress bar, we'll still use PIL temporarily for complex rendering
-            # but convert more efficiently
-            pil_image = Image.new('RGB', (width, height), (0, 0, 0))
-            draw = ImageDraw.Draw(pil_image)
-            
-            # Get fonts
-            title_font = self._get_font(20, bold=True)
-            subtitle_font = self._get_font(14, bold=False)
-            
-            y_pos = 40
-            
-            # Draw title
-            if title and title_font:
-                bbox = draw.textbbox((0, 0), title, font=title_font)
-                title_width = bbox[2] - bbox[0]
-                title_x = (width - title_width) // 2
-                draw.text((title_x, y_pos), title, fill=(255, 255, 255), font=title_font)
-                y_pos += 35
-            
-            # Draw subtitle  
-            if subtitle and subtitle_font:
-                bbox = draw.textbbox((0, 0), subtitle, font=subtitle_font)
-                subtitle_width = bbox[2] - bbox[0]
-                subtitle_x = (width - subtitle_width) // 2
-                draw.text((subtitle_x, y_pos), subtitle, fill=(200, 200, 200), font=subtitle_font)
-                y_pos += 30
-            
-            # Draw progress bar
-            bar_width = 180
-            bar_height = 20
-            bar_x = (width - bar_width) // 2
-            bar_y = y_pos + 10
-            
-            # Progress bar background
-            draw.rectangle([bar_x, bar_y, bar_x + bar_width, bar_y + bar_height], 
-                         outline=(100, 100, 100), fill=(30, 30, 30))
-            
-            # Progress bar fill
-            fill_width = int((progress / 100.0) * bar_width)
-            if fill_width > 0:
-                # Use configured progress color or default blue
-                color = getattr(self.config, 'progress_color', 0x07FF)  # Default cyan
-                r = (color >> 11) << 3
-                g = ((color >> 5) & 0x3F) << 2  
-                b = (color & 0x1F) << 3
-                draw.rectangle([bar_x, bar_y, bar_x + fill_width, bar_y + bar_height], 
-                             fill=(r, g, b))
-            
-            # Progress percentage
-            progress_text = f"{int(progress)}%"
-            if title_font:
-                bbox = draw.textbbox((0, 0), progress_text, font=title_font)
-                progress_width = bbox[2] - bbox[0]
-                progress_x = (width - progress_width) // 2
-                draw.text((progress_x, bar_y + 35), progress_text, fill=(255, 255, 255), font=title_font)
-            
-            # Convert PIL to RGB565 efficiently - direct pixel conversion
-            rgb_data = pil_image.tobytes()
-            for i in range(0, len(rgb_data), 3):
-                r, g, b = rgb_data[i], rgb_data[i+1], rgb_data[i+2]
-                rgb565 = _rgb888_to_rgb565(r, g, b)
-                pixel_offset = (i // 3) * 2
-                frame_data[pixel_offset:pixel_offset+2] = struct.pack('>H', rgb565)
-            
-            # Display the frame
-            if frame_data:
+            # Use memory pool for frame buffer
+            with self._get_frame_buffer() as frame_data:
+                if frame_data is None:
+                    self.logger.error("Failed to get frame buffer from pool")
+                    return
+                
+                # Background color (black)
+                bg_rgb565 = _rgb888_to_rgb565(0, 0, 0)
+                bg_bytes = struct.pack('>H', bg_rgb565)
+                
+                # Fill with background
+                for i in range(0, len(frame_data), 2):
+                    frame_data[i:i+2] = bg_bytes
+                
+                # For text and progress bar, we'll still use PIL temporarily for complex rendering
+                # but convert more efficiently
+                pil_image = Image.new('RGB', (width, height), (0, 0, 0))
+                draw = ImageDraw.Draw(pil_image)
+                
+                # Get fonts
+                title_font = self._get_font(20, bold=True)
+                subtitle_font = self._get_font(14, bold=False)
+                
+                y_pos = 40
+                
+                # Draw title
+                if title and title_font:
+                    bbox = draw.textbbox((0, 0), title, font=title_font)
+                    title_width = bbox[2] - bbox[0]
+                    title_x = (width - title_width) // 2
+                    draw.text((title_x, y_pos), title, fill=(255, 255, 255), font=title_font)
+                    y_pos += 35
+                
+                # Draw subtitle  
+                if subtitle and subtitle_font:
+                    bbox = draw.textbbox((0, 0), subtitle, font=subtitle_font)
+                    subtitle_width = bbox[2] - bbox[0]
+                    subtitle_x = (width - subtitle_width) // 2
+                    draw.text((subtitle_x, y_pos), subtitle, fill=(200, 200, 200), font=subtitle_font)
+                    y_pos += 30
+                
+                # Draw progress bar
+                bar_width = 180
+                bar_height = 20
+                bar_x = (width - bar_width) // 2
+                bar_y = y_pos + 10
+                
+                # Progress bar background
+                draw.rectangle([bar_x, bar_y, bar_x + bar_width, bar_y + bar_height], 
+                             outline=(100, 100, 100), fill=(30, 30, 30))
+                
+                # Progress bar fill
+                fill_width = int((progress / 100.0) * bar_width)
+                if fill_width > 0:
+                    # Use configured progress color or default blue
+                    color = getattr(self.config, 'progress_color', 0x07FF)  # Default cyan
+                    r = (color >> 11) << 3
+                    g = ((color >> 5) & 0x3F) << 2  
+                    b = (color & 0x1F) << 3
+                    draw.rectangle([bar_x, bar_y, bar_x + fill_width, bar_y + bar_height], 
+                                 fill=(r, g, b))
+                
+                # Progress percentage
+                progress_text = f"{int(progress)}%"
+                if title_font:
+                    bbox = draw.textbbox((0, 0), progress_text, font=title_font)
+                    progress_width = bbox[2] - bbox[0]
+                    progress_x = (width - progress_width) // 2
+                    draw.text((progress_x, bar_y + 35), progress_text, fill=(255, 255, 255), font=title_font)
+                
+                # Convert PIL to RGB565 efficiently - direct pixel conversion
+                rgb_data = pil_image.tobytes()
+                for i in range(0, len(rgb_data), 3):
+                    r, g, b = rgb_data[i], rgb_data[i+1], rgb_data[i+2]
+                    rgb565 = _rgb888_to_rgb565(r, g, b)
+                    pixel_offset = (i // 3) * 2
+                    frame_data[pixel_offset:pixel_offset+2] = struct.pack('>H', rgb565)
+                
+                # Display the frame - pass a copy since buffer will be returned to pool
                 self.display_driver.display_frame(bytes(frame_data))
             
         except Exception as e:
