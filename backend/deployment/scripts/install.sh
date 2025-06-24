@@ -8,14 +8,32 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/../../../" && pwd)"
 BACKEND_DIR="${PROJECT_DIR}/backend"
 SERVICE_NAME="loop"
-USER="${USER:-pi}"
+# Get the real user even when running under sudo
+REAL_USER="${SUDO_USER:-${USER:-pi}}"
+USER="$REAL_USER"
 VENV_DIR="${BACKEND_DIR}/venv"
-CONFIG_FLAG="${HOME}/.loop/setup_complete"
+CONFIG_FLAG="/home/${REAL_USER}/.loop/setup_complete"
 
 # Ensure we are running from the project root and backend exists
 if [ ! -d "$BACKEND_DIR" ]; then
     echo "❌ backend directory not found at $BACKEND_DIR. Please run this script from the project root (where the backend/ folder is)."
     exit 1
+fi
+
+# Fix ownership issues from previous sudo runs - do this early
+echo "🔧 Fixing any ownership issues from previous installs..."
+if [ "$EUID" -ne 0 ]; then
+    # Running as non-root user, try to fix ownership with sudo
+    if command -v sudo >/dev/null 2>&1; then
+        sudo chown -R "${REAL_USER}:${REAL_USER}" "${PROJECT_DIR}" 2>/dev/null || {
+            echo "⚠️  Could not fix ownership automatically. If you get permission errors, run:"
+            echo "   sudo chown -R ${REAL_USER}:${REAL_USER} ${PROJECT_DIR}"
+            echo "   Then re-run this script."
+        }
+    fi
+else
+    # Running as root, fix ownership directly
+    chown -R "${REAL_USER}:${REAL_USER}" "${PROJECT_DIR}" 2>/dev/null || true
 fi
 
 # Function to check if a package is installed
@@ -98,7 +116,7 @@ EOF
     # Clean up logs
     echo "📋 Cleaning up logs..."
     rm -f "${BACKEND_DIR}/logs"/*.log
-    rm -f ~/.loop/logs/*.log
+    rm -f "/home/${REAL_USER}/.loop/logs"/*.log
     
     # Reset flag
     rm -f "$CONFIG_FLAG"
@@ -151,6 +169,7 @@ install_missing_packages \
     python3-venv \
     python3-dev \
     python3-rpi.gpio \
+    python3-gpiozero \
     git \
     ffmpeg \
     hostapd \
@@ -208,7 +227,10 @@ pip install --no-cache-dir -r requirements.txt
 echo "📁 Checking directories..."
 mkdir -p "${BACKEND_DIR}/media/raw" "${BACKEND_DIR}/media/processed"
 mkdir -p "${BACKEND_DIR}/logs"
-mkdir -p ~/.loop/logs
+mkdir -p "/home/${REAL_USER}/.loop/logs"
+
+# Set ownership immediately to prevent permission issues
+chown -R "${REAL_USER}:${REAL_USER}" "${BACKEND_DIR}/media" "${BACKEND_DIR}/logs" "/home/${REAL_USER}/.loop" 2>/dev/null || true
 
 # Set up configuration
 echo "⚙️ Setting up configuration..."
@@ -223,20 +245,20 @@ sudo cp "${BACKEND_DIR}/loop.service" "/etc/systemd/system/${SERVICE_NAME}.servi
 # Set up log rotation
 echo "📋 Setting up log rotation..."
 sudo tee /etc/logrotate.d/loop > /dev/null << EOF
-/home/${USER}/.loop/logs/*.log {
+/home/${REAL_USER}/.loop/logs/*.log {
     daily
     rotate 7
     compress
     delaycompress
     missingok
     notifempty
-    create 644 ${USER} ${USER}
+    create 644 ${REAL_USER} ${REAL_USER}
 }
 EOF
 
 # Set permissions
 echo "🔒 Setting file permissions..."
-chown -R ${USER}:${USER} "${PROJECT_DIR}"
+chown -R ${REAL_USER}:${REAL_USER} "${PROJECT_DIR}"
 chmod +x "${PROJECT_DIR}/backend/main.py" 2>/dev/null || true
 chmod +x "${BACKEND_DIR}/deployment/scripts/"*.sh 2>/dev/null || true
 
@@ -249,6 +271,7 @@ sudo systemctl restart ${SERVICE_NAME}
 # Create flag file to mark setup as complete
 mkdir -p "$(dirname "$CONFIG_FLAG")"
 touch "$CONFIG_FLAG"
+chown "${REAL_USER}:${REAL_USER}" "$CONFIG_FLAG" "$(dirname "$CONFIG_FLAG")" 2>/dev/null || true
 
 # Wait a moment and check status
 sleep 2
@@ -341,68 +364,20 @@ EOF
 
 sudo chmod +x /usr/local/bin/loop-hotspot
 
-# Import default media if present and no media exists yet
-if [ -d "$PROJECT_DIR/assets/default-media" ]; then
-    echo "📦 Importing default media from assets/default-media..."
-    cp -r "$PROJECT_DIR/assets/default-media"/* "$BACKEND_DIR/media/processed/" 2>/dev/null || true
-    
-    INDEX_FILE="$BACKEND_DIR/media/index.json"
-    if [ ! -f "$INDEX_FILE" ] || [ ! -s "$INDEX_FILE" ]; then
-        echo "📝 Generating media index from default media..."
-        
-        # Create initial empty index in the new clean format
-        cat > "$INDEX_FILE" << EOF
+# Create clean media index if it doesn't exist
+INDEX_FILE="$BACKEND_DIR/media/index.json"
+if [ ! -f "$INDEX_FILE" ] || [ ! -s "$INDEX_FILE" ]; then
+    echo "📝 Creating clean media index..."
+    cat > "$INDEX_FILE" << EOF
 {
   "media": {},
   "loop": [],
   "active": null,
-  "last_updated": $(date +%s)
+  "last_updated": $(date +%s),
+  "processing": {}
 }
 EOF
-        
-        # Add any processed media to the index
-        for media_dir in "$BACKEND_DIR/media/processed"/*; do
-            if [ -d "$media_dir" ]; then
-                SLUG_NAME=$(basename "$media_dir")
-                META_FILE="$media_dir/metadata.json"
-                
-                if [ -f "$META_FILE" ]; then
-                    echo "📄 Adding $SLUG_NAME to media index..."
-                    
-                    # Use Python to properly merge the metadata
-                    python3 -c "
-import json
-import sys
-from pathlib import Path
-
-# Load current index
-with open('$INDEX_FILE', 'r') as f:
-    index = json.load(f)
-
-# Load metadata
-with open('$META_FILE', 'r') as f:
-    metadata = json.load(f)
-
-# Add to media dict and loop
-slug = metadata.get('slug', '$SLUG_NAME')
-index['media'][slug] = metadata
-if slug not in index['loop']:
-    index['loop'].append(slug)
-
-# Set as active if it's the first one
-if not index['active']:
-    index['active'] = slug
-
-# Write back
-with open('$INDEX_FILE', 'w') as f:
-    json.dump(index, f, indent=2)
-" 2>/dev/null || echo "⚠️  Could not add $SLUG_NAME to index (metadata format issue)"
-                fi
-            fi
-        done
-        
-        echo "✅ Default media index created with $(ls -1d "$BACKEND_DIR/media/processed"/*/ 2>/dev/null | wc -l) items"
-    fi
+    echo "✅ Clean media index created"
 fi
 
 # -----------------------------------------------------------------------------

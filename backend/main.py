@@ -111,7 +111,7 @@ class LOOPApplication:
         
         # Configuration
         try:
-            self._ensure_default_media()
+            self._ensure_media_directories()
             self.config = get_config()
             self.logger.info(f"Starting LOOP v{self.config.device.version}")
         except Exception as e:
@@ -158,23 +158,15 @@ class LOOPApplication:
         self.logger.info(f"Received signal {signum}, shutting down gracefully...")
         self.shutdown()
     
-    def _ensure_default_media(self):
-        """If media/processed is empty, copy from assets/default-media and update index.json."""
+    def _ensure_media_directories(self):
+        """Ensure media directories exist."""
         backend_dir = Path(__file__).parent
-        project_root = backend_dir.parent
         processed_dir = backend_dir / "media" / "processed"
-        default_media_dir = project_root / "assets" / "default-media"
-        index_file = backend_dir / "media" / "index.json"
-
-        if (processed_dir.exists() and not any(processed_dir.iterdir()) and 
-            default_media_dir.exists()):
-            
-            setup_logger = get_logger("default_media")
-            setup_logger.info("Processing default media files...")
-
-            # Default media should be pre-processed and deployed as ZIP files
-            # during build/deployment process. No server-side conversion needed.
-            setup_logger.info("Default media processing is now handled during deployment")
+        raw_dir = backend_dir / "media" / "raw"
+        
+        # Create directories if they don't exist
+        processed_dir.mkdir(parents=True, exist_ok=True)
+        raw_dir.mkdir(parents=True, exist_ok=True)
     
     def _reset_watchdog(self):
         """Reset the software watchdog timer and notify systemd."""
@@ -424,7 +416,7 @@ class LOOPApplication:
             # Show welcome message
             if self.display_player:
                 try:
-                    self.display_player.show_simple_message("LOOP Ready!", color=0x07E0, duration=3.0)
+                    self.display_player.show_boot_message(self.config.device.version)
                 except Exception:
                     pass
             

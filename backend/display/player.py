@@ -5,12 +5,11 @@ import threading
 import time
 from pathlib import Path
 from typing import Dict, List, Optional
-from PIL import Image, ImageDraw, ImageFont
-import io
 
 from config.schema import DisplayConfig, MediaConfig
 from display.framebuf import FrameSequence, FrameDecoder, FrameBuffer
 from display.spiout import ILI9341Driver
+from display.messages import MessageDisplay, set_message_display
 from utils.logger import get_logger
 from utils.media_index import media_index
 
@@ -26,6 +25,10 @@ class DisplayPlayer:
         self.display_config = display_config
         self.media_config = media_config
         self.logger = get_logger("player")
+        
+        # Initialize messaging system
+        self.message_display = MessageDisplay(display_driver, display_config)
+        set_message_display(self.message_display)  # Set global instance
         
         # Media management
         self.media_dir = Path("media/processed")
@@ -137,7 +140,7 @@ class DisplayPlayer:
                 self._logged_missing_frames.add(media_slug)
             
             # Show message for video-only media
-            self.show_simple_message("Video Only", color=0x07E0, duration=3.0)
+            self.message_display.show_message("Video Only", "No frames available", duration=3.0)
             return False
         
         try:
@@ -263,88 +266,23 @@ class DisplayPlayer:
             self.logger.info(f"Loop mode changed to: {self.loop_mode}")
             return self.loop_mode
     
-    def show_simple_message(self, message: str, color: int = 0xFFFF, duration: float = 2.0) -> None:
-        """Display a simple colored message on screen."""
-        try:
-            # Simple colored fill for messages (fast, no PIL operations)
-            self.display_driver.fill_screen(color)
-            if duration > 0:
-                time.sleep(duration)
-        except Exception as e:
-            self.logger.error(f"Failed to show message: {e}")
+    def show_message(self, title: str, subtitle: str = "", duration: float = 2.0) -> None:
+        """Display a text message on screen."""
+        self.message_display.show_message(title, subtitle, duration)
+    
+    def show_boot_message(self, version: str = "1.0") -> None:
+        """Show boot message."""
+        self.message_display.show_boot_message(version)
+    
+    def show_error_message(self, error: str) -> None:
+        """Show an error message."""
+        self.message_display.show_error_message(error)
     
 
     
     def show_progress_bar(self, title: str, subtitle: str, progress: float) -> None:
         """Display a progress bar with title and subtitle."""
-        try:
-            # Create image
-            image = Image.new('RGB', (self.display_config.width, self.display_config.height), (0, 0, 0))
-            draw = ImageDraw.Draw(image)
-            
-            # Try to load fonts (with fallback)
-            try:
-                title_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 20)
-                subtitle_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 14)
-            except (OSError, IOError):
-                title_font = subtitle_font = ImageFont.load_default()
-            
-            # Draw title
-            if title_font:
-                bbox = draw.textbbox((0, 0), title, font=title_font)
-                title_width = bbox[2] - bbox[0]
-                title_x = (self.display_config.width - title_width) // 2
-                draw.text((title_x, 40), title, fill=(255, 255, 255), font=title_font)
-            
-            # Draw subtitle  
-            if subtitle_font and subtitle:
-                bbox = draw.textbbox((0, 0), subtitle, font=subtitle_font)
-                subtitle_width = bbox[2] - bbox[0]
-                subtitle_x = (self.display_config.width - subtitle_width) // 2
-                draw.text((subtitle_x, 80), subtitle, fill=(200, 200, 200), font=subtitle_font)
-            
-            # Draw progress bar
-            bar_width = 180
-            bar_height = 20
-            bar_x = (self.display_config.width - bar_width) // 2
-            bar_y = 140
-            
-            # Progress bar background
-            draw.rectangle([bar_x, bar_y, bar_x + bar_width, bar_y + bar_height], 
-                         outline=(100, 100, 100), fill=(30, 30, 30))
-            
-            # Progress bar fill
-            fill_width = int((progress / 100.0) * bar_width)
-            if fill_width > 0:
-                # Use configured progress color
-                color = self.display_config.progress_color
-                r = (color >> 11) << 3
-                g = ((color >> 5) & 0x3F) << 2  
-                b = (color & 0x1F) << 3
-                draw.rectangle([bar_x, bar_y, bar_x + fill_width, bar_y + bar_height], 
-                             fill=(r, g, b))
-            
-            # Progress percentage
-            progress_text = f"{int(progress)}%"
-            if title_font:
-                bbox = draw.textbbox((0, 0), progress_text, font=title_font)
-                progress_width = bbox[2] - bbox[0]
-                progress_x = (self.display_config.width - progress_width) // 2
-                draw.text((progress_x, 180), progress_text, fill=(255, 255, 255), font=title_font)
-            
-            # Convert to RGB565 format and display
-            decoder = FrameDecoder(self.display_config.width, self.display_config.height)
-            buffer = io.BytesIO()
-            image.save(buffer, format='PNG')
-            buffer.seek(0)
-            frame_data = decoder.decode_image_bytes(buffer.getvalue())
-            buffer.close()
-            
-            if frame_data:
-                self.display_driver.display_frame(frame_data)
-            
-        except Exception as e:
-            self.logger.error(f"Failed to show progress bar: {e}")
+        self.message_display.show_progress_bar(title, subtitle, progress)
     
     def start_processing_display(self, job_ids: List[str]) -> None:
         """Start displaying upload progress for given job IDs."""
@@ -508,7 +446,7 @@ class DisplayPlayer:
     
     def show_no_media_message(self) -> None:
         """Show a message when no media is available."""
-        self.show_simple_message("No Media", color=0x07E0, duration=0)  # Green, persistent
+        self.message_display.show_no_media_message()
     
     def run(self) -> None:
         """Main playback loop."""
@@ -675,6 +613,24 @@ class DisplayPlayer:
             "loop_mode": self.loop_mode,
             "showing_progress": self.showing_progress
         }
+    
+    # Convenience methods for server interaction
+    def notify_upload_start(self, count: int = 1) -> None:
+        """Notify that upload has started."""
+        self.message_display.show_upload_message(count)
+    
+    def notify_processing(self, filename: str = "") -> None:
+        """Notify that processing has started."""
+        self.message_display.show_processing_message(filename)
+    
+    def notify_error(self, error: str) -> None:
+        """Notify of an error."""
+        self.message_display.show_error_message(error)
+    
+    def clear_messages(self) -> None:
+        """Clear the display (back to normal playback)."""
+        # This will be handled by the main run loop automatically
+        pass
     
     def refresh_media_list(self) -> None:
         """Refresh the media list by clearing current sequence to force reload."""

@@ -35,15 +35,35 @@ async def process_media_upload_v2(
 
     logger.info(f"🎬 Processing {len(files)} files")
     
+    # Notify display of upload start
+    if display_player:
+        try:
+            display_player.notify_upload_start(len(files))
+        except Exception:
+            pass
+    
     # Process each file independently - no coordination needed
     results = []
     for file in files:
         try:
+            # Notify processing of current file
+            if display_player:
+                try:
+                    display_player.notify_processing(file.filename)
+                except Exception:
+                    pass
+            
             result = await process_single_file_v2(file, media_raw_dir, media_processed_dir)
             if result:
                 results.append(result)
         except Exception as e:
             logger.error(f"Failed to process {file.filename}: {e}")
+            # Show error on display
+            if display_player:
+                try:
+                    display_player.notify_error(f"Upload failed: {file.filename}")
+                except Exception:
+                    pass
             continue
     
     # Refresh display if we got anything
