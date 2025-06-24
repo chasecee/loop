@@ -66,19 +66,18 @@ def create_websocket_router(
         conn_id = None
         
         try:
-            # Accept connection
+            # Accept connection (manager logs this)
             conn_id = await manager.connect(websocket)
-            logger.info(f"🔌 WebSocket connected: {conn_id}")
             
             # Send complete initial dashboard data (including status)
             try:
                 dashboard_data = await get_complete_dashboard_data()
-                logger.info(f"📡 Sending initial dashboard data: {len(dashboard_data['media'])} media items")
+                logger.debug(f"📡 Sending initial dashboard data: {len(dashboard_data['media'])} media items")
                 await manager._send_to_connection(conn_id, {
                     "type": "initial_dashboard",
                     "data": dashboard_data
                 })
-                logger.info(f"✅ Initial dashboard data sent successfully to {conn_id}")
+                logger.debug(f"✅ Initial dashboard data sent successfully to {conn_id}")
             except Exception as e:
                 logger.error(f"❌ Failed to send initial dashboard data to {conn_id}: {e}")
                 import traceback
@@ -102,7 +101,8 @@ def create_websocket_router(
                     })
                     
         except WebSocketDisconnect:
-            logger.info(f"🔌 WebSocket client disconnected: {conn_id}")
+            # Manager logs disconnection
+            pass
             
         except Exception as e:
             logger.error(f"🔌 WebSocket error for {conn_id}: {e}")
