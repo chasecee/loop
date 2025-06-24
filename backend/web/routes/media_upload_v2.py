@@ -95,8 +95,8 @@ async def process_single_file_v2(file: UploadFile, media_raw_dir: Path, media_pr
         raise HTTPException(status_code=500, detail=f"Failed to read {file.filename}: {e}")
     
     # File size validation
-    if file_size > 500 * 1024 * 1024:  # 500MB limit
-        raise HTTPException(status_code=413, detail=f"{file.filename} too large (max 500MB)")
+    if file_size > 100 * 1024 * 1024:  # 100MB limit
+        raise HTTPException(status_code=413, detail=f"{file.filename} too large (max 100MB)")
     
     # Calculate content hash for deduplication
     content_hash = hashlib.sha256(content).hexdigest()[:16]

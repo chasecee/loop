@@ -10,9 +10,8 @@ from typing import List
 from datetime import datetime
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, Request
-from fastapi import Depends
 
-from ..core.models import APIResponse, AddToLoopPayload, ProcessingJobResponse
+from ..core.models import APIResponse
 from ..core.storage import invalidate_storage_cache
 from ..core.events import broadcaster
 from display.player import DisplayPlayer
@@ -151,38 +150,6 @@ def create_media_router(
             logger.error(f"Failed to cleanup media: {e}")
             raise HTTPException(status_code=500, detail=str(e))
     
-    # Legacy processing progress endpoints - now simplified since no jobs in v2
-    
-    @router.get("/progress/{job_id}", response_model=APIResponse)
-    async def get_processing_progress(job_id: str):
-        """Get processing progress - simplified for v2 (no jobs)."""
-        # V2 system has no jobs, so always return completed
-        return APIResponse(
-            success=True,
-            data={
-                "job_id": job_id,
-                "status": "completed", 
-                "progress": 100,
-                "stage": "completed",
-                "message": "Upload completed (v2 system)"
-            }
-        )
-    
-    @router.get("/progress", response_model=APIResponse)
-    async def get_all_processing_progress():
-        """Get all processing jobs - simplified for v2."""
-        # V2 system processes everything immediately, no jobs to track
-        return APIResponse(
-            success=True,
-            data={"jobs": {}}
-        )
-    
-    @router.delete("/progress/{job_id}", response_model=APIResponse)
-    async def clear_processing_job(job_id: str):
-        """Clear processing job - no-op in v2."""
-        return APIResponse(
-            success=True,
-            message="No jobs to clear in v2 system"
-        )
+    # Legacy /media/progress endpoints removed – v2 processing completes synchronously
     
     return router 

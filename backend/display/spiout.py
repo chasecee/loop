@@ -111,7 +111,7 @@ class ILI9341Driver:
             self.disp.digital_write(self.disp.DC_PIN, True)
 
             # Send the buffer in 4 kB chunks using memory pool
-            chunk_size = 8192  # 8 kB per SPI transfer gives good throughput on Pi
+            chunk_size = 4096  # 4 kB chunks stay within default spidev bufsiz limit
             for offset in range(0, len(frame_data), chunk_size):
                 # Direct slice is bytes – new spi_writebyte handles bytes efficiently.
                 self.disp.spi_writebyte(frame_data[offset:offset + chunk_size])
