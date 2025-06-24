@@ -62,9 +62,23 @@ class ILI9341Display:
         else:
             pin.off()
     
-    def spi_writebyte(self, data: list) -> None:
-        """Write data over SPI."""
-        self.SPI.writebytes(data)
+    def spi_writebyte(self, data) -> None:
+        """Write data over SPI.
+
+        Accepts list[int], bytes, or bytearray. Uses writebytes2 when available for
+        raw bytes to avoid the heavy list[int] conversion that slows the Pi.
+        """
+        if isinstance(data, (bytes, bytearray)):
+            # Prefer writebytes2 (spidev >= 3.5) which accepts a bytes-like object.
+            writefast = getattr(self.SPI, "writebytes2", None)
+            if writefast:
+                writefast(data)
+            else:
+                # Fallback: convert once. Slow but unavoidable.
+                self.SPI.writebytes(list(data))
+        else:
+            # Already a list[int] – just send it.
+            self.SPI.writebytes(data)
     
     def bl_DutyCycle(self, duty: float) -> None:
         """Set backlight PWM duty cycle (0-100%)."""

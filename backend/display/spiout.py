@@ -111,15 +111,10 @@ class ILI9341Driver:
             self.disp.digital_write(self.disp.DC_PIN, True)
 
             # Send the buffer in 4 kB chunks using memory pool
-            spi_pool = get_spi_chunk_pool()
-            for offset in range(0, len(frame_data), 4096):
-                chunk_list = spi_pool.get_chunk_list(frame_data, offset)
-                try:
-                    # spi_writebyte expects a list of ints
-                    self.disp.spi_writebyte(chunk_list)
-                finally:
-                    # Return chunk list to pool
-                    spi_pool.return_chunk_list(chunk_list)
+            chunk_size = 8192  # 8 kB per SPI transfer gives good throughput on Pi
+            for offset in range(0, len(frame_data), chunk_size):
+                # Direct slice is bytes – new spi_writebyte handles bytes efficiently.
+                self.disp.spi_writebyte(frame_data[offset:offset + chunk_size])
                 
         except Exception as e:
             self.logger.error(f"Frame display failed: {e}")
