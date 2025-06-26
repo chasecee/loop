@@ -189,7 +189,10 @@ async def process_media_v2(file: UploadFile, content: bytes, slug: str, media_ra
     # RGB frames. If we make the raw video active right away the DisplayPlayer will
     # try (and fail) to load frames, causing a visible freeze. Images and other
     # non-video types can be made active immediately.
-    is_video = metadata["type"].startswith("video/")
+    # Treat animated GIFs as "video" because they are immediately followed
+    # by a ZIP containing RGB frames. Activating the raw .gif first freezes
+    # the display on one frame while it waits for processed frames.
+    is_video = metadata["type"].startswith("video/") or metadata["type"] == "image/gif"
 
     media_index.add_media(metadata, make_active=not is_video)
     
