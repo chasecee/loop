@@ -22,6 +22,16 @@ logger = get_logger("web.media_v2")
 _active_uploads: Dict[str, str] = {}  # content_hash -> job_id
 _upload_lock = asyncio.Lock()
 
+# Formats that behave like video (multi-frame) – don't auto-activate until
+# their ZIP of RGB frames arrives.
+ANIMATED_TYPES = {
+    "image/gif",   # GIF animations
+    "image/webp",  # WebP (static or animated – treat conservatively)
+    "image/apng",  # Animated PNG
+    "image/heic",  # HEIF / iPhone Live-Photo
+    "image/heif",
+}
+
 async def process_media_upload_v2(
     files: List[UploadFile],
     media_raw_dir: Path,
@@ -184,15 +194,8 @@ async def process_media_v2(file: UploadFile, content: bytes, slug: str, media_ra
         "height": 240
     }
     
-    # Decide whether this item should become active immediately.
-    # Video uploads are typically followed by a matching ZIP containing pre-rendered
-    # RGB frames. If we make the raw video active right away the DisplayPlayer will
-    # try (and fail) to load frames, causing a visible freeze. Images and other
-    # non-video types can be made active immediately.
-    # Treat animated GIFs as "video" because they are immediately followed
-    # by a ZIP containing RGB frames. Activating the raw .gif first freezes
-    # the display on one frame while it waits for processed frames.
-    is_video = metadata["type"].startswith("video/") or metadata["type"] == "image/gif"
+    # Auto-activate static images only – everything "video-like" waits for its ZIP.
+    is_video = metadata["type"].startswith("video/") or metadata["type"] in ANIMATED_TYPES
 
     media_index.add_media(metadata, make_active=not is_video)
     
