@@ -113,5 +113,34 @@ class EventBroadcaster:
         
         logger.warning(f"Error broadcasted: {error_data.get('message', 'Unknown error')}")
 
+    # ------------------------------------------------------------
+    # New: direct upload progress events (pre-processing)
+    # ------------------------------------------------------------
+
+    async def upload_progress(self, progress_data: dict):
+        """Broadcast raw upload progress to clients.
+
+        Sent to the *progress* room with type ``upload_progress``. The
+        payload is expected to include at minimum ``bytes_received`` and
+        may include ``total_bytes`` and ``percent``.
+        """
+
+        try:
+            await manager.broadcast_to_room(
+                "progress",
+                {
+                    "type": "upload_progress",
+                    "data": progress_data,
+                },
+            )
+
+            logger.debug(
+                "📡 Upload progress broadcasted: %s / %s",
+                progress_data.get("bytes_received"),
+                progress_data.get("total_bytes"),
+            )
+        except Exception as e:
+            logger.warning(f"Failed to broadcast upload progress: {e}")
+
 # Global event broadcaster instance
 broadcaster = EventBroadcaster() 

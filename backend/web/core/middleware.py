@@ -7,6 +7,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from utils.logger import get_logger
+from .events import broadcaster
 
 logger = get_logger("web")
 
@@ -183,4 +184,86 @@ class ConditionalGZipMiddleware(BaseHTTPMiddleware):
             status_code=response.status_code,
             headers=headers,
             media_type=response.media_type
-        ) 
+        )
+
+# ------------------------------------------------------------
+# New: Upload progress tracking middleware
+# ------------------------------------------------------------
+# We stream reads from the ASGI receive channel so we can report
+# granular progress for long multipart uploads (especially the
+# /api/media endpoint). This eliminates the perceived "freeze"
+# between the browser finishing its XHR upload and the backend
+# starting processing.
+#
+# We purposefully implement this as a low-level ASGI middleware so we
+# can wrap the original `receive` callable and observe each incoming
+# body chunk before Starlette/FastAPI buffers the entire request.
+# ------------------------------------------------------------
+
+
+class UploadProgressMiddleware:
+    """Track inbound HTTP request body size and broadcast progress.
+
+    Currently enabled only for POST /api/media uploads with
+    multipart/form-data bodies. Progress messages are sent to the
+    existing WebSocket "progress" room with event type
+    ``upload_progress``. Front-end clients can subscribe to that room
+    to update UI state in real-time.
+    """
+
+    def __init__(self, app, chunk_threshold: int = 1 * 1024 * 1024):
+        self.app = app
+        # Broadcast every `chunk_threshold` bytes or on completion
+        self.chunk_threshold = chunk_threshold
+
+    async def __call__(self, scope, receive, send):
+        # Only handle HTTP POSTs to /api/media with multipart bodies
+        if (
+            scope.get("type") == "http"
+            and scope.get("method") == "POST"
+            and scope.get("path") == "/api/media"
+        ):
+            headers = {k.decode().lower(): v.decode() for k, v in scope.get("headers", [])}
+            content_length = int(headers.get("content-length", 0)) or None
+
+            bytes_seen = 0
+            last_broadcast = 0
+
+            async def receive_wrapper():
+                nonlocal bytes_seen, last_broadcast
+                message = await receive()
+
+                if message["type"] == "http.request":
+                    body_part = message.get("body", b"")
+                    bytes_seen += len(body_part)
+
+                    # Determine if we should broadcast (either threshold or completed)
+                    if (
+                        bytes_seen - last_broadcast >= self.chunk_threshold
+                        or message.get("more_body") is False
+                    ):
+                        last_broadcast = bytes_seen
+
+                        percent = None
+                        if content_length:
+                            # Avoid ZeroDivision, content_length > 0 here
+                            percent = (bytes_seen / content_length) * 100.0
+
+                        try:
+                            await broadcaster.upload_progress(
+                                {
+                                    "bytes_received": bytes_seen,
+                                    "total_bytes": content_length,
+                                    "percent": percent,
+                                }
+                            )
+                        except Exception:
+                            # Never fail the upload because of broadcast issues
+                            pass
+
+                return message
+
+            await self.app(scope, receive_wrapper, send)
+        else:
+            # Non-upload requests – passthrough unchanged
+            await self.app(scope, receive, send) 

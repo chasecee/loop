@@ -49,6 +49,9 @@ def create_app(
     # Add middleware in correct order (innermost to outermost)
     app.add_middleware(CacheControlMiddleware)
     app.add_middleware(RequestLoggingMiddleware)
+    # New: stream upload progress to clients
+    from .core.middleware import UploadProgressMiddleware
+    app.add_middleware(UploadProgressMiddleware)
     app.add_middleware(ConcurrencyLimitMiddleware, max_concurrent=config.web.max_concurrent_requests if config else 16)
     app.add_middleware(ErrorHandlingMiddleware)
     
