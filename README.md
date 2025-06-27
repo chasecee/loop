@@ -123,7 +123,7 @@ The installer will:
 - Configure SPI for the display
 - Deploy the pre-built web interface
 - Enable WebSocket real-time communication
-- Show you the IP address when ready
+- **Note**: WiFi hotspot setup in installer is non-functional (WiFi manager is gutted)
 
 ### 3. First Time Setup
 
@@ -220,7 +220,7 @@ Key settings in `backend/config/config.json`:
 - **Next/Previous**: Navigation buttons with real-time response
 - **Activate Media**: Click on any media item to jump to it instantly
 - **Loop Management**: Drag to reorder with real-time updates, toggle loop modes
-- **System Settings**: Brightness, WiFi, updates with instant feedback
+- **System Settings**: Brightness, system status, updates with instant feedback
 
 ### API Endpoints
 
@@ -426,6 +426,7 @@ frontend/loop-frontend/  # Next.js web interface
 
 ## Planned Features
 
+- **WiFi functionality restoration** - Re-implement gutted WiFi manager and hotspot features
 - Physical rotary encoder controls
 - Advanced scheduling and automation
 - Mobile app companion
