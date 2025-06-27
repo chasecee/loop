@@ -17,7 +17,6 @@ from ..core.events import broadcaster
 from display.player import DisplayPlayer
 from utils.media_index import media_index
 from utils.logger import get_logger
-from .media_upload_v2 import process_media_upload_v2
 from .dashboard import invalidate_dashboard_cache
 
 logger = get_logger("web.media")
@@ -50,7 +49,7 @@ def create_media_router(
     
     @router.post("", response_model=APIResponse)
     async def upload_media(request: Request, files: List[UploadFile] = File(...)):
-        """Upload media files with v2 simplified processing."""
+        """Upload media files with bulletproof transaction-based processing."""
         # Generate unique request ID to track duplicates
         request_id = str(uuid.uuid4())[:8]
         
@@ -58,8 +57,10 @@ def create_media_router(
         logger.info(f"🎬 Upload request [{request_id}]: {len(files)} files")
         
         try:
-            # Use new v2 processor - no jobs, no coordination, just works
-            upload_result = await process_media_upload_v2(
+            # Use new transaction-based coordinator
+            from ..core.upload_coordinator import upload_coordinator
+            
+            upload_result = await upload_coordinator.process_upload(
                 files, media_raw_dir, media_processed_dir, display_player
             )
             
@@ -74,7 +75,7 @@ def create_media_router(
                 message=f"Processed {upload_result['processed']} files", 
                 data={
                     "slug": upload_result["last_slug"],
-                    "job_ids": []  # No jobs in v2 system
+                    "job_ids": []  # No jobs in transaction system
                 }
             )
             
