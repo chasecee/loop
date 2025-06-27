@@ -142,5 +142,25 @@ class EventBroadcaster:
         except Exception as e:
             logger.warning(f"Failed to broadcast upload progress: {e}")
 
+    async def upload_progress_simple(self, filename: str, percent: float, stage: str):
+        """Broadcast simple upload progress with filename, percentage, and stage."""
+        try:
+            await manager.broadcast_to_room(
+                "progress",
+                {
+                    "type": "upload_progress",
+                    "data": {
+                        "filename": filename,
+                        "percent": percent,
+                        "progress": percent,
+                        "stage": stage,
+                    },
+                },
+            )
+
+            logger.debug(f"📡 Upload progress broadcasted: {filename} -> {percent}% ({stage})")
+        except Exception as e:
+            logger.warning(f"Failed to broadcast upload progress for {filename}: {e}")
+
 # Global event broadcaster instance
 broadcaster = EventBroadcaster() 

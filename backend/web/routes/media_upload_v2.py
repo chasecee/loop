@@ -175,10 +175,15 @@ async def process_media_v2(file: UploadFile, content: bytes, slug: str, media_ra
     # Reduce logging verbosity - main router already logs the request
     logger.debug(f"📁 Processing media: {file.filename} -> {slug}")
     
+    # Notify frontend that backend processing has started
+    await broadcaster.upload_progress_simple(file.filename, 85, "finalizing")
+    
     # Save file
     raw_path = media_raw_dir / f"{slug}_{file.filename}"
     with open(raw_path, "wb") as f:
         f.write(content)
+    
+    await broadcaster.upload_progress_simple(file.filename, 95, "finalizing")
     
     # Create metadata
     metadata = {
@@ -199,6 +204,8 @@ async def process_media_v2(file: UploadFile, content: bytes, slug: str, media_ra
 
     media_index.add_media(metadata, make_active=not is_video)
     
+    await broadcaster.upload_progress_simple(file.filename, 100, "complete")
+    
     # Only log completion, not processing start
     logger.info(f"✅ Media uploaded: {file.filename}")
     
@@ -213,6 +220,9 @@ async def process_zip_v2(file: UploadFile, content: bytes, slug: str, media_proc
     
     # Reduce logging verbosity
     logger.debug(f"📦 Processing ZIP: {file.filename} -> {slug}")
+    
+    # Notify frontend that backend processing has started
+    await broadcaster.upload_progress_simple(file.filename, 85, "finalizing")
     
     try:
         # Extract ZIP and get metadata
@@ -230,6 +240,8 @@ async def process_zip_v2(file: UploadFile, content: bytes, slug: str, media_proc
 
                 zip_metadata_raw = json.loads(zf.read("metadata.json").decode())
 
+        await broadcaster.upload_progress_simple(file.filename, 90, "finalizing")
+
         original_filename = zip_metadata_raw.get("original_filename", file.filename.replace(".zip", ""))
 
         # Check for existing raw upload with same filename
@@ -243,6 +255,8 @@ async def process_zip_v2(file: UploadFile, content: bytes, slug: str, media_proc
 
         # Extract ZIP frames and get frame-related metadata
         zip_meta = await extract_zip_frames_v2(content, target_slug, media_processed_dir)
+
+        await broadcaster.upload_progress_simple(file.filename, 95, "finalizing")
 
         if existing_slug:
             # Merge: preserve size/url/type from original raw upload; update frame info
@@ -271,6 +285,8 @@ async def process_zip_v2(file: UploadFile, content: bytes, slug: str, media_proc
 
             await broadcaster.loop_updated(media_index.list_loop())
 
+        await broadcaster.upload_progress_simple(file.filename, 100, "complete")
+
         # Broadcast completion
         await broadcaster.media_uploaded(metadata)
         
@@ -281,6 +297,7 @@ async def process_zip_v2(file: UploadFile, content: bytes, slug: str, media_proc
         
     except Exception as e:
         logger.error(f"ZIP processing failed: {file.filename}: {e}")
+        await broadcaster.upload_progress_simple(file.filename, 0, "error")
         raise HTTPException(status_code=500, detail=f"ZIP processing failed: {e}")
 
 
