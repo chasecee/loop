@@ -8,7 +8,6 @@ websockets==12.0
 
 # Image/video processing
 pillow==10.1.0
-imageio==2.33.0
 
 
 # Hardware interfaces (Pi specific)
@@ -19,7 +18,6 @@ psutil==5.9.6
 requests==2.31.0
 python-dotenv==1.0.0
 systemd-python==235; platform_machine == 'armv7l' or platform_machine == 'aarch64'
-pygame==2.5.2
 
 # Optional (for development)
 black==23.11.0

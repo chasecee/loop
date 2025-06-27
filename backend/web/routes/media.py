@@ -182,6 +182,6 @@ def create_media_router(
             logger.error(f"Failed to cleanup media: {e}")
             raise HTTPException(status_code=500, detail=str(e))
     
-    # Legacy /media/progress endpoints removed – v2 processing completes synchronously
+    # Legacy /media/progress endpoints removed – processing completes synchronously
     
     return router 

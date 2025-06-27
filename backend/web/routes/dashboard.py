@@ -23,6 +23,37 @@ _dashboard_cache: Optional[DashboardData] = None
 _cache_timestamp: float = 0
 _cache_ttl: float = 5.0  # 5 second cache TTL
 
+async def collect_device_status(
+    display_player: DisplayPlayer = None,
+    wifi_manager: WiFiManager = None,
+    updater: SystemUpdater = None
+) -> DeviceStatus:
+    """Shared device status collection logic for dashboard and WebSocket routes."""
+    device_status = DeviceStatus()
+
+    if display_player:
+        try:
+            player_data = display_player.get_status()
+            device_status.player = PlayerStatus(**player_data)
+        except Exception:
+            pass
+
+    if wifi_manager:
+        try:
+            wifi_data = wifi_manager.get_status()
+            device_status.wifi = WiFiStatus(**wifi_data)
+        except Exception:
+            pass
+
+    if updater:
+        try:
+            update_data = updater.get_update_status()
+            device_status.updates = UpdateStatus(**update_data)
+        except Exception:
+            pass
+
+    return device_status
+
 def create_dashboard_router(
     display_player: DisplayPlayer = None,
     wifi_manager: WiFiManager = None,
@@ -31,33 +62,6 @@ def create_dashboard_router(
     """Create dashboard router with dependencies."""
     
     router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
-    
-    async def get_status():
-        """Collect comprehensive system status (internal helper)."""
-        device_status = DeviceStatus()
-
-        if display_player:
-            try:
-                player_data = display_player.get_status()
-                device_status.player = PlayerStatus(**player_data)
-            except Exception:
-                pass
-
-        if wifi_manager:
-            try:
-                wifi_data = wifi_manager.get_status()
-                device_status.wifi = WiFiStatus(**wifi_data)
-            except Exception:
-                pass
-
-        if updater:
-            try:
-                update_data = updater.get_update_status()
-                device_status.updates = UpdateStatus(**update_data)
-            except Exception:
-                pass
-
-        return device_status
     
     def get_storage_info():
         """Get storage information - completely separate from dashboard."""
@@ -94,7 +98,7 @@ def create_dashboard_router(
         start_time = time.time()
         
         # System status
-        device_status = await get_status()
+        device_status = await collect_device_status(display_player, wifi_manager, updater)
 
         # Media / loop / processing data
         dashboard_data = media_index.get_dashboard_data()

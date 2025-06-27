@@ -427,8 +427,4 @@ def show_upload(count: int = 1) -> None:
         _message_display.show_upload_message(count)
 
 
-# Graceful shutdown helper (not used yet, but handy)
-def stop_message_display():
-    """Stop the background worker thread."""
-    if _message_display:
-        _message_display.stop() 
+ 

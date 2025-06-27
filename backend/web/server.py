@@ -70,16 +70,21 @@ def create_app(
         max_age=3600,  # Cache preflight requests for 1 hour
     )
     
-    # SPA assets directory (Next.js export)
+    # Determine paths
+    backend_root = Path(__file__).resolve().parent.parent
+    media_raw_dir = backend_root / "media" / "raw"
+    media_processed_dir = backend_root / "media" / "processed"
+    
+    # SPA assets directory (deployed via deploy-frontend.sh)
     spa_dir = Path(__file__).parent / "spa"
+    
+    # Mount static file routes with optimized caching
     if (spa_dir / "_next").exists():
         app.mount("/_next", StaticFiles(directory=spa_dir / "_next"), name="next-static")
     if spa_dir.exists():
         app.mount("/assets", StaticFiles(directory=spa_dir), name="spa-assets")
     
     # Media directories
-    media_raw_dir = Path("media/raw")
-    media_processed_dir = Path("media/processed")
     media_raw_dir.mkdir(parents=True, exist_ok=True)
     media_processed_dir.mkdir(parents=True, exist_ok=True)
     
@@ -96,13 +101,28 @@ def create_app(
         spa_index = spa_dir / "index.html"
         if spa_index.exists():
             return FileResponse(spa_index)
-        from fastapi import HTTPException
-        raise HTTPException(status_code=404, detail="SPA not built/deployed")
+        else:
+            # Fallback if frontend not deployed yet
+            return """
+            <html>
+                <head><title>LOOP - Deploy Required</title></head>
+                <body>
+                    <h1>LOOP Backend Running</h1>
+                    <p>Frontend not deployed yet. Run deployment script:</p>
+                    <code>./deploy-frontend.sh</code>
+                    <p><a href="/docs">View API Documentation</a></p>
+                </body>
+            </html>
+            """
     
     # Favicon route to prevent 404 spam
     @app.get("/favicon.ico")
     async def favicon():
-        """Return 204 No Content for favicon requests."""
+        """Serve favicon if available, otherwise return 204."""
+        favicon_path = spa_dir / "favicon.ico"
+        if favicon_path.exists():
+            return FileResponse(favicon_path)
+        # Return empty response if no favicon found
         from fastapi import Response
         return Response(status_code=204)
     
@@ -120,13 +140,6 @@ if __name__ == "__main__":
     
     config = get_config()
     app = create_app(config=config)
-    
-    # Add a dummy template for SPA testing if it doesn't exist
-    spa_dir = Path(__file__).parent / "spa"
-    spa_dir.mkdir(exist_ok=True)
-    if not (spa_dir / "index.html").exists():
-        with open(spa_dir / "index.html", "w") as f:
-            f.write("<h1>SPA Placeholder</h1><p>Build the frontend and place it here.</p>")
 
     uvicorn.run(
         app,

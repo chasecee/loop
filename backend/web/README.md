@@ -2,6 +2,25 @@
 
 **Performance-optimized** FastAPI web server designed specifically for Pi Zero 2 constraints. Features aggressive caching, storage separation, and minimal SD card I/O.
 
+## 🏗️ **FRONTEND DEPLOYMENT ARCHITECTURE**
+
+**Intentional SPA Integration:**
+
+- Frontend built as git submodule in `frontend/loop-frontend/`
+- `deploy-frontend.sh` script builds and copies to `backend/web/spa/`
+- Includes FFmpeg WASM files for client-side video processing
+- Backend serves static assets from `spa/` directory
+
+**Deployment Process:**
+
+```bash
+# Build and deploy frontend to backend
+./deploy-frontend.sh
+
+# This creates the spa/ directory with all static assets
+# Backend automatically serves from spa/ when available
+```
+
 ## Structure
 
 ```
@@ -9,14 +28,24 @@ backend/web/
 ├── core/                    # Core utilities
 │   ├── models.py           # Pydantic request/response models
 │   ├── middleware.py       # HTTP middleware classes
-│   └── storage.py          # Storage calculation utilities (with persistent caching)
+│   ├── storage.py          # Storage calculation utilities (with persistent caching)
+│   ├── events.py           # WebSocket event broadcasting
+│   ├── websocket.py        # WebSocket connection management
+│   ├── upload_coordinator.py # Transaction-based upload processing (V3)
+│   └── __init__.py         # Explicit imports (no wildcard imports)
 ├── routes/                  # API route modules
 │   ├── media.py            # Media management endpoints (with cache invalidation)
 │   ├── loop.py             # Loop queue management (with cache invalidation)
 │   ├── playback.py         # Playback controls + display settings
 │   ├── wifi.py             # WiFi network management (functionality limited)
 │   ├── updates.py          # System update endpoints
-│   └── dashboard.py        # Consolidated dashboard data (5-second aggressive caching)
+│   ├── dashboard.py        # Consolidated dashboard data (5-second aggressive caching)
+│   ├── websocket.py        # WebSocket routes and real-time updates
+│   └── __init__.py         # Router registration
+├── spa/                     # Frontend assets (deployed via deploy-frontend.sh)
+│   ├── _next/              # Next.js build artifacts
+│   ├── ffmpeg/             # FFmpeg WASM files
+│   └── [static assets]     # React/CSS/JS build output
 └── server.py               # Main app factory with Pi Zero 2 optimizations
 ```
 

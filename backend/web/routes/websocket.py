@@ -3,12 +3,13 @@
 import json
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from ..core.websocket import manager
-from ..core.models import APIResponse, DashboardData, DeviceStatus, PlayerStatus, WiFiStatus, UpdateStatus
+from ..core.models import APIResponse
 from utils.logger import get_logger
 from utils.media_index import media_index
 from display.player import DisplayPlayer
 from boot.wifi import WiFiManager
 from deployment.updater import SystemUpdater
+from .dashboard import collect_device_status
 
 logger = get_logger("web.websocket")
 
@@ -23,29 +24,8 @@ def create_websocket_router(
     
     async def get_complete_dashboard_data():
         """Get complete dashboard data including device status (same as dashboard route)."""
-        # System status
-        device_status = DeviceStatus()
-
-        if display_player:
-            try:
-                player_data = display_player.get_status()
-                device_status.player = PlayerStatus(**player_data)
-            except Exception:
-                pass
-
-        if wifi_manager:
-            try:
-                wifi_data = wifi_manager.get_status()
-                device_status.wifi = WiFiStatus(**wifi_data)
-            except Exception:
-                pass
-
-        if updater:
-            try:
-                update_data = updater.get_update_status()
-                device_status.updates = UpdateStatus(**update_data)
-            except Exception:
-                pass
+        # System status (using shared function)
+        device_status = await collect_device_status(display_player, wifi_manager, updater)
 
         # Media / loop / processing data
         media_data = media_index.get_dashboard_data()

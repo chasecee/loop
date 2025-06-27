@@ -32,6 +32,7 @@ class MediaItem(BaseModel):
     width: Optional[int] = None
     height: Optional[int] = None
     frame_count: Optional[int] = None
+    processing_status: Optional[str] = None  # "pending", "processing", "completed", "error"
 
 class ProcessingJobResponse(BaseModel):
     """Processing job status response - matches frontend ProcessingJob interface."""
