@@ -23,6 +23,19 @@ from typing import Dict, Any
 # Add backend to Python path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# Also add the parent directory to ensure web module is found
+backend_dir = os.path.dirname(os.path.abspath(__file__))
+if backend_dir not in sys.path:
+    sys.path.insert(0, backend_dir)
+
+# Ensure web package is importable
+web_dir = os.path.join(backend_dir, 'web')
+if os.path.exists(web_dir) and web_dir not in sys.path:
+    sys.path.insert(0, web_dir)
+
+print(f"🔍 Python path includes: {backend_dir}")
+print(f"🔍 Web directory exists: {os.path.exists(web_dir)}")
+
 # Mock the required modules for testing
 class MockBroadcaster:
     async def upload_progress_simple(self, filename: str, progress: int, status: str):
