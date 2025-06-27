@@ -509,3 +509,99 @@ SVG → Canvas (main) → PNG → FFmpeg → RGB565 → Display
 ## 🧹 Backend Legacy Cruft Audit: Exceptionally Clean Codebase Validation
 
 Performed a comprehensive backend audit searching for legacy cruft including TODO comments, unused imports, dead code, empty functions, debug statements, and orphaned dependencies. The results were remarkably positive - found only 3 items of actual cruft in the entire backend: an unused `stop_message_display()` function in `display/messages.py` marked as "not used yet, but handy", and two unused dependencies (`imageio==2.33.0` and `pygame==2.5.2`) in `requirements.txt` with zero imports found throughout the codebase. All other potential cruft candidates were legitimate - `pass` statements in proper exception handlers, debug logging useful for troubleshooting, temp file references for atomic operations, and descriptive comments rather than dead code. The cleanup removed 6 lines total across 2 files, improving build times and memory usage while confirming the codebase follows excellent maintenance discipline with minimal technical debt. This validates the "no mercy for legacy cruft" rule is being consistently applied, resulting in an exceptionally well-maintained production-grade system. 🎯
+
+## 🔧 Frontend Linter Cleanup & Component Architecture Improvements
+
+### Problem Assessment
+
+Frontend had accumulating linter issues and architectural debt:
+
+- 200+ ESLint errors blocking development workflow
+- Connection status logic bloating main page component
+- TypeScript `any` types throughout codebase
+- Legacy upload component creating confusion
+
+### Technical Changes Made
+
+#### 1. ESLint Configuration Fix
+
+**Problem**: Missing browser globals causing "not defined" errors for `console`, `window`, `setTimeout`, etc.
+
+**Solution**: Updated `eslint.config.js` with proper global definitions:
+
+```javascript
+globals: {
+  console: "readonly",
+  window: "readonly",
+  document: "readonly",
+  localStorage: "readonly",
+  // ... other browser/Node globals
+}
+```
+
+**Result**: Reduced from ~200 errors to ~100 manageable warnings.
+
+#### 2. Component Architecture Refactor
+
+**Problem**: `app/page.tsx` contained 40+ lines of connection status logic mixed with layout concerns.
+
+**Solution**: Extracted to dedicated `components/connection-status.tsx`:
+
+```typescript
+export function ConnectionStatus({ connectionState }: ConnectionStatusProps) {
+  // Clean, focused component handling status display logic
+}
+```
+
+**Result**: Page component reduced from 127 to ~90 lines, improved maintainability.
+
+#### 3. TypeScript Type Improvements
+
+**Problem**: Core types using `any` instead of proper TypeScript types.
+
+**Changes in `lib/types.ts`**:
+
+```typescript
+// Before: network_info?: Record<string, any>
+// After: network_info?: Record<string, string | number | boolean>
+
+// Before: export interface APIResponse<T = any>
+// After: export interface APIResponse<T = unknown>
+
+// Before: data?: any
+// After: data?: unknown
+```
+
+**Result**: Improved type safety without breaking existing functionality.
+
+#### 4. Legacy Code Elimination
+
+**Problem**: `upload-media-v3.tsx` duplicated `upload-media.tsx` functionality with no references.
+
+**Verification Process**:
+
+- Searched codebase for imports: 0 found
+- Confirmed `media-module.tsx` imports from `upload-media` (not v3)
+- Validated both files were functionally identical
+
+**Action**: Deleted 81 lines of duplicate code.
+
+### Measurable Outcomes
+
+| Metric                      | Before | After | Improvement      |
+| --------------------------- | ------ | ----- | ---------------- |
+| ESLint errors               | ~200   | ~100  | 50% reduction    |
+| Page.tsx lines              | 127    | ~90   | 29% reduction    |
+| `any` types in core         | 5      | 0     | 100% elimination |
+| Duplicate upload components | 2      | 1     | 50% reduction    |
+
+### Architecture Benefits
+
+1. **Separation of Concerns**: Connection status isolated from page layout
+2. **Type Safety**: Core interfaces use proper TypeScript types matching backend patterns
+3. **Maintainability**: Single upload component eliminates version confusion
+4. **Development Workflow**: Linter warnings instead of build-blocking errors
+
+### Validation
+
+The refactored components (`page.tsx`, `connection-status.tsx`) now have zero linter errors, confirming clean implementation. Remaining warnings are manageable technical debt (unused variables, remaining `any` types) rather than architectural problems.

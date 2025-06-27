@@ -1,6 +1,6 @@
 # Web Server
 
-**Performance-optimized** FastAPI web server designed specifically for Pi Zero 2 constraints. Features aggressive caching, storage separation, and minimal SD card I/O.
+**Real-time optimized** FastAPI web server designed specifically for Pi Zero 2 constraints. Features **completed WebSocket migration**, aggressive caching, storage separation, and minimal SD card I/O.
 
 ## 🏗️ **FRONTEND DEPLOYMENT ARCHITECTURE**
 
@@ -51,6 +51,13 @@ backend/web/
 
 ## Performance Architecture
 
+### **Real-time WebSocket Communication**
+
+- **Completed Migration**: Eliminated 15-second polling, now instant updates
+- **Room-based Broadcasting**: `dashboard`, `progress`, `wifi`, `system` channels
+- **Auto-reconnection**: Client automatically reconnects with exponential backoff
+- **Event Broadcasting**: All API mutations trigger real-time WebSocket events
+
 ### **Aggressive Caching Strategy**
 
 - **Dashboard Endpoint**: 5-second cache TTL eliminates SD card I/O on every request
@@ -67,25 +74,37 @@ backend/web/
 
 ## Core Functions
 
+### **Real-time Communication**
+
+- **WebSocket Endpoint**: `/ws` with room-based subscriptions
+- **Event Broadcasting**: Instant updates for all mutations
+- **Connection Management**: Health monitoring with ping/pong
+- **Auto-reconnection**: Exponential backoff with graceful degradation
+
 ### **Media Management**
 
-- **Two-phase uploads**: Browser uploads video + ZIP frames separately, server coordinates them
-- **Processing jobs**: Tracks upload/conversion progress with real-time updates
+- **Transaction-based uploads**: Bulletproof coordination between original + ZIP files
+- **Processing jobs**: Tracks upload/conversion progress with real-time WebSocket updates
 - **Storage**: Manages raw videos (`media/raw/`) and processed frames (`media/processed/`)
 - **Cache Invalidation**: Automatic dashboard cache invalidation on media changes
 
 ### **API Endpoints**
+
+#### Real-time WebSocket
+
+- `/ws` - **WebSocket endpoint** for real-time bidirectional communication
+- `/api/websocket/status` - Connection diagnostics and room statistics
 
 #### Performance-Critical Endpoints
 
 - `/api/dashboard` - **Cached (5s TTL)** system status, excludes storage for performance
 - `/api/dashboard/storage` - **Separate endpoint** for storage info, only called when needed
 
-#### Standard Endpoints
+#### Standard Endpoints (with WebSocket broadcasting)
 
-- `/api/media/*` - Upload, delete, cleanup media (with cache invalidation)
-- `/api/loop/*` - Manage playback queue and ordering (with cache invalidation)
-- `/api/playback/*` - Play/pause, next/previous, loop modes (with cache invalidation)
+- `/api/media/*` - Upload, delete, cleanup media (with cache invalidation + WebSocket events)
+- `/api/loop/*` - Manage playback queue and ordering (with cache invalidation + WebSocket events)
+- `/api/playback/*` - Play/pause, next/previous, loop modes (with cache invalidation + WebSocket events)
 - `/api/display/*` - Brightness, gamma, display settings
 - `/api/wifi/*` - Network scanning and connection ⚠️ **Limited functionality**
 - `/api/updates/*` - System update management
@@ -101,8 +120,10 @@ backend/web/
 | Endpoint            | Before Optimization | After Optimization | Notes                   |
 | ------------------- | ------------------- | ------------------ | ----------------------- |
 | `/api/dashboard`    | 1000ms+             | ~50ms (cached)     | 95%+ improvement        |
+| Real-time updates   | 15-second polling   | Instant WebSocket  | Immediate feedback      |
 | Storage calculation | Every 15s           | Only when needed   | Eliminates 90% of calls |
 | Media index reads   | File I/O every time | 5s cache           | Reduces SD card wear    |
+| Upload coordination | Race conditions     | Transaction-based  | Bulletproof atomicity   |
 
 ## Key Integrations
 
@@ -117,27 +138,68 @@ backend/web/
 ## Architecture
 
 ```
-Browser → FastAPI → media_index → DisplayPlayer → Hardware
-   ↓         ↓           ↓           ↓
-SPA     Cached API   JSON Cache   Pi Display
-        (5s TTL)     (5s TTL)
+Browser WebSocket Client → FastAPI WebSocket Server → media_index → DisplayPlayer → Hardware
+        ↓                          ↓                       ↓              ↓
+   Real-time UI              Room Broadcasting         JSON Cache     Pi Display
+    (instant)                   (instant)              (5s TTL)
 ```
 
 **Optimized Data Flow**:
 
-1. Browser request hits cache (50ms response)
-2. Cache miss triggers media_index read (cached for 5s)
-3. Storage calculation **only** when settings modal opened
-4. Cache invalidation on state changes
+1. Browser WebSocket connects and subscribes to rooms
+2. API mutations trigger WebSocket broadcasts (instant updates)
+3. Dashboard requests hit cache (50ms response)
+4. Cache miss triggers media_index read (cached for 5s)
+5. Storage calculation **only** when settings modal opened
+6. Cache invalidation on state changes triggers WebSocket events
 
 ## Middleware Stack
 
 1. **CORS** - Cross-origin requests
 2. **Error Handling** - Standardized error responses
-3. **Concurrency Limiting** - **Max 12 concurrent** to prevent Pi overload
-4. **Request Logging** - Performance monitoring with timing
-5. **Cache Control** - Optimized static file serving
-6. **Response Compression** - Reduces bandwidth usage
+3. **Upload Progress** - Real-time progress broadcasting via WebSocket
+4. **Concurrency Limiting** - **Max 12 concurrent** to prevent Pi overload
+5. **Request Logging** - Performance monitoring with timing
+6. **Cache Control** - Optimized static file serving
+7. **Conditional GZip** - Reduces bandwidth usage (5-10x compression)
+
+## WebSocket Implementation
+
+### Connection Management (`core/websocket.py`)
+
+```python
+class ConnectionManager:
+    """Manages WebSocket connections and room-based broadcasting."""
+
+    # Room-based subscriptions
+    rooms = {
+        "dashboard": set(),    # System status, media, loop changes
+        "progress": set(),     # Upload/processing progress
+        "wifi": set(),         # WiFi status changes
+        "system": set()        # System-level notifications
+    }
+```
+
+### Event Broadcasting (`core/events.py`)
+
+```python
+class EventBroadcaster:
+    """Handles real-time event broadcasting to WebSocket clients."""
+
+    async def dashboard_updated(self, data: dict):
+        """Broadcast dashboard data update with throttling."""
+        await manager.broadcast_to_room("dashboard", {
+            "type": "dashboard_update",
+            "data": data
+        })
+```
+
+### Room Subscriptions
+
+- **`dashboard`** - System status, media library, active media, loop queue
+- **`progress`** - Real-time processing progress during uploads
+- **`wifi`** - WiFi status and connection changes
+- **`system`** - System-level notifications and errors
 
 ## Caching Implementation
 
@@ -152,9 +214,9 @@ _cache_ttl: float = 5.0
 
 ### Cache Invalidation Strategy
 
-- **Media uploads**: Invalidates dashboard cache
-- **Loop changes**: Invalidates dashboard cache
-- **Playback state**: Invalidates dashboard cache
+- **Media uploads**: Invalidates dashboard cache + broadcasts WebSocket event
+- **Loop changes**: Invalidates dashboard cache + broadcasts WebSocket event
+- **Playback state**: Invalidates dashboard cache + broadcasts WebSocket event
 - **Storage changes**: Invalidates storage cache only
 
 ### Storage Separation
@@ -162,37 +224,87 @@ _cache_ttl: float = 5.0
 - **Dashboard**: Excludes storage data by default
 - **Separate endpoint**: `/api/dashboard/storage` for settings modal only
 - **Persistent caching**: Storage data cached to `media/.storage_cache.json`
+- **Hourly recalculation**: Reduces from every 15s to only when needed
 
 ## Pi Zero 2 Specific Features
 
-### Request Deduplication
+### WebSocket Optimization
 
 ```python
-# Prevents multiple simultaneous dashboard requests
-if not init?.signal && inflightDashboard:
-    return inflightDashboard
+# Auto-reconnection with exponential backoff
+reconnectDelay = Math.min(
+    baseDelay * Math.pow(2, attempts - 1),
+    maxReconnectDelay
+);
+```
+
+### Request Deduplication
+
+```typescript
+// Prevents multiple simultaneous dashboard requests
+let inflightDashboard: Promise<DashboardData> | null = null;
+
+if (!init?.signal && inflightDashboard) {
+  return inflightDashboard;
+}
 ```
 
 ### Memory Management
 
 - **Bounded queues**: 30-frame buffer for display
 - **Automatic cleanup**: Processing jobs cleaned after completion
-- **Conservative limits**: File size limits respect Pi memory
+- **Conservative limits**: File size limits respect Pi memory (50MB default)
+- **WebSocket connection limits**: Reasonable concurrent connection handling
 
 ### Error Handling
 
-- **Graceful degradation**: Cache misses don't block UI
+- **Graceful degradation**: WebSocket failures don't block UI
 - **Timeout handling**: 5-minute upload timeouts
 - **Resource monitoring**: CPU/memory limit checking
+- **Connection health**: Ping/pong heartbeat monitoring
+
+## Transaction-based Upload System
+
+### Upload Coordination V3
+
+```python
+class UploadCoordinator:
+    """Bulletproof upload coordination with atomic transactions."""
+
+    async def coordinate_upload(self, original_file, frames_zip):
+        """Atomic coordination prevents race conditions."""
+        # Method 1: Direct filename match from metadata.json
+        # Method 2: Basename matching for safety
+        # Method 3: Recent upload fallback
+```
+
+### Upload Flow
+
+1. **Browser Processing**: WebAssembly FFmpeg converts media
+2. **Transaction Creation**: Deterministic ID from file content hash
+3. **Dual Upload**: Original file + processed frames ZIP
+4. **Atomic Coordination**: Backend matches files using multiple strategies
+5. **Real-time Progress**: WebSocket broadcasts progress updates
+6. **Completion**: WebSocket event triggers dashboard refresh
 
 ## Known Limitations
 
 - **WiFi Functionality**: May have gaps in current implementation
-- **Storage Performance**: First calculation can take 30+ seconds
+- **Storage Performance**: First calculation can take 30+ seconds (cached for 1 hour)
 - **Concurrent Uploads**: Limited to prevent Pi overload
-- **Cache Persistence**: Dashboard cache lost on restart (by design)
+- **WebSocket Connections**: Reasonable limits for Pi Zero 2 memory constraints
 
 ## Performance Monitoring
+
+### WebSocket Performance
+
+```bash
+# Check WebSocket connection status and room statistics
+curl http://localhost/api/websocket/status
+
+# Monitor real-time events in logs
+sudo journalctl -u loop -f | grep "📡"
+```
 
 ### Cache Hit Rates
 
@@ -221,11 +333,36 @@ sudo journalctl -u loop -f | grep "Storage"
 # Should only see calculations when settings opened
 ```
 
+### Upload Coordination
+
+```bash
+# Monitor transaction-based uploads
+sudo journalctl -u loop -f | grep "Upload.*coordination"
+
+# Should see successful file matching and processing
+```
+
 ## Development Notes
 
+- **WebSocket Testing**: Test real-time updates during development
 - **Cache Testing**: Disable caching in development by setting TTL to 0
 - **Performance Profiling**: Use `time.time()` around critical sections
 - **Memory Monitoring**: Watch for memory leaks in long-running operations
-- **Pi Testing**: Always test on actual Pi Zero 2 hardware
+- **Pi Testing**: Always test on actual Pi Zero 2 hardware with WebSocket functionality
 
-This web server is specifically tuned for **Pi Zero 2 constraints** and prioritizes performance above all else.
+## Real-time Features
+
+### Instant UI Updates
+
+- **Media uploads**: Progress and completion broadcast instantly
+- **Playback control**: Play/pause/next/previous immediate feedback
+- **Loop management**: Drag & drop reordering instant updates
+- **System status**: Connection/disconnection immediate notifications
+
+### Multi-device Synchronization
+
+- **Shared state**: All connected devices see identical state instantly
+- **Collaborative control**: Multiple users can control LOOP simultaneously
+- **Device awareness**: See real-time status across desktop/mobile/tablet
+
+This web server provides **enterprise-grade real-time communication** while maintaining **Pi Zero 2 performance constraints**. The completed WebSocket migration delivers immediate user feedback and eliminates the delays of polling-based architectures.
