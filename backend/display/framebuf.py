@@ -71,7 +71,12 @@ class FrameSequence:
     def get_next_frame(self, timeout=1.0) -> Optional[bytes]:
         """Get the next frame from the queue."""
         try:
-            return self.frame_queue.get(timeout=timeout)
+            frame_data = self.frame_queue.get(timeout=timeout)
+            if frame_data:
+                self.logger.debug(f"🎬 Retrieved frame from queue ({len(frame_data)} bytes)")
+            else:
+                self.logger.debug("🎬 Retrieved empty frame from queue")
+            return frame_data
         except queue.Empty:
             self.logger.warning("Frame queue was empty")
             return None
@@ -110,6 +115,7 @@ class FrameSequence:
                 if len(data) == 0:
                     self.logger.error(f"Frame file {frame_path} is empty")
                     return None
+                self.logger.debug(f"📁 Loaded frame {frame_path.name} ({len(data)} bytes)")
                 return data
         except Exception as e:
             self.logger.error(f"Failed to load frame {frame_path}: {e}")

@@ -508,12 +508,15 @@ class DisplayPlayer:
                     # Display static image for configured duration
                     frame_data = sequence.get_next_frame(timeout=2.0)
                     if frame_data:
+                        self.logger.info(f"📸 Displaying static image ({len(frame_data)} bytes) for {self.static_image_display_time}s")
                         if self.display_available:
                             self.display_driver.display_frame(frame_data)
                         else:
                             # Demo mode - simulate display with longer delay
-                            self.logger.debug("Demo mode: simulating static image display")
+                            self.logger.debug("🔄 Demo mode: simulating static image display")
                         self._wait_interruptible(self.static_image_display_time)
+                    else:
+                        self.logger.warning("❌ Failed to get frame data for static image")
                 else:
                     # Play animated sequence
                     sequence_completed = True
@@ -543,13 +546,15 @@ class DisplayPlayer:
                         display_start = time.time()
                         if self.display_available:
                             try:
+                                self.logger.debug(f"🖼️ Displaying frame {frame_idx+1}/{frame_count} ({len(frame_data)} bytes)")
                                 self.display_driver.display_frame(frame_data)
                             except Exception as e:
                                 # Display failed - mark hardware as unavailable
                                 self.display_available = False
-                                self.logger.warning(f"Display hardware failed, switching to demo mode: {e}")
+                                self.logger.error(f"❌ Display hardware failed, switching to demo mode: {e}")
                         else:
                             # Demo mode - simulate frame display timing
+                            self.logger.debug(f"🔄 Demo mode: simulating frame {frame_idx+1}/{frame_count} display")
                             time.sleep(0.001)  # Minimal delay to simulate display processing
                         
                         display_time = time.time() - display_start
