@@ -92,10 +92,10 @@ class ConnectionManager:
             return
             
         room_connections = self.rooms[room].copy()
-        logger.info(f"📡 Broadcasting to {room} room: {len(room_connections)} connections")
+        logger.debug(f"📡 Broadcasting to {room} room: {len(room_connections)} connections")
         
         if len(room_connections) == 0:
-            logger.warning(f"No connections subscribed to {room} room")
+            logger.debug(f"No connections subscribed to {room} room")
             return
             
         connections_to_remove = []
@@ -117,7 +117,7 @@ class ConnectionManager:
         for conn_id in connections_to_remove:
             self.rooms[room].discard(conn_id)
             
-        logger.info(f"📡 Broadcast complete: {successful_sends} successful, {len(connections_to_remove)} failed")
+        logger.debug(f"📡 Broadcast complete: {successful_sends} successful, {len(connections_to_remove)} failed")
         
         if connections_to_remove:
             logger.debug(f"Cleaned up {len(connections_to_remove)} dead connections from {room}")

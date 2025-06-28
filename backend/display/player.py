@@ -329,15 +329,30 @@ class DisplayPlayer:
             
             self.logger.info("Stopped upload progress display")
     
+    def force_stop_progress_display(self) -> None:
+        """Force stop any stale progress displays."""
+        if self.showing_progress:
+            self.logger.warning("Force stopping stale progress display")
+            self.showing_progress = False
+            self.progress_stop_event.set()
+            
+            if self.progress_thread and self.progress_thread.is_alive():
+                self.progress_thread.join(timeout=5)
+                if self.progress_thread.is_alive():
+                    self.logger.error("Progress thread did not stop gracefully")
+            
+            self.logger.info("Force stopped stale progress display")
+    
     def _processing_display_loop(self, job_ids: List[str]) -> None:
         """Loop that displays upload progress."""
         try:
             # Show initial progress
             self.show_progress_bar("Uploading Media", "Starting upload...", 0)
             
-            # Add timeout to prevent getting stuck forever (90 seconds for ZIP processing)
+            # Add timeout to prevent getting stuck forever (15 minutes for large video processing)
             start_time = time.time()
-            max_duration = 90  # 90 seconds - ZIP processing can take time
+            max_duration = 900  # 15 minutes - match frontend timeout
+            no_jobs_count = 0  # Count consecutive checks with no jobs
             
             while not self.progress_stop_event.is_set():
                 # Get current processing jobs
@@ -363,21 +378,27 @@ class DisplayPlayer:
                 
                 # Debug logging for job states  
                 elapsed = time.time() - start_time
-                self.logger.info(f"Progress check {elapsed:.1f}s: tracking {len(job_ids)} jobs, found {len(relevant_jobs)} relevant")
-                for job_id, job_data in relevant_jobs.items():
-                    status = job_data.get('status', 'unknown')
-                    progress = job_data.get('progress', 0)
-                    stage = job_data.get('stage', 'unknown')
-                    self.logger.info(f"  Job {job_id[:8]}: {status} {progress}% ({stage})")
+                if elapsed % 10 == 0:  # Only log every 10 seconds to reduce spam
+                    self.logger.info(f"Progress check {elapsed:.1f}s: tracking {len(job_ids)} jobs, found {len(relevant_jobs)} relevant")
+                    for job_id, job_data in relevant_jobs.items():
+                        status = job_data.get('status', 'unknown')
+                        progress = job_data.get('progress', 0)
+                        stage = job_data.get('stage', 'unknown')
+                        self.logger.debug(f"  Job {job_id[:8]}: {status} {progress}% ({stage})")
                 
                 # Check if any of our original job IDs disappeared
                 missing_jobs = [jid for jid in job_ids if jid not in processing_jobs]
                 if missing_jobs:
                     self.logger.warning(f"Missing jobs: {[jid[:8] for jid in missing_jobs]}")
                 
-                if not relevant_jobs:
-                    self.logger.info("No relevant processing jobs found, stopping progress display")
+                # IMPROVED: More aggressive detection of completion/stale state
+                if not relevant_jobs or len(missing_jobs) == len(job_ids):
+                    no_jobs_count += 1
+                    self.logger.info(f"No relevant processing jobs found or all jobs missing, stopping progress display (count: {no_jobs_count})")
+                    # Stop immediately if no jobs found
                     break
+                else:
+                    no_jobs_count = 0  # Reset counter if we found jobs
                 
                 # Calculate overall progress
                 total_jobs = len(job_ids)

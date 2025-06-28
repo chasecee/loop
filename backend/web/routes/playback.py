@@ -93,6 +93,25 @@ def create_playback_router(
             data={"loop_mode": new_mode}
         )
     
+    @router.post("/force-stop-progress", response_model=APIResponse)
+    async def force_stop_progress():
+        """Force stop any stale progress displays."""
+        if not display_player:
+            raise HTTPException(status_code=503, detail="Display player not available")
+        
+        display_player.force_stop_progress_display()
+        invalidate_dashboard_cache()
+        
+        # Broadcast status change via WebSocket
+        try:
+            import asyncio
+            player_status = display_player.get_status()
+            asyncio.create_task(broadcaster.playback_changed(player_status))
+        except Exception as e:
+            logger.debug(f"WebSocket broadcast failed: {e}")
+        
+        return APIResponse(success=True, message="Force stopped stale progress display")
+    
     return router
 
 def create_display_router(
