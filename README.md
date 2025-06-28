@@ -31,7 +31,7 @@ Your pocket-sized animation companion! LOOP is a network-connected display that 
 - **System updates** via web interface
 - **WiFi Configuration UI** - Interface ready for future WiFi implementation
 
-> **⚠️ WiFi Status**: WiFi functionality is currently **non-functional** in this build. The WiFi manager has been gutted and hotspot features are disabled. You'll need to connect LOOP to your network via Ethernet or manually configure WiFi through Raspberry Pi OS.
+> **✅ WiFi Status**: WiFi functionality is **fully operational** with SSH-safe NetworkManager integration. Both WiFi connection and hotspot features work through the web interface.
 
 ## Architecture
 
@@ -123,7 +123,7 @@ The installer will:
 - Configure SPI for the display
 - Deploy the pre-built web interface
 - Enable WebSocket real-time communication
-- **Note**: WiFi hotspot setup in installer is non-functional (WiFi manager is gutted)
+- **Note**: WiFi and hotspot are managed through NetworkManager and the web interface
 
 ### 3. First Time Setup
 
@@ -411,7 +411,7 @@ frontend/loop-frontend/  # Next.js web interface
 
 ## Current Limitations
 
-- **WiFi Management** - **Completely non-functional** - WiFi manager is gutted, hotspot disabled
+- **WiFi Management** - **Fully functional** - NetworkManager-based WiFi and hotspot management via web UI
 - **Network Setup** - Requires manual Ethernet or OS-level WiFi configuration
 - **Browser Requirements** - WebAssembly FFmpeg needs modern browser + 4GB+ RAM
 - **Storage Performance** - Pi Zero 2 + SD card inherently limits I/O speed
@@ -419,14 +419,14 @@ frontend/loop-frontend/  # Next.js web interface
 
 ## Known Issues
 
-- **WiFi functionality is gutted** - All WiFi/hotspot features return errors
+- **WiFi functionality is fully operational** - SSH-safe NetworkManager implementation
 - Large files (>50MB) may require significant browser memory
 - Storage calculations can be slow on first run (30+ seconds)
 - WiFi configuration UI exists but calls non-functional backend
 
 ## Planned Features
 
-- **WiFi functionality restoration** - Re-implement gutted WiFi manager and hotspot features
+- **WiFi functionality complete** - Clean NetworkManager-based implementation with conflict-free networking
 - Physical rotary encoder controls
 - Advanced scheduling and automation
 - Mobile app companion

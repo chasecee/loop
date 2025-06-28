@@ -8,6 +8,7 @@ from typing import Optional, Tuple, Dict, Any
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 from contextlib import contextmanager
+import queue
 
 from config.schema import DisplayConfig
 from display.memory_pool import get_frame_buffer_pool
@@ -32,7 +33,6 @@ class MessageDisplay:
         self._font_cache: Dict[Tuple[str, int], Any] = {}
         
         # Thread-safe producer/consumer queue for display tasks
-        import queue
         self._queue: "queue.Queue[Tuple[bytes, float]]" = queue.Queue(maxsize=32)
         
         # Lock to ensure only one thread talks to the display hardware at a time
@@ -83,7 +83,14 @@ class MessageDisplay:
                 if Path(font_path).exists():
                     font = ImageFont.truetype(font_path, size)
                     break
-            except (OSError, IOError):
+            except (FileNotFoundError, PermissionError, OSError) as e:
+                self.logger.error(f"Failed to read font file {font_path}: {e}")
+                continue
+            except (ValueError, TypeError) as e:
+                self.logger.error(f"Invalid font file format {font_path}: {e}")
+                continue
+            except Exception as e:
+                self.logger.error(f"Unexpected error loading font {font_path}: {e}")
                 continue
         
         # Fallback to default font
@@ -91,7 +98,11 @@ class MessageDisplay:
             try:
                 font = ImageFont.load_default()
                 self.logger.debug(f"Using default font for size {size}")
-            except Exception:
+            except (OSError, IOError) as e:
+                self.logger.warning(f"Failed to load default font: {e}")
+                font = None
+            except Exception as e:
+                self.logger.error(f"Unexpected error loading default font: {e}")
                 font = None
         
         self._font_cache[cache_key] = font
@@ -350,8 +361,14 @@ class MessageDisplay:
             try:
                 try:
                     frame_data, duration = self._queue.get(timeout=0.1)
-                except Exception:
+                except queue.Empty:
                     continue  # Timeout – allows checking _worker_running periodically
+                except (OSError, RuntimeError) as e:
+                    self.logger.warning(f"Queue error: {e}")
+                    continue
+                except Exception as e:
+                    self.logger.error(f"Unexpected queue error: {e}")
+                    continue
 
                 # Display the frame
                 if frame_data:
@@ -359,8 +376,12 @@ class MessageDisplay:
                         try:
                             self.display_driver.display_frame(frame_data)
                             self.logger.debug(f"Successfully displayed frame ({len(frame_data)} bytes)")
+                        except (AttributeError, TypeError) as e:
+                            self.logger.error(f"Display driver method error: {e}")
+                        except (OSError, IOError, RuntimeError) as e:
+                            self.logger.error(f"Display hardware error: {e}")
                         except Exception as e:
-                            self.logger.error(f"Display driver error: {e}")
+                            self.logger.error(f"Unexpected display driver error: {e}")
 
                 # Wait for duration (0 means persistent until next task)
                 if duration > 0:
@@ -387,9 +408,13 @@ class MessageDisplay:
             # Longer timeout for important messages like boot message  
             timeout = 1.0 if duration > 0 else 0.5  # Boot messages have duration, use longer timeout
             self._queue.put((frame_data, duration), timeout=timeout)
-        except Exception:
+        except queue.Full:
             # Queue full – drop the message, but log once
             self.logger.warning("Message queue full – dropping frame")
+        except (OSError, RuntimeError) as e:
+            self.logger.warning(f"Queue put error: {e}")
+        except Exception as e:
+            self.logger.error(f"Unexpected queue put error: {e}")
 
     # ------------------------------------------------------------
     # Public shutdown helper
@@ -400,8 +425,13 @@ class MessageDisplay:
         # Unblock queue get() quickly
         try:
             self._queue.put_nowait((None, 0))
-        except Exception:
+        except queue.Full:
+            # Queue is full, but that's ok for shutdown
             pass
+        except (OSError, RuntimeError) as e:
+            self.logger.debug(f"Error unblocking queue during shutdown: {e}")
+        except Exception as e:
+            self.logger.warning(f"Unexpected error unblocking queue during shutdown: {e}")
         if self._worker_thread:
             self._worker_thread.join(timeout=2)
 

@@ -29,13 +29,13 @@ class DisplayConfig:
 
 @dataclass
 class WiFiConfig:
-    """WiFi configuration - GUTTED."""
+    """WiFi configuration."""
     ssid: str = ""
     password: str = ""
     hotspot_ssid: str = "LOOP-Setup"
     hotspot_password: str = "loop123"
     hotspot_channel: int = 11
-    hotspot_enabled: bool = False  # Disabled since WiFi functionality is gutted
+    hotspot_enabled: bool = True
     timeout: int = 10
 
 

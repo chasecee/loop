@@ -41,9 +41,13 @@ def create_wifi_router(
         if success:
             # Update config
             if config:
-                config.wifi.ssid = credentials.ssid
-                config.wifi.password = credentials.password
-                config.save()
+                try:
+                    config.wifi.ssid = credentials.ssid
+                    config.wifi.password = credentials.password
+                    config.save()
+                except Exception as e:
+                    logger.error(f"Failed to save WiFi config: {e}")
+                    # Connection succeeded but config save failed - log but don't fail the request
             
             return APIResponse(
                 success=True,
@@ -51,6 +55,38 @@ def create_wifi_router(
             )
         else:
             raise HTTPException(status_code=400, detail="Failed to connect to WiFi")
+    
+    @router.post("/save-current", response_model=APIResponse)
+    async def save_current_network():
+        """Save the current WiFi connection to config."""
+        if not wifi_manager:
+            raise HTTPException(status_code=503, detail="WiFi manager not available")
+        
+        # Update status to get latest connection info
+        wifi_manager._update_status()
+        
+        if not wifi_manager.connected:
+            raise HTTPException(status_code=400, detail="Not currently connected to any WiFi network")
+        
+        current_ssid = wifi_manager.current_ssid
+        if not current_ssid:
+            raise HTTPException(status_code=400, detail="Could not determine current network name")
+        
+        # Save current network (password will be empty - user needs to connect via UI to set password)
+        if config:
+            try:
+                config.wifi.ssid = current_ssid
+                config.wifi.password = ""  # Reset password - user needs to reconnect to set it
+                config.save()
+            except Exception as e:
+                logger.error(f"Failed to save current network config: {e}")
+                raise HTTPException(status_code=500, detail="Failed to save network configuration")
+        
+        return APIResponse(
+            success=True,
+            message=f"Saved '{current_ssid}' as configured network. To set password, reconnect via network list.",
+            data={"configured_ssid": current_ssid}
+        )
     
     @router.post("/hotspot", response_model=APIResponse)
     async def toggle_hotspot():

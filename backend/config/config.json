@@ -26,7 +26,7 @@
     "hotspot_ssid": "LOOP-Setup",
     "hotspot_password": "loop123",
     "hotspot_channel": 11,
-    "hotspot_enabled": false,
+    "hotspot_enabled": true,
     "timeout": 10
   },
   "encoder": {

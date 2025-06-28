@@ -175,8 +175,12 @@ class LOOPApplication:
         if SYSTEMD_AVAILABLE:
             try:
                 daemon.notify("WATCHDOG=1")
-            except Exception:
-                pass  # Don't let watchdog notification failures crash the app
+            except (OSError, SystemError) as e:
+                # Don't let watchdog notification failures crash the app, but log them
+                self.logger.debug(f"Systemd watchdog notification failed: {e}")
+            except Exception as e:
+                # This should never happen, but log unexpected errors
+                self.logger.warning(f"Unexpected watchdog notification error: {e}")
     
     def _check_system_health(self) -> bool:
         """Perform system health check."""
@@ -211,8 +215,14 @@ class LOOPApplication:
             
             return True
             
+        except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
+            self.logger.warning(f"Process monitoring failed: {e}")
+            return True  # Assume healthy if we can't check
+        except (OSError, IOError) as e:
+            self.logger.warning(f"System resource check failed: {e}")
+            return True  # Assume healthy if we can't check
         except Exception as e:
-            self.logger.error(f"Health check failed: {e}")
+            self.logger.error(f"Unexpected error during health check: {e}")
             return True  # Assume healthy if we can't check
     
     def initialize_display(self) -> bool:
@@ -253,29 +263,54 @@ class LOOPApplication:
             return False
     
     def initialize_wifi(self) -> bool:
-        """Initialize WiFi management."""
+        """Initialize WiFi management - SSH-safe, respects existing connections."""
         try:
             self.logger.info("Initializing WiFi management...")
             
             self.wifi_manager = WiFiManager(self.config.wifi)
             self.component_manager.register_component("wifi", self.wifi_manager)
             
-            if self.config.wifi.ssid:
-                if self.wifi_manager.connect():
-                    self.logger.info(f"Connected to WiFi: {self.config.wifi.ssid}")
+            # Check current WiFi status first - CRITICAL for SSH safety
+            self.wifi_manager._update_status()
+            
+            # If already connected to WiFi, preserve the connection
+            if self.wifi_manager.connected:
+                current_ssid = self.wifi_manager.current_ssid
+                configured_ssid = self.config.wifi.ssid
+                
+                if configured_ssid and current_ssid != configured_ssid:
+                    self.logger.info(f"Currently connected to '{current_ssid}', but config specifies '{configured_ssid}'")
+                    self.logger.info("Preserving existing connection for SSH safety - use web interface to change networks")
                 else:
-                    self.logger.warning("Failed to connect to configured WiFi.")
+                    self.logger.info(f"Already connected to WiFi: {current_ssid}")
+                
+                return True
+            
+            # Not connected - safe to attempt connections
+            self.logger.info("No active WiFi connection detected")
+            
+            # Try to connect to configured network if specified
+            if self.config.wifi.ssid:
+                self.logger.info(f"Attempting to connect to configured network: {self.config.wifi.ssid}")
+                if self.wifi_manager.connect():
+                    self.logger.info(f"Successfully connected to: {self.config.wifi.ssid}")
+                    return True
+                else:
+                    self.logger.warning(f"Failed to connect to configured WiFi: {self.config.wifi.ssid}")
+                    
+                    # Only start hotspot as fallback if no existing connection
                     if self.config.wifi.hotspot_enabled:
-                        self.logger.info("Starting hotspot as fallback.")
+                        self.logger.info("Starting hotspot as fallback (no existing connection to preserve)")
                         self.wifi_manager.start_hotspot()
                     else:
-                        self.logger.info("Hotspot is disabled, will not start.")
+                        self.logger.info("Hotspot disabled - will remain disconnected")
             else:
+                # No WiFi configured and not connected
                 if self.config.wifi.hotspot_enabled:
-                    self.logger.info("No WiFi configured, starting hotspot.")
+                    self.logger.info("No WiFi configured - starting hotspot for initial setup")
                     self.wifi_manager.start_hotspot()
                 else:
-                    self.logger.info("No WiFi configured and hotspot is disabled.")
+                    self.logger.info("No WiFi configured and hotspot disabled - WiFi management available via web interface")
             
             return True
             

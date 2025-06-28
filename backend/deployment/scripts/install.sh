@@ -173,9 +173,7 @@ install_missing_packages \
     python3-gpiozero \
     git \
     ffmpeg \
-    hostapd \
-    dnsmasq \
-    iptables \
+    network-manager \
     build-essential \
     libjpeg-dev \
     zlib1g-dev \
@@ -312,8 +310,7 @@ echo "  sudo systemctl status loop              # Check main service status"
 echo "  sudo systemctl restart loop             # Restart main service"
 echo "  sudo journalctl -u loop -f              # View main service logs"
 echo "  ${SCRIPT_DIR}/service-manager.sh check  # Check all LOOP services"
-echo "  loop-hotspot start                     # Start WiFi hotspot"
-echo "  loop-hotspot stop                      # Stop WiFi hotspot"
+echo "  # WiFi/hotspot managed via web interface at http://IP"
 echo ""
 echo "🔧 Diagnostic commands:"
 echo "  # Check Python dependencies"
@@ -336,56 +333,8 @@ echo "  # Check mDNS resolution (should resolve to loop.local)"
 echo "  getent hosts loop.local"
 echo "  avahi-resolve -n loop.local"
 
-# Set up WiFi hotspot configuration (optional)
-echo "📡 Setting up hotspot configuration..."
-if [ ! -f /etc/hostapd/hostapd.conf.backup ]; then
-    sudo cp /etc/hostapd/hostapd.conf /etc/hostapd/hostapd.conf.backup 2>/dev/null || true
-fi
-
-sudo tee /etc/hostapd/hostapd.conf.loop > /dev/null << EOF
-interface=wlan0
-driver=nl80211
-ssid=LOOP-Setup
-hw_mode=g
-channel=7
-wmm_enabled=0
-macaddr_acl=0
-auth_algs=1
-ignore_broadcast_ssid=0
-wpa=2
-wpa_passphrase=loop123
-wpa_key_mgmt=WPA-PSK
-wpa_pairwise=TKIP
-rsn_pairwise=CCMP
-EOF
-
-# Create hotspot script
-echo "🔧 Creating hotspot management script..."
-sudo tee /usr/local/bin/loop-hotspot > /dev/null << 'EOF'
-#!/bin/bash
-# LOOP Hotspot Management Script
-
-case "$1" in
-    start)
-        echo "Starting LOOP hotspot..."
-        sudo cp /etc/hostapd/hostapd.conf.loop /etc/hostapd/hostapd.conf
-        sudo systemctl start hostapd
-        sudo systemctl start dnsmasq
-        ;;
-    stop)
-        echo "Stopping LOOP hotspot..."
-        sudo systemctl stop hostapd
-        sudo systemctl stop dnsmasq
-        sudo cp /etc/hostapd/hostapd.conf.backup /etc/hostapd/hostapd.conf 2>/dev/null || true
-        ;;
-    *)
-        echo "Usage: $0 {start|stop}"
-        exit 1
-        ;;
-esac
-EOF
-
-sudo chmod +x /usr/local/bin/loop-hotspot
+# WiFi management is now handled by NetworkManager through the web interface
+echo "WiFi and hotspot management is handled through the web interface"
 
 # Create clean media index if it doesn't exist
 INDEX_FILE="$BACKEND_DIR/media/index.json"

@@ -2,13 +2,94 @@
 
 import time
 from typing import Dict, List, Optional, Any, Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator, root_validator
+import re
 
 # Request Models
 
 class WiFiCredentials(BaseModel):
-    ssid: str
-    password: Optional[str] = ""
+    ssid: str = Field(..., min_length=1, max_length=32, description="WiFi network SSID")
+    password: Optional[str] = Field(default="", max_length=63, description="WiFi network password")
+    
+    @validator('ssid')
+    def validate_ssid(cls, v):
+        """Validate SSID with comprehensive security checks."""
+        if not v or not v.strip():
+            raise ValueError('SSID cannot be empty or whitespace only')
+        
+        # Trim whitespace but preserve internal spaces
+        v = v.strip()
+        
+        # Check length constraints
+        if len(v) > 32:
+            raise ValueError('SSID cannot exceed 32 characters')
+        
+        # Security: Check for control characters and null bytes
+        if any(ord(c) < 32 for c in v if c != ' '):
+            raise ValueError('SSID contains invalid control characters')
+        
+        # Security: Check for potentially dangerous characters
+        dangerous_chars = ['\\', '"', "'", '`', '$', ';', '&', '|', '<', '>']
+        if any(char in v for char in dangerous_chars):
+            raise ValueError('SSID contains potentially unsafe characters')
+        
+        # Check for valid UTF-8 encoding
+        try:
+            v.encode('utf-8')
+        except UnicodeEncodeError:
+            raise ValueError('SSID contains invalid characters')
+        
+        return v
+    
+    @validator('password')
+    def validate_password(cls, v):
+        """Validate WiFi password with security requirements."""
+        if v is None:
+            return ""
+        
+        # Allow empty password for open networks
+        if not v:
+            return ""
+        
+        # WPA/WPA2 minimum length requirement
+        if len(v) < 8:
+            raise ValueError('WiFi password must be at least 8 characters for secured networks')
+        
+        # WPA key length limit
+        if len(v) > 63:
+            raise ValueError('WiFi password cannot exceed 63 characters')
+        
+        # Security: Check for null bytes
+        if '\x00' in v:
+            raise ValueError('WiFi password contains null bytes')
+        
+        # Check for valid UTF-8 encoding
+        try:
+            v.encode('utf-8')
+        except UnicodeEncodeError:
+            raise ValueError('WiFi password contains invalid characters')
+        
+        return v
+    
+    @root_validator
+    def validate_credentials_combination(cls, values):
+        """Validate the combination of SSID and password."""
+        ssid = values.get('ssid', '')
+        password = values.get('password', '')
+        
+        # Security check: Don't allow SSID and password to be identical
+        if ssid and password and ssid == password:
+            raise ValueError('SSID and password cannot be identical')
+        
+        return values
+    
+    class Config:
+        schema_extra = {
+            "example": {
+                "ssid": "MyHomeNetwork",
+                "password": "securepassword123"
+            }
+        }
 
 class AddToLoopPayload(BaseModel):
     slug: str
