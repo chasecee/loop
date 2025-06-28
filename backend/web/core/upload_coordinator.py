@@ -206,10 +206,14 @@ class UploadCoordinator:
             if not original_file and not zip_file:
                 raise ValueError("No valid files found")
 
+            # Determine primary filename for consistent progress tracking
+            primary_filename = original_file['filename'] if original_file else zip_file['filename'].replace('_frames.zip', '')
+
             # Process original file first (if present)
             if original_file:
                 original_start = asyncio.get_event_loop().time()
-                await broadcaster.upload_progress_simple(original_file['filename'], 10, "processing original")
+                # Use consistent filename and "finalizing" stage for frontend coordination
+                await broadcaster.upload_progress_simple(primary_filename, 20, "finalizing")
                 transaction.original_slug = await self._process_original_file(
                     transaction, original_file, media_raw_dir
                 )
@@ -219,9 +223,10 @@ class UploadCoordinator:
             # Process ZIP file (if present)
             if zip_file:
                 zip_start = asyncio.get_event_loop().time()
-                await broadcaster.upload_progress_simple(zip_file['filename'], 60, "processing frames")
+                # Progressive updates during ZIP processing with consistent filename
+                await broadcaster.upload_progress_simple(primary_filename, 40, "finalizing")
                 transaction.zip_slug = await self._process_zip_file(
-                    transaction, zip_file, media_processed_dir, transaction.original_slug
+                    transaction, zip_file, media_processed_dir, transaction.original_slug, primary_filename
                 )
                 zip_time = asyncio.get_event_loop().time() - zip_start
                 logger.info(f"✅ ZIP file processed in {zip_time:.2f}s: {zip_file['filename']} -> {transaction.zip_slug}")
@@ -236,8 +241,7 @@ class UploadCoordinator:
                     await broadcaster.media_uploaded(final_metadata)
                     await broadcaster.loop_updated(media_index.list_loop())
 
-            # Single completion message for the primary file
-            primary_filename = zip_file['filename'] if zip_file else original_file['filename']
+            # Final completion message with consistent filename
             await broadcaster.upload_progress_simple(primary_filename, 100, "complete")
 
             total_time = asyncio.get_event_loop().time() - start_time
@@ -309,7 +313,8 @@ class UploadCoordinator:
         transaction: UploadTransaction,
         file_info: Dict,
         media_processed_dir: Path,
-        original_slug: Optional[str] = None
+        original_slug: Optional[str] = None,
+        primary_filename: Optional[str] = None
     ) -> str:
         """Process ZIP file with frames - OPTIMIZED FOR PERFORMANCE"""
         
@@ -317,6 +322,9 @@ class UploadCoordinator:
         
         logger.info(f"🏃 Starting optimized ZIP processing: {file_info['filename']} ({file_info['size']/1024/1024:.1f}MB)")
         start_time = asyncio.get_event_loop().time()
+        
+        # Use primary filename for consistent progress tracking
+        progress_filename = primary_filename or file_info['filename'].replace('_frames.zip', '')
         
         # OPTIMIZATION 1: Single in-memory ZIP processing - no temp files
         zip_metadata = None
@@ -359,14 +367,14 @@ class UploadCoordinator:
             await asyncio.to_thread(shutil.rmtree, final_dir)
             logger.info(f"🧹 Cleaned up existing directory: {final_dir}")
         
-        # Progress update
-        await broadcaster.upload_progress_simple(file_info['filename'], 65, "extracting")
+        # Progress update - consistent filename and stage
+        await broadcaster.upload_progress_simple(progress_filename, 60, "finalizing")
         
-        # OPTIMIZATION 3: Single-pass extraction with async I/O and progress
-        await self._extract_zip_async(file_info['content'], final_dir, file_info['filename'])
+        # OPTIMIZATION 3: Single-pass extraction with minimal progress updates
+        await self._extract_zip_async(file_info['content'], final_dir, progress_filename)
         
-        # Progress update  
-        await broadcaster.upload_progress_simple(file_info['filename'], 85, "organizing")
+        # Progress update - consistent filename and stage
+        await broadcaster.upload_progress_simple(progress_filename, 85, "finalizing")
         
         # OPTIMIZATION 4: Smart frame organization - only if needed
         frames_dir = final_dir / "frames"
@@ -416,13 +424,10 @@ class UploadCoordinator:
         logger.info(f"✅ ZIP file processed in {processing_time:.2f}s: {file_info['filename']} -> {target_slug}")
         return target_slug
 
-    async def _extract_zip_async(self, zip_content: bytes, extract_path: Path, filename: str) -> None:
-        """Extract ZIP file asynchronously with progress reporting."""
+    async def _extract_zip_async(self, zip_content: bytes, extract_path: Path, progress_filename: str) -> None:
+        """Extract ZIP file asynchronously with minimal progress reporting."""
         import zipfile
         import io
-        
-        # Create a list to collect progress updates from the thread
-        progress_updates = []
         
         def extract_sync():
             """Synchronous extraction function to run in thread."""
@@ -436,16 +441,6 @@ class UploadCoordinator:
                 for i, file_name in enumerate(file_list):
                     try:
                         zf.extract(file_name, extract_path)
-                        
-                        # Progress update every 20% or 100 files
-                        if (i + 1) % max(1, total_files // 5) == 0 or (i + 1) % 100 == 0:
-                            progress = 65 + int((i + 1) / total_files * 15)  # 65-80% range
-                            # Store progress updates instead of creating tasks from thread
-                            progress_updates.append({
-                                'filename': filename,
-                                'progress': progress,
-                                'stage': f"extracting ({i+1}/{total_files})"
-                            })
                     except Exception as e:
                         logger.warning(f"Failed to extract {file_name}: {e}")
                         continue
@@ -455,16 +450,8 @@ class UploadCoordinator:
         # Run extraction in thread to avoid blocking
         await asyncio.to_thread(extract_sync)
         
-        # Send progress updates from the main thread after extraction completes
-        for update in progress_updates:
-            try:
-                await broadcaster.upload_progress_simple(
-                    update['filename'], 
-                    update['progress'], 
-                    update['stage']
-                )
-            except Exception as e:
-                logger.warning(f"Failed to send progress update: {e}")
+        # Single progress update after extraction completes (no spam)
+        await broadcaster.upload_progress_simple(progress_filename, 75, "finalizing")
 
     async def _rollback_transaction(
         self,
