@@ -73,8 +73,9 @@ check_venv() {
 
 # Function to check if service is installed
 check_service() {
-    if systemctl list-unit-files | grep -q "^${SERVICE_NAME}.service"; then
-        echo "✅ Service already installed"
+    local service_name="$1"
+    if systemctl list-unit-files | grep -q "^${service_name}.service"; then
+        echo "✅ ${service_name} service already installed"
         return 0
     fi
     return 1
@@ -125,7 +126,7 @@ EOF
     
     # If cleanup only, restart and exit
     if [ "$1" = "cleanup" ]; then
-        if systemctl list-unit-files | grep -q "^${SERVICE_NAME}.service"; then
+        if check_service "${SERVICE_NAME}"; then
             echo "🔄 Restarting service..."
             sudo systemctl start ${SERVICE_NAME}
         fi
@@ -138,7 +139,7 @@ fi
 
 # For fresh install, continue with full setup...
 # Stop service if it is running to ensure clean installation
-if systemctl list-unit-files | grep -q "^${SERVICE_NAME}.service"; then
+if check_service "${SERVICE_NAME}"; then
     if systemctl is-active --quiet ${SERVICE_NAME}; then
         echo "🛑 Stopping running LOOP service before installation..."
         sudo systemctl stop ${SERVICE_NAME}
@@ -184,7 +185,10 @@ install_missing_packages \
     libtiff-dev \
     libopenblas0 \
     libopenblas-dev \
-    liblapack-dev
+    liblapack-dev \
+    iw \
+    wireless-tools \
+    avahi-utils
 
 # Set Boot Config path based on OS version
 if [ -f /boot/firmware/config.txt ]; then
@@ -239,8 +243,9 @@ if [ ! -f "${BACKEND_DIR}/config/config.json" ]; then
     exit 1
 fi
 
-# Copy the canonical service unit (single source of truth)
-sudo cp "${BACKEND_DIR}/loop.service" "/etc/systemd/system/${SERVICE_NAME}.service"
+# Install system services using dedicated service manager
+echo "🚀 Installing system services..."
+"${SCRIPT_DIR}/service-manager.sh" install
 
 # Set up log rotation
 echo "📋 Setting up log rotation..."
@@ -262,11 +267,7 @@ chown -R ${REAL_USER}:${REAL_USER} "${PROJECT_DIR}"
 chmod +x "${PROJECT_DIR}/backend/main.py" 2>/dev/null || true
 chmod +x "${BACKEND_DIR}/deployment/scripts/"*.sh 2>/dev/null || true
 
-# Enable and start service
-echo "🚀 Managing LOOP service..."
-sudo systemctl daemon-reload
-sudo systemctl enable ${SERVICE_NAME}
-sudo systemctl restart ${SERVICE_NAME}
+# Services already installed and started by install_services function
 
 # Create flag file to mark setup as complete
 mkdir -p "$(dirname "$CONFIG_FLAG")"
@@ -307,11 +308,12 @@ fi
 echo "🎉 Installation complete!"
 echo ""
 echo "Useful commands:"
-echo "  sudo systemctl status loop    # Check service status"
-echo "  sudo systemctl restart loop   # Restart service"
-echo "  sudo journalctl -u loop -f    # View logs"
-echo "  loop-hotspot start           # Start WiFi hotspot"
-echo "  loop-hotspot stop            # Stop WiFi hotspot"
+echo "  sudo systemctl status loop              # Check main service status"
+echo "  sudo systemctl restart loop             # Restart main service"
+echo "  sudo journalctl -u loop -f              # View main service logs"
+echo "  ${SCRIPT_DIR}/service-manager.sh check  # Check all LOOP services"
+echo "  loop-hotspot start                     # Start WiFi hotspot"
+echo "  loop-hotspot stop                      # Stop WiFi hotspot"
 echo ""
 echo "🔧 Diagnostic commands:"
 echo "  # Check Python dependencies"
@@ -325,6 +327,14 @@ echo "  curl -i -N -H \"Connection: Upgrade\" -H \"Upgrade: websocket\" -H \"Sec
 echo ""
 echo "  # Monitor service logs for WebSocket connections"
 echo "  sudo journalctl -u loop -f --grep='WebSocket'"
+echo ""
+echo "  # Check WiFi power management status (replace wlan0 with your interface)"
+echo "  iw dev wlan0 get power_save"
+echo "  iwconfig wlan0 | grep 'Power Management'"
+echo ""
+echo "  # Check mDNS resolution (should resolve to loop.local)"
+echo "  getent hosts loop.local"
+echo "  avahi-resolve -n loop.local"
 
 # Set up WiFi hotspot configuration (optional)
 echo "📡 Setting up hotspot configuration..."

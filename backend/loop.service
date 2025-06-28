@@ -5,12 +5,12 @@ Wants=network.target
 
 [Service]
 Type=notify
-User=pi
-Group=pi
-WorkingDirectory=/home/pi/loop/backend
-Environment=PYTHONPATH=/home/pi/loop/backend
+User=__USER__
+Group=__USER__
+WorkingDirectory=__PROJECT_DIR__/backend
+Environment=PYTHONPATH=__PROJECT_DIR__/backend
 Environment=LOOP_ENV=production
-ExecStart=/home/pi/loop/backend/venv/bin/python main.py
+ExecStart=__PROJECT_DIR__/backend/venv/bin/python main.py
 Restart=on-failure
 RestartSec=10
 StartLimitInterval=300

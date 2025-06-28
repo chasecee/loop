@@ -1,0 +1,13 @@
+[Unit]
+Description=Disable WiFi Power Management for LOOP
+After=NetworkManager.service
+Wants=NetworkManager.service
+Before=loop.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=__PROJECT_DIR__/backend/deployment/scripts/service-manager.sh setup-wifi
+
+[Install]
+WantedBy=multi-user.target 
