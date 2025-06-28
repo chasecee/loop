@@ -108,14 +108,34 @@ class UploadCoordinator:
             if transaction_id in self.transactions:
                 existing = self.transactions[transaction_id]
                 if existing.state == 'completed':
-                    logger.info(f"Returning existing completed transaction: {transaction_id}")
+                    logger.info(f"🔄 Returning existing completed transaction: {transaction_id}")
                     return {
                         "success": True,
                         "processed": len(existing.files),
                         "last_slug": existing.merged_slug or existing.original_slug
                     }
                 elif existing.state == 'processing':
+                    logger.warning(f"🚫 Blocking duplicate upload request: {transaction_id}")
                     raise HTTPException(status_code=409, detail="Upload already in progress")
+                else:
+                    # Clean up failed/rolled_back transactions
+                    logger.info(f"🧹 Cleaning up previous failed transaction: {transaction_id}")
+                    del self.transactions[transaction_id]
+            
+            # Also check for filename-based duplicates across all transactions
+            for existing_id, existing_tx in self.transactions.items():
+                if existing_tx.state == 'processing':
+                    existing_filenames = {f['filename'] for f in existing_tx.files}
+                    new_filenames = {f['filename'] for f in file_data}
+                    
+                    # Check for any filename overlap
+                    if existing_filenames & new_filenames:
+                        overlap = existing_filenames & new_filenames
+                        logger.warning(f"🚫 Blocking upload with overlapping filenames: {overlap}")
+                        raise HTTPException(
+                            status_code=409, 
+                            detail=f"Files already being processed: {', '.join(overlap)}"
+                        )
 
             # Create new transaction
             transaction = UploadTransaction(
@@ -195,7 +215,6 @@ class UploadCoordinator:
                 )
                 original_time = asyncio.get_event_loop().time() - original_start
                 logger.info(f"⚡ Original file processed in {original_time:.2f}s: {original_file['filename']}")
-                await broadcaster.upload_progress_simple(original_file['filename'], 50, "completed")
 
             # Process ZIP file (if present)
             if zip_file:
@@ -205,8 +224,7 @@ class UploadCoordinator:
                     transaction, zip_file, media_processed_dir, transaction.original_slug
                 )
                 zip_time = asyncio.get_event_loop().time() - zip_start
-                logger.info(f"⚡ ZIP file processed in {zip_time:.2f}s: {zip_file['filename']}")
-                await broadcaster.upload_progress_simple(zip_file['filename'], 90, "completed")
+                logger.info(f"✅ ZIP file processed in {zip_time:.2f}s: {zip_file['filename']} -> {transaction.zip_slug}")
 
             # Determine final slug and broadcast completion
             final_slug = transaction.zip_slug or transaction.original_slug
@@ -218,9 +236,9 @@ class UploadCoordinator:
                     await broadcaster.media_uploaded(final_metadata)
                     await broadcaster.loop_updated(media_index.list_loop())
 
-            # Notify completion for all processed files
-            for file_info in file_data:
-                await broadcaster.upload_progress_simple(file_info['filename'], 100, "complete")
+            # Single completion message for the primary file
+            primary_filename = zip_file['filename'] if zip_file else original_file['filename']
+            await broadcaster.upload_progress_simple(primary_filename, 100, "complete")
 
             total_time = asyncio.get_event_loop().time() - start_time
             logger.info(f"🏁 Transaction completed in {total_time:.2f}s [{transaction.id}]")
@@ -403,6 +421,9 @@ class UploadCoordinator:
         import zipfile
         import io
         
+        # Create a list to collect progress updates from the thread
+        progress_updates = []
+        
         def extract_sync():
             """Synchronous extraction function to run in thread."""
             with zipfile.ZipFile(io.BytesIO(zip_content), "r") as zf:
@@ -419,9 +440,12 @@ class UploadCoordinator:
                         # Progress update every 20% or 100 files
                         if (i + 1) % max(1, total_files // 5) == 0 or (i + 1) % 100 == 0:
                             progress = 65 + int((i + 1) / total_files * 15)  # 65-80% range
-                            asyncio.create_task(
-                                broadcaster.upload_progress_simple(filename, progress, f"extracting ({i+1}/{total_files})")
-                            )
+                            # Store progress updates instead of creating tasks from thread
+                            progress_updates.append({
+                                'filename': filename,
+                                'progress': progress,
+                                'stage': f"extracting ({i+1}/{total_files})"
+                            })
                     except Exception as e:
                         logger.warning(f"Failed to extract {file_name}: {e}")
                         continue
@@ -430,6 +454,17 @@ class UploadCoordinator:
         
         # Run extraction in thread to avoid blocking
         await asyncio.to_thread(extract_sync)
+        
+        # Send progress updates from the main thread after extraction completes
+        for update in progress_updates:
+            try:
+                await broadcaster.upload_progress_simple(
+                    update['filename'], 
+                    update['progress'], 
+                    update['stage']
+                )
+            except Exception as e:
+                logger.warning(f"Failed to send progress update: {e}")
 
     async def _rollback_transaction(
         self,

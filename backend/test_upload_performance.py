@@ -8,6 +8,9 @@ Validates the ZIP processing optimizations work as expected.
 Usage:
     cd /home/pi/loop/backend
     python test_upload_performance.py
+    
+    OR (if venv not activated):
+    venv/bin/python test_upload_performance.py
 """
 
 import asyncio
@@ -20,6 +23,32 @@ import os
 from pathlib import Path
 from typing import Dict, Any
 from datetime import datetime
+
+# Auto-detect and use virtual environment if available
+def setup_venv():
+    """Automatically detect and use the virtual environment created by install.sh"""
+    backend_dir = os.path.dirname(os.path.abspath(__file__))
+    venv_python = os.path.join(backend_dir, 'venv', 'bin', 'python')
+    
+    # Check if we're already in a venv or if venv exists
+    if hasattr(sys, 'real_prefix') or (hasattr(sys, 'base_prefix') and sys.base_prefix != sys.prefix):
+        print("✅ Already running in virtual environment")
+        return True
+    elif os.path.exists(venv_python):
+        print(f"🔄 Detected virtual environment, switching to: {venv_python}")
+        print("   (Re-running script with venv Python...)")
+        os.execv(venv_python, [venv_python] + sys.argv)
+    else:
+        print("⚠️  No virtual environment detected")
+        print("   To fix this, run one of:")
+        print(f"     source {backend_dir}/venv/bin/activate && python {sys.argv[0]}")
+        print(f"     {backend_dir}/venv/bin/python {sys.argv[0]}")
+        return False
+
+# Try to setup venv before importing anything else
+if not setup_venv():
+    print("❌ Cannot proceed without virtual environment")
+    sys.exit(1)
 
 # Add backend to Python path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -34,8 +63,19 @@ web_dir = os.path.join(backend_dir, 'web')
 if os.path.exists(web_dir) and web_dir not in sys.path:
     sys.path.insert(0, web_dir)
 
+print(f"🔍 Python executable: {sys.executable}")
 print(f"🔍 Python path includes: {backend_dir}")
 print(f"🔍 Web directory exists: {os.path.exists(web_dir)}")
+
+# Test critical imports
+try:
+    import fastapi
+    import pydantic
+    print("✅ FastAPI and Pydantic available")
+except ImportError as e:
+    print(f"❌ Missing dependencies: {e}")
+    print("   Run: pip install -r requirements.txt")
+    sys.exit(1)
 
 # Mock the required modules for testing
 class MockBroadcaster:
