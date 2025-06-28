@@ -413,11 +413,15 @@ class LOOPApplication:
                 except Exception as e:
                     self.logger.warning(f"Failed to notify systemd: {e}")
             
-            # Show welcome message
+            # Show welcome message (with small delay to ensure worker thread is ready)
             if self.display_player:
                 try:
+                    # Small delay to ensure display system is fully ready
+                    time.sleep(0.1)
                     self.display_player.show_boot_message(self.config.device.version)
-                except Exception:
+                    self.logger.info("Boot message sent to display")
+                except Exception as e:
+                    self.logger.warning(f"Failed to show boot message: {e}")
                     pass
             
             # Main loop

@@ -38,12 +38,19 @@ class MessageDisplay:
         # Lock to ensure only one thread talks to the display hardware at a time
         self._display_lock = threading.Lock()
         
+        # Worker thread readiness event to prevent race conditions
+        self._worker_ready = threading.Event()
+        
         # Worker thread that pulls from queue and handles timing
         self._worker_running = True
         self._worker_thread = threading.Thread(target=self._worker_loop, name="MessageDisplayWorker", daemon=True)
         self._worker_thread.start()
         
-        self.logger.info("Message display system initialized (async queue mode)")
+        # Wait for worker thread to be ready (with timeout to prevent hanging)
+        if self._worker_ready.wait(timeout=2.0):
+            self.logger.info("Message display system initialized (async queue mode)")
+        else:
+            self.logger.warning("Message display worker thread did not signal ready within timeout")
     
     @contextmanager
     def _get_frame_buffer(self):
@@ -184,6 +191,7 @@ class MessageDisplay:
     
     def show_boot_message(self, version: str = "1.0") -> None:
         """Show boot message."""
+        self.logger.info(f"Displaying boot message: LOOP v{version}")
         self.show_message(
             title="LOOP",
             subtitle=f"v{version}",
@@ -191,6 +199,7 @@ class MessageDisplay:
             bg_color=(0, 0, 0),
             text_color=(0, 255, 0)  # Bright green text
         )
+        self.logger.debug("Boot message queued for display")
     
     def show_no_media_message(self) -> None:
         """Show no media available message."""
@@ -333,6 +342,9 @@ class MessageDisplay:
     # ------------------------------------------------------------
     def _worker_loop(self):
         """Continuously consume the queue and display frames."""
+        # Signal that worker thread is ready to process messages
+        self._worker_ready.set()
+        
         # We purposefully keep this loop very simple and robust.
         while self._worker_running:
             try:
@@ -346,6 +358,7 @@ class MessageDisplay:
                     with self._display_lock:
                         try:
                             self.display_driver.display_frame(frame_data)
+                            self.logger.debug(f"Successfully displayed frame ({len(frame_data)} bytes)")
                         except Exception as e:
                             self.logger.error(f"Display driver error: {e}")
 
@@ -365,9 +378,15 @@ class MessageDisplay:
         if frame_data is None:
             return
 
+        # Wait for worker thread to be ready before enqueuing important messages
+        if not self._worker_ready.is_set():
+            self.logger.debug("Waiting for worker thread to be ready...")
+            self._worker_ready.wait(timeout=1.0)
+
         try:
-            # Non-blocking put with small timeout to avoid deadlocks if queue is full
-            self._queue.put((frame_data, duration), timeout=0.1)
+            # Longer timeout for important messages like boot message  
+            timeout = 1.0 if duration > 0 else 0.5  # Boot messages have duration, use longer timeout
+            self._queue.put((frame_data, duration), timeout=timeout)
         except Exception:
             # Queue full – drop the message, but log once
             self.logger.warning("Message queue full – dropping frame")
