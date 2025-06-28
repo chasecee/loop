@@ -2,7 +2,7 @@
 
 import time
 from typing import Dict, List, Optional, Any, Literal
-from pydantic import BaseModel, Field, validator, root_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 import re
 
 # Request Models
@@ -11,7 +11,8 @@ class WiFiCredentials(BaseModel):
     ssid: str = Field(..., min_length=1, max_length=32, description="WiFi network SSID")
     password: Optional[str] = Field(default="", max_length=63, description="WiFi network password")
     
-    @validator('ssid')
+    @field_validator('ssid')
+    @classmethod
     def validate_ssid(cls, v):
         """Validate SSID with comprehensive security checks."""
         if not v or not v.strip():
@@ -41,7 +42,8 @@ class WiFiCredentials(BaseModel):
         
         return v
     
-    @validator('password')
+    @field_validator('password')
+    @classmethod
     def validate_password(cls, v):
         """Validate WiFi password with security requirements."""
         if v is None:
@@ -71,25 +73,28 @@ class WiFiCredentials(BaseModel):
         
         return v
     
-    @root_validator
-    def validate_credentials_combination(cls, values):
+    @model_validator(mode='before')
+    @classmethod
+    def validate_credentials_combination(cls, data):
         """Validate the combination of SSID and password."""
-        ssid = values.get('ssid', '')
-        password = values.get('password', '')
+        if isinstance(data, dict):
+            ssid = data.get('ssid', '')
+            password = data.get('password', '')
+            
+            # Security check: Don't allow SSID and password to be identical
+            if ssid and password and ssid == password:
+                raise ValueError('SSID and password cannot be identical')
         
-        # Security check: Don't allow SSID and password to be identical
-        if ssid and password and ssid == password:
-            raise ValueError('SSID and password cannot be identical')
-        
-        return values
+        return data
     
-    class Config:
-        schema_extra = {
+    model_config = {
+        "json_schema_extra": {
             "example": {
                 "ssid": "MyHomeNetwork",
                 "password": "securepassword123"
             }
         }
+    }
 
 class AddToLoopPayload(BaseModel):
     slug: str
