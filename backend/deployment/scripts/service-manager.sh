@@ -84,7 +84,7 @@ get_wifi_interface() {
     fi
 }
 
-# Function to setup WiFi power management
+# Function to setup WiFi power management and permissions
 setup_wifi_power_management() {
     local wifi_iface
     wifi_iface=$(get_wifi_interface)
@@ -101,6 +101,29 @@ wifi.powersave = 2
 EOF
     
     echo "Created NetworkManager power save configuration" | logger -t loop-wifi-setup
+    
+    # Setup NetworkManager permissions for LOOP service
+    echo "Setting up NetworkManager permissions for LOOP..." | logger -t loop-wifi-setup
+    
+    # Create polkit rule for NetworkManager access (Pi Zero 2 Bookworm compatible)
+    mkdir -p /etc/polkit-1/localauthority/50-local.d
+    cat > /etc/polkit-1/localauthority/50-local.d/org.freedesktop.NetworkManager.pkla << 'EOF'
+[NetworkManager permissions for netdev group]
+Identity=unix-group:netdev
+Action=org.freedesktop.NetworkManager.*
+ResultAny=yes
+ResultInactive=yes
+ResultActive=yes
+EOF
+    
+    echo "Created polkit rules for NetworkManager access" | logger -t loop-wifi-setup
+    
+    # Restart polkit to apply new rules
+    if systemctl restart polkit 2>/dev/null; then
+        echo "Polkit restarted successfully" | logger -t loop-wifi-setup
+    else
+        echo "Failed to restart polkit - rules will apply on next boot" | logger -t loop-wifi-setup
+    fi
     
     # Reload NetworkManager to apply changes
     if systemctl reload NetworkManager 2>/dev/null; then
@@ -122,10 +145,10 @@ EOF
         echo "Final power save status on $wifi_iface: $POWER_STATUS" | logger -t loop-wifi-setup
     fi
     
-    echo "WiFi power management setup completed for $wifi_iface" | logger -t loop-wifi-setup
+    echo "WiFi power management and permissions setup completed for $wifi_iface" | logger -t loop-wifi-setup
 }
 
-# Function to verify WiFi power management
+# Function to verify WiFi power management and permissions
 check_wifi_power_management() {
     local wifi_iface
     wifi_iface=$(get_wifi_interface)
@@ -135,18 +158,38 @@ check_wifi_power_management() {
         return 1
     fi
     
+    # Check power management
     if command -v iw >/dev/null 2>&1; then
         echo "Checking WiFi power management on $wifi_iface..."
         POWER_SAVE=$(iw dev "$wifi_iface" get power_save 2>/dev/null | cut -d: -f2 | tr -d ' ')
         if [ "$POWER_SAVE" = "off" ]; then
-            echo "WiFi power save disabled on $wifi_iface - mDNS should work properly"
-            return 0
+            echo "✅ WiFi power save disabled on $wifi_iface - mDNS should work properly"
         else
-            echo "WiFi power save still enabled on $wifi_iface - may affect mDNS discovery"
-            return 1
+            echo "⚠️  WiFi power save still enabled on $wifi_iface - may affect mDNS discovery"
         fi
     else
         echo "iw command not available, cannot check WiFi power management"
+    fi
+    
+    # Check NetworkManager permissions
+    if [ -f "/etc/polkit-1/localauthority/50-local.d/org.freedesktop.NetworkManager.pkla" ]; then
+        echo "✅ NetworkManager permissions configured"
+    else
+        echo "❌ NetworkManager permissions not configured"
+        return 1
+    fi
+    
+    # Test NetworkManager access (non-destructive)
+    if command -v nmcli >/dev/null 2>&1; then
+        if nmcli device status >/dev/null 2>&1; then
+            echo "✅ NetworkManager access working"
+            return 0
+        else
+            echo "❌ NetworkManager access failed - insufficient privileges"
+            return 1
+        fi
+    else
+        echo "nmcli command not available"
         return 1
     fi
 }
