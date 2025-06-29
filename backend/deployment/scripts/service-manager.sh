@@ -95,19 +95,30 @@ setup_wifi_power_management() {
     sudo mkdir -p /etc/NetworkManager/conf.d
     
     # Create NetworkManager configuration to disable WiFi power saving
-    sudo tee /etc/NetworkManager/conf.d/default-wifi-powersave-off.conf > /dev/null << EOF
+    local nm_config="/etc/NetworkManager/conf.d/default-wifi-powersave-off.conf"
+    if [ -f "$nm_config" ] && grep -q "wifi.powersave = 2" "$nm_config" 2>/dev/null; then
+        echo "NetworkManager power save configuration already exists and is correct" | logger -t loop-wifi-setup
+    else
+        echo "Creating/updating NetworkManager power save configuration" | logger -t loop-wifi-setup
+        sudo tee "$nm_config" > /dev/null << EOF
 [connection]
 wifi.powersave = 2
 EOF
-    
-    echo "Created NetworkManager power save configuration" | logger -t loop-wifi-setup
+        echo "Created NetworkManager power save configuration" | logger -t loop-wifi-setup
+    fi
     
     # Setup NetworkManager permissions for LOOP service
     echo "Setting up NetworkManager permissions for LOOP..." | logger -t loop-wifi-setup
     
     # Create polkit rule for NetworkManager access (Pi Zero 2 Bookworm tested)
     sudo mkdir -p /etc/polkit-1/localauthority/50-local.d
-    sudo tee /etc/polkit-1/localauthority/50-local.d/org.freedesktop.NetworkManager.pkla > /dev/null << 'EOF'
+    local polkit_file="/etc/polkit-1/localauthority/50-local.d/org.freedesktop.NetworkManager.pkla"
+    
+    if [ -f "$polkit_file" ] && grep -q "Identity=unix-user:pi" "$polkit_file" 2>/dev/null && grep -q "NetworkManager.settings.modify.system" "$polkit_file" 2>/dev/null; then
+        echo "NetworkManager polkit rules already exist and are correct" | logger -t loop-wifi-setup
+    else
+        echo "Creating/updating NetworkManager polkit rules" | logger -t loop-wifi-setup
+        sudo tee "$polkit_file" > /dev/null << 'EOF'
 [Allow NetworkManager for pi user]
 Identity=unix-user:pi
 Action=org.freedesktop.NetworkManager.settings.modify.system;org.freedesktop.NetworkManager.settings.modify.own;org.freedesktop.NetworkManager.settings.modify.hostname;org.freedesktop.NetworkManager.enable-disable-network;org.freedesktop.NetworkManager.enable-disable-wifi;org.freedesktop.NetworkManager.sleep-wake;org.freedesktop.NetworkManager.network-control;org.freedesktop.NetworkManager.wifi.share.protected;org.freedesktop.NetworkManager.wifi.share.open
@@ -115,8 +126,8 @@ ResultAny=yes
 ResultInactive=yes
 ResultActive=yes
 EOF
-    
-    echo "Created polkit rules for NetworkManager access" | logger -t loop-wifi-setup
+        echo "Created polkit rules for NetworkManager access" | logger -t loop-wifi-setup
+    fi
     
     # Restart polkit to apply new rules
     if sudo systemctl restart polkit 2>/dev/null; then
