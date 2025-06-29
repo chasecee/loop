@@ -3,7 +3,6 @@
 from fastapi import APIRouter, HTTPException
 
 from ..core.models import APIResponse, DisplaySettingsPayload
-from ..core.events import broadcaster
 from display.player import DisplayPlayer
 from config.schema import Config
 from utils.logger import get_logger
@@ -28,13 +27,8 @@ def create_playback_router(
         display_player.toggle_pause()
         is_paused = display_player.is_paused()
         
-        # Broadcast playback state change via WebSocket
-        try:
-            import asyncio
-            player_status = display_player.get_status()
-            asyncio.create_task(broadcaster.playback_changed(player_status))
-        except Exception as e:
-            logger.debug(f"WebSocket broadcast failed: {e}")
+        # Cache invalidation for polling-based updates
+        invalidate_dashboard_cache()
         
         return APIResponse(
             success=True,
@@ -51,14 +45,6 @@ def create_playback_router(
         display_player.next_media()
         invalidate_dashboard_cache()
         
-        # Broadcast playback state change via WebSocket
-        try:
-            import asyncio
-            player_status = display_player.get_status()
-            asyncio.create_task(broadcaster.playback_changed(player_status))
-        except Exception as e:
-            logger.debug(f"WebSocket broadcast failed: {e}")
-        
         return APIResponse(success=True, message="Switched to next media")
     
     @router.post("/previous", response_model=APIResponse)
@@ -69,14 +55,6 @@ def create_playback_router(
         
         display_player.previous_media()
         invalidate_dashboard_cache()
-        
-        # Broadcast playback state change via WebSocket
-        try:
-            import asyncio
-            player_status = display_player.get_status()
-            asyncio.create_task(broadcaster.playback_changed(player_status))
-        except Exception as e:
-            logger.debug(f"WebSocket broadcast failed: {e}")
         
         return APIResponse(success=True, message="Switched to previous media")
     
@@ -102,13 +80,7 @@ def create_playback_router(
         display_player.force_stop_progress_display()
         invalidate_dashboard_cache()
         
-        # Broadcast status change via WebSocket
-        try:
-            import asyncio
-            player_status = display_player.get_status()
-            asyncio.create_task(broadcaster.playback_changed(player_status))
-        except Exception as e:
-            logger.debug(f"WebSocket broadcast failed: {e}")
+        # Cache invalidation for polling-based updates
         
         return APIResponse(success=True, message="Force stopped stale progress display")
     

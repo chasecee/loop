@@ -13,6 +13,7 @@ import tarfile
 import zipfile
 
 from utils.logger import get_logger
+from utils.safe_extract import safe_extract_tar, safe_extract_zip, ArchiveExtractionError
 
 
 class UpdaterError(Exception):
@@ -143,15 +144,18 @@ class RemoteUpdater:
                 
                 if archive_name.endswith('.tar.gz'):
                     with tarfile.open(archive_path, 'r:gz') as tar:
-                        tar.extractall(extract_path)
+                        safe_extract_tar(tar, extract_path)
                 elif archive_name.endswith('.zip'):
                     with zipfile.ZipFile(archive_path, 'r') as zip_file:
-                        zip_file.extractall(extract_path)
+                        safe_extract_zip(zip_file, extract_path)
                 else:
                     raise UpdaterError(f"Unsupported archive format: {archive_name}")
                 
                 # Apply update
-                self._apply_update(extract_path, target_path)
+                try:
+                    self._apply_update(extract_path, target_path)
+                except ArchiveExtractionError as e:
+                    raise UpdaterError(f"Unsafe archive: {e}")
                 
                 self.logger.info("Update applied successfully")
                 return True

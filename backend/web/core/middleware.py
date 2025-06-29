@@ -1,13 +1,13 @@
 """Middleware classes for LOOP web server."""
 
 import time
+import asyncio
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
 from utils.logger import get_logger
-from .events import broadcaster
 
 logger = get_logger("web")
 
@@ -50,7 +50,7 @@ class ConcurrencyLimitMiddleware(BaseHTTPMiddleware):
     def __init__(self, app, max_concurrent: int = 3):
         super().__init__(app)
         self.max_concurrent = max_concurrent
-        self.active_requests = 0
+        self._semaphore = asyncio.Semaphore(max_concurrent)
     
     async def dispatch(self, request: Request, call_next):
         # Skip concurrency check for static files and health checks
@@ -60,24 +60,24 @@ class ConcurrencyLimitMiddleware(BaseHTTPMiddleware):
             request.url.path == "/"):
             return await call_next(request)
         
-        if self.active_requests >= self.max_concurrent:
-            logger.warning(f"Concurrency limit exceeded: {self.active_requests}/{self.max_concurrent} active requests")
+        if self._semaphore.locked() and self._semaphore._value == 0:
+            logger.warning("Concurrency limit exceeded – request rejected")
             return JSONResponse(
                 status_code=503,
                 content={
                     "success": False,
-                    "message": f"Server busy. Too many concurrent requests ({self.active_requests}/{self.max_concurrent}). Please retry in a moment.",
+                    "message": "Server busy. Too many concurrent requests.",
                     "code": "CONCURRENCY_LIMIT_EXCEEDED",
-                    "retry_after": 2  # Suggest retry after 2 seconds
-                }
+                    "retry_after": 2,
+                },
             )
-        
-        self.active_requests += 1
+
+        await self._semaphore.acquire()
         try:
             response = await call_next(request)
             return response
         finally:
-            self.active_requests -= 1
+            self._semaphore.release()
 
 class ErrorHandlingMiddleware(BaseHTTPMiddleware):
     """Standardize error responses across the API."""
@@ -249,17 +249,8 @@ class UploadProgressMiddleware:
                             # Avoid ZeroDivision, content_length > 0 here
                             percent = (bytes_seen / content_length) * 100.0
 
-                        try:
-                            await broadcaster.upload_progress(
-                                {
-                                    "bytes_received": bytes_seen,
-                                    "total_bytes": content_length,
-                                    "percent": percent,
-                                }
-                            )
-                        except Exception:
-                            # Never fail the upload because of broadcast issues
-                            pass
+                        # Progress tracking - not needed in polling architecture
+                        pass
 
                 return message
 
