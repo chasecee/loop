@@ -105,12 +105,12 @@ EOF
     # Setup NetworkManager permissions for LOOP service
     echo "Setting up NetworkManager permissions for LOOP..." | logger -t loop-wifi-setup
     
-    # Create polkit rule for NetworkManager access (Pi Zero 2 Bookworm compatible)
+    # Create polkit rule for NetworkManager access (Pi Zero 2 Bookworm tested)
     mkdir -p /etc/polkit-1/localauthority/50-local.d
     cat > /etc/polkit-1/localauthority/50-local.d/org.freedesktop.NetworkManager.pkla << 'EOF'
-[NetworkManager permissions for netdev group]
-Identity=unix-group:netdev
-Action=org.freedesktop.NetworkManager.*
+[Allow NetworkManager for pi user]
+Identity=unix-user:pi
+Action=org.freedesktop.NetworkManager.settings.modify.system;org.freedesktop.NetworkManager.settings.modify.own;org.freedesktop.NetworkManager.settings.modify.hostname;org.freedesktop.NetworkManager.enable-disable-network;org.freedesktop.NetworkManager.enable-disable-wifi;org.freedesktop.NetworkManager.sleep-wake;org.freedesktop.NetworkManager.network-control;org.freedesktop.NetworkManager.wifi.share.protected;org.freedesktop.NetworkManager.wifi.share.open
 ResultAny=yes
 ResultInactive=yes
 ResultActive=yes
@@ -199,6 +199,7 @@ main() {
     case "${1:-install}" in
         install)
             install_services
+            setup_wifi_power_management
             check_wifi_power_management
             ;;
         check)
