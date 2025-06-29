@@ -797,6 +797,39 @@ class WiFiManager:
             self.logger.error(f"Unexpected error stopping hotspot: {e}")
             return False
     
+    @property
+    def connected(self) -> bool:
+        """Check if WiFi is connected."""
+        with self._state_lock:
+            if self._connection_info.is_stale():
+                try:
+                    self._update_connection_state()
+                except Exception as e:
+                    self.logger.warning(f"Failed to refresh connection status: {e}")
+            return self._connection_info.state == ConnectionState.CONNECTED
+    
+    @property
+    def current_ssid(self) -> Optional[str]:
+        """Get current WiFi SSID."""
+        with self._state_lock:
+            if self._connection_info.is_stale():
+                try:
+                    self._update_connection_state()
+                except Exception as e:
+                    self.logger.warning(f"Failed to refresh connection status: {e}")
+            return self._connection_info.ssid if self._connection_info.state == ConnectionState.CONNECTED else None
+    
+    @property
+    def hotspot_active(self) -> bool:
+        """Check if hotspot is active."""
+        with self._state_lock:
+            if self._connection_info.is_stale():
+                try:
+                    self._update_connection_state()
+                except Exception as e:
+                    self.logger.warning(f"Failed to refresh connection status: {e}")
+            return self._connection_info.state == ConnectionState.HOTSPOT_ACTIVE
+
     def cleanup(self) -> None:
         """Clean up WiFi manager resources."""
         try:

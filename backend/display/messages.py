@@ -212,14 +212,25 @@ class MessageDisplay:
         )
         self.logger.debug("Boot message queued for display")
     
-    def show_no_media_message(self) -> None:
-        """Show no media available message."""
+    def show_no_media_message(self, web_url: str = "loop.local", hotspot_info: dict = None) -> None:
+        """Show friendly no media available message with web URL."""
+        if hotspot_info:
+            # Special hotspot connection flow
+            title = "Connect to WiFi"
+            ssid = hotspot_info.get('ssid', 'LOOP-Setup')
+            password = hotspot_info.get('password', 'loop12345')
+            subtitle = f"{ssid} / {password}"
+        else:
+            # Normal flow - keep subtitle short to fit on 320px display
+            title = "Ready to Go!"
+            subtitle = f"Go to {web_url} to upload media"
+        
         self.show_message(
-            title="No Media",
-            subtitle="Upload files via web interface",
+            title=title,
+            subtitle=subtitle,
             duration=0,  # Persistent
             bg_color=(0, 0, 0),
-            text_color=(255, 255, 0)  # Yellow text
+            text_color=(0, 190, 255)  # Apple-like blue
         )
     
     def show_error_message(self, error: str) -> None:
@@ -474,6 +485,12 @@ def show_upload(count: int = 1) -> None:
     """Show upload message (convenience function)."""
     if _message_display:
         _message_display.show_upload_message(count)
+
+
+def show_no_media(web_url: str = "loop.local", hotspot_info: dict = None) -> None:
+    """Show no media message (convenience function)."""
+    if _message_display:
+        _message_display.show_no_media_message(web_url, hotspot_info)
 
 
  

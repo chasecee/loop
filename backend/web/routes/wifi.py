@@ -63,7 +63,7 @@ def create_wifi_router(
             raise HTTPException(status_code=503, detail="WiFi manager not available")
         
         # Update status to get latest connection info
-        wifi_manager._update_status()
+        wifi_manager._update_connection_state()
         
         if not wifi_manager.connected:
             raise HTTPException(status_code=400, detail="Not currently connected to any WiFi network")

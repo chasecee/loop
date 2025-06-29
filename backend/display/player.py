@@ -3,8 +3,13 @@
 import json
 import threading
 import time
+import asyncio
+import subprocess
+import signal
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple, NamedTuple
+from dataclasses import dataclass, field
+from enum import Enum
 
 from config.schema import DisplayConfig, MediaConfig
 from display.framebuf import FrameSequence
@@ -14,21 +19,319 @@ from utils.logger import get_logger
 from utils.media_index import media_index
 
 
+@dataclass
+class NetworkStatus:
+    """Immutable network status snapshot."""
+    connected: bool = False
+    hotspot_active: bool = False
+    ip_address: Optional[str] = None
+    hotspot_ssid: Optional[str] = None
+    mdns_working: bool = False
+    timestamp: float = field(default_factory=time.time)
+    
+    def is_stale(self, max_age: float = 30.0) -> bool:
+        """Check if status is stale."""
+        return (time.time() - self.timestamp) > max_age
+
+
+class WiFiStatusManager:
+    """Production-grade WiFi status manager with async mDNS testing."""
+    
+    def __init__(self, wifi_manager, logger):
+        self.wifi_manager = wifi_manager
+        self.logger = logger
+        
+        # Thread-safe caching
+        self._lock = threading.RLock()
+        self._status_cache: Optional[NetworkStatus] = None
+        
+        # Background checking
+        self._checker_thread: Optional[threading.Thread] = None
+        self._checker_running = False
+        self._check_interval = 30.0  # seconds
+        self._mdns_timeout = 2.0  # shorter timeout for production
+        
+        # Subprocess management
+        self._active_processes = set()
+        self._process_lock = threading.Lock()
+        
+        self.logger.info("WiFi status manager initialized")
+    
+    def start(self):
+        """Start background status checking."""
+        if self._checker_running:
+            return
+        
+        self._checker_running = True
+        self._checker_thread = threading.Thread(
+            target=self._background_checker_loop,
+            name="WiFiStatusChecker",
+            daemon=True
+        )
+        self._checker_thread.start()
+        self.logger.info("Background WiFi status checker started")
+    
+    def stop(self):
+        """Stop background checking and cleanup."""
+        self._checker_running = False
+        
+        # Cleanup active processes
+        with self._process_lock:
+            for proc in list(self._active_processes):
+                try:
+                    if proc.poll() is None:  # Still running
+                        proc.terminate()
+                        proc.wait(timeout=1.0)
+                except (subprocess.TimeoutExpired, ProcessLookupError):
+                    try:
+                        proc.kill()
+                    except ProcessLookupError:
+                        pass
+                except Exception as e:
+                    self.logger.warning(f"Error cleaning up subprocess: {e}")
+            self._active_processes.clear()
+        
+        if self._checker_thread and self._checker_thread.is_alive():
+            self._checker_thread.join(timeout=2.0)
+        
+        self.logger.info("WiFi status manager stopped")
+    
+    def get_display_info(self) -> Tuple[Optional[str], Optional[Dict]]:
+        """
+        Get display URL and hotspot info for UI.
+        
+        Returns:
+            (web_url, hotspot_info) where:
+            - web_url: URL to show users (or None if hotspot mode)
+            - hotspot_info: dict with SSID/password (or None if not hotspot)
+        """
+        status = self._get_current_status()
+        
+        if status.hotspot_active:
+            # Hotspot mode - show connection instructions
+            return None, {
+                'ssid': status.hotspot_ssid or 'LOOP-Setup',
+                'password': '●●●●●●●●●'  # Never expose real password
+            }
+        elif status.connected and status.ip_address:
+            # Connected mode - choose best URL
+            if status.mdns_working:
+                return "loop.local", None
+            else:
+                return status.ip_address, None
+        else:
+            # Fallback
+            return "loop.local", None
+    
+    def _get_current_status(self) -> NetworkStatus:
+        """Get current network status with caching."""
+        with self._lock:
+            if self._status_cache and not self._status_cache.is_stale():
+                return self._status_cache
+            
+            # Cache miss - generate fresh status
+            return self._generate_status()
+    
+    def _generate_status(self) -> NetworkStatus:
+        """Generate fresh network status (called with lock held)."""
+        try:
+            if not self.wifi_manager:
+                return NetworkStatus()
+            
+            wifi_status = self.wifi_manager.get_status()
+            
+            status = NetworkStatus(
+                connected=wifi_status.get('connected', False),
+                hotspot_active=wifi_status.get('hotspot_active', False),
+                ip_address=wifi_status.get('ip_address'),
+                hotspot_ssid=wifi_status.get('hotspot_ssid'),
+                mdns_working=self._status_cache.mdns_working if self._status_cache else False
+            )
+            
+            self._status_cache = status
+            return status
+            
+        except Exception as e:
+            self.logger.warning(f"Failed to generate network status: {e}")
+            return NetworkStatus()
+    
+    def _background_checker_loop(self):
+        """Background thread that periodically checks mDNS."""
+        self.logger.debug("Background WiFi status checker started")
+        
+        while self._checker_running:
+            try:
+                # Check if we need to test mDNS
+                current_status = self._get_current_status()
+                
+                if current_status.connected and current_status.ip_address:
+                    # Only test mDNS when connected to WiFi
+                    mdns_working = self._test_mdns_safe()
+                    
+                    # Update cache atomically
+                    with self._lock:
+                        if self._status_cache:
+                            self._status_cache = NetworkStatus(
+                                connected=self._status_cache.connected,
+                                hotspot_active=self._status_cache.hotspot_active,
+                                ip_address=self._status_cache.ip_address,
+                                hotspot_ssid=self._status_cache.hotspot_ssid,
+                                mdns_working=mdns_working
+                            )
+                
+                # Sleep with early exit capability
+                for _ in range(int(self._check_interval)):
+                    if not self._checker_running:
+                        break
+                    time.sleep(1.0)
+                    
+            except Exception as e:
+                self.logger.error(f"Background WiFi checker error: {e}")
+                time.sleep(5.0)  # Back off on errors
+        
+        self.logger.debug("Background WiFi status checker stopped")
+    
+    def _test_mdns_safe(self) -> bool:
+        """Safely test mDNS resolution with proper resource management."""
+        commands = [
+            ["avahi-resolve", "-n", "loop.local"],
+            ["getent", "hosts", "loop.local"],
+            ["ping", "-c", "1", "-W", "1", "loop.local"]
+        ]
+        
+        for cmd in commands:
+            if not self._checker_running:
+                return False
+            
+            try:
+                result = self._run_subprocess_safe(cmd, timeout=self._mdns_timeout)
+                if result and self._validate_mdns_output(result, cmd[0]):
+                    self.logger.debug(f"mDNS working via {cmd[0]}")
+                    return True
+                    
+            except Exception as e:
+                self.logger.debug(f"mDNS test {cmd[0]} failed: {e}")
+                continue
+        
+        self.logger.debug("All mDNS tests failed")
+        return False
+    
+    def _run_subprocess_safe(self, cmd: List[str], timeout: float) -> Optional[str]:
+        """Run subprocess with proper resource management."""
+        if not self._checker_running:
+            return None
+        
+        proc = None
+        try:
+            # Validate command exists
+            if not self._command_exists(cmd[0]):
+                return None
+            
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                start_new_session=True  # Prevent signal propagation
+            )
+            
+            # Track active process
+            with self._process_lock:
+                self._active_processes.add(proc)
+            
+            stdout, stderr = proc.communicate(timeout=timeout)
+            
+            if proc.returncode == 0:
+                return stdout.strip()
+            else:
+                self.logger.debug(f"Command {cmd[0]} failed: {stderr.strip()}")
+                return None
+                
+        except subprocess.TimeoutExpired:
+            if proc:
+                try:
+                    proc.terminate()
+                    proc.wait(timeout=0.5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
+            return None
+            
+        except (FileNotFoundError, PermissionError):
+            return None
+            
+        except Exception as e:
+            if proc and proc.poll() is None:
+                try:
+                    proc.terminate()
+                except:
+                    pass
+            self.logger.debug(f"Subprocess {cmd[0]} error: {e}")
+            return None
+            
+        finally:
+            if proc:
+                with self._process_lock:
+                    self._active_processes.discard(proc)
+    
+    def _command_exists(self, command: str) -> bool:
+        """Check if command exists without running it."""
+        try:
+            result = subprocess.run(
+                ["which", command],
+                capture_output=True,
+                timeout=1.0
+            )
+            return result.returncode == 0
+        except:
+            return False
+    
+    def _validate_mdns_output(self, output: str, command: str) -> bool:
+        """Validate mDNS command output."""
+        if not output or len(output) > 1000:  # Sanity check
+            return False
+        
+        output_lower = output.lower()
+        
+        if command == "avahi-resolve":
+            # Expected: "loop.local    192.168.1.100"
+            return "loop.local" in output_lower and any(
+                c.isdigit() for c in output  # Contains IP
+            )
+        elif command == "getent":
+            # Expected: "192.168.1.100  loop.local"
+            return "loop.local" in output_lower and any(
+                c.isdigit() for c in output  # Contains IP
+            )
+        elif command == "ping":
+            # Expected: "PING loop.local (192.168.1.100)"
+            return ("ping" in output_lower and 
+                   "loop.local" in output_lower and
+                   "(" in output)  # IP in parentheses
+        
+        return False
+
+
 class DisplayPlayer:
     """Main display playback engine."""
     
     def __init__(self, display_driver: ILI9341Driver, 
                  display_config: DisplayConfig, 
-                 media_config: MediaConfig):
+                 media_config: MediaConfig,
+                 wifi_manager=None):
         """Initialize the display player."""
         self.display_driver = display_driver
         self.display_config = display_config
         self.media_config = media_config
+        self.wifi_manager = wifi_manager
         self.logger = get_logger("player")
         
         # Initialize messaging system
         self.message_display = MessageDisplay(display_driver, display_config)
         set_message_display(self.message_display)  # Set global instance
+        
+        # Initialize WiFi status manager
+        self.wifi_status_manager = WiFiStatusManager(wifi_manager, self.logger)
         
         # Media management
         self.media_dir = Path("media/processed")
@@ -482,7 +785,10 @@ class DisplayPlayer:
     
     def show_no_media_message(self) -> None:
         """Show a message when no media is available."""
-        self.message_display.show_no_media_message()
+        # Get the actual web URL based on network status
+        web_url, hotspot_info = self.wifi_status_manager.get_display_info()
+        
+        self.message_display.show_no_media_message(web_url, hotspot_info)
     
     def run(self) -> None:
         """Main playback loop."""
@@ -634,6 +940,7 @@ class DisplayPlayer:
         """Start the display player."""
         if not self.running:
             self.running = True
+            self.wifi_status_manager.start()
             self.playback_thread = threading.Thread(target=self.run, daemon=True)
             self.playback_thread.start()
             self.logger.info("Display player started")
@@ -643,6 +950,9 @@ class DisplayPlayer:
         if self.running:
             self.running = False
             self.stop_processing_display()
+            
+            # Stop WiFi status manager
+            self.wifi_status_manager.stop()
             
             # Stop current sequence
             if self.current_sequence:

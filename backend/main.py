@@ -244,7 +244,8 @@ class LOOPApplication:
                 self.display_player = DisplayPlayer(
                     self.display_driver,
                     self.config.display,
-                    self.config.media
+                    self.config.media,
+                    self.wifi_manager
                 )
                 
                 self.component_manager.register_component("display", self.display_driver)
@@ -271,7 +272,7 @@ class LOOPApplication:
             self.component_manager.register_component("wifi", self.wifi_manager)
             
             # Check current WiFi status first - CRITICAL for SSH safety
-            self.wifi_manager._update_status()
+            self.wifi_manager._update_connection_state()
             
             # If already connected to WiFi, preserve the connection
             if self.wifi_manager.connected:
