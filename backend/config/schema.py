@@ -83,6 +83,8 @@ class WebConfig:
     debug: bool = False
     max_concurrent_requests: int = 12  # Increased to handle polling during slow storage operations
     request_timeout_seconds: int = 300  # 5 minute timeout for large uploads
+    # Explicit list of origins allowed for CORS. Use ["*"] for public API without credentials.
+    allowed_origins: Optional[list[str]] = None
 
 
 @dataclass

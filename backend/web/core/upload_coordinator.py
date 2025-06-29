@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from fastapi import UploadFile, HTTPException
 from utils.media_index import media_index
 from utils.logger import get_logger
+from utils.safe_extract import safe_extract_zip
 
 logger = get_logger("upload")
 
@@ -199,10 +200,10 @@ class HardenedUploadCoordinator:
             if target_dir.exists():
                 await asyncio.to_thread(shutil.rmtree, target_dir)
             
-            # Extract ZIP
+            # Extract ZIP securely
             def extract_zip():
                 with zipfile.ZipFile(io.BytesIO(content), "r") as zf:
-                    zf.extractall(target_dir)
+                    safe_extract_zip(zf, target_dir)
             
             await asyncio.to_thread(extract_zip)
             

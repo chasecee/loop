@@ -53,12 +53,20 @@ def create_app(
     from .core.middleware import ConditionalGZipMiddleware
     app.add_middleware(ConditionalGZipMiddleware, minimum_size=1000)
     
-    # CORS middleware (outermost)
+    # ------------------------------
+    # CORS – refuse credentials when using wildcard
+    # ------------------------------
+    allowed_origins = ["*"]
+    if config and hasattr(config.web, "allowed_origins") and config.web.allowed_origins:
+        allowed_origins = config.web.allowed_origins  # type: ignore
+
+    allow_credentials_flag = "*" not in allowed_origins and allowed_origins != ["*"]
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],  # Simplify for Pi deployment
-        allow_credentials=True,
-        allow_methods=["GET", "POST", "PUT", "DELETE"],  # Explicit methods only
+        allow_origins=allowed_origins,
+        allow_credentials=allow_credentials_flag,
+        allow_methods=["GET", "POST", "PUT", "DELETE"],
         allow_headers=["*"],
         max_age=3600,
     )
