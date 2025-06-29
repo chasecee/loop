@@ -264,6 +264,7 @@ echo "🔒 Setting file permissions..."
 chown -R ${REAL_USER}:${REAL_USER} "${PROJECT_DIR}"
 chmod +x "${PROJECT_DIR}/backend/main.py" 2>/dev/null || true
 chmod +x "${BACKEND_DIR}/deployment/scripts/"*.sh 2>/dev/null || true
+chmod +x "${BACKEND_DIR}/boot/boot-display.py" 2>/dev/null || true
 
 # Services already installed and started by install_services function
 
@@ -309,6 +310,7 @@ echo "Useful commands:"
 echo "  sudo systemctl status loop              # Check main service status"
 echo "  sudo systemctl restart loop             # Restart main service"
 echo "  sudo journalctl -u loop -f              # View main service logs"
+echo "  sudo systemctl status boot-display      # Check boot display service"
 echo "  ${SCRIPT_DIR}/service-manager.sh check  # Check all LOOP services"
 echo "  # WiFi/hotspot managed via web interface at http://IP"
 echo ""

@@ -1,0 +1,29 @@
+[Unit]
+Description=LOOP Boot Display - Set screen black during startup
+After=local-fs.target
+Before=loop.service
+DefaultDependencies=no
+
+[Service]
+Type=oneshot
+User=__USER__
+Group=__USER__
+WorkingDirectory=__PROJECT_DIR__/backend
+Environment=PYTHONPATH=__PROJECT_DIR__/backend
+ExecStart=__PROJECT_DIR__/backend/venv/bin/python __PROJECT_DIR__/backend/boot/boot-display.py
+RemainAfterExit=no
+TimeoutStartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=boot-display
+
+# Permissions for GPIO and SPI access
+SupplementaryGroups=gpio spi
+
+# Security settings
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=__PROJECT_DIR__/backend
+
+[Install]
+WantedBy=multi-user.target 

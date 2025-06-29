@@ -21,6 +21,7 @@ check_service() {
 # Function to install and manage system services
 install_services() {
     local services=(
+        "boot/boot-display:boot-display"
         "loop:loop"
         "system-management:system-management"
     )
@@ -47,6 +48,12 @@ install_services() {
     
     # Reload systemd and manage services
     sudo systemctl daemon-reload
+    
+    # Enable boot display service (but don't start - it runs at boot)
+    if [ -f "/etc/systemd/system/boot-display.service" ]; then
+        sudo systemctl enable boot-display
+        echo "Boot display service enabled - will run at next boot"
+    fi
     
     # Enable and start main loop service
     sudo systemctl enable loop
@@ -152,6 +159,7 @@ main() {
             check_wifi_power_management
             ;;
         check)
+            check_service "boot-display"
             check_service "loop"
             check_service "system-management" 
             check_wifi_power_management
