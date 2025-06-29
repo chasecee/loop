@@ -24,7 +24,7 @@
     "ssid": "",
     "password": "",
     "hotspot_ssid": "LOOP-Setup",
-    "hotspot_password": "loop123",
+    "hotspot_password": "loop12345",
     "hotspot_channel": 11,
     "hotspot_enabled": true,
     "timeout": 10
