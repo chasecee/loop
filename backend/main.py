@@ -407,7 +407,7 @@ class HardenedLOOPApplication:
                 timeout_graceful_shutdown=15,
                 limit_max_requests=None,
                 backlog=25,  # Reduce backlog for Pi
-                limit_concurrency=6,  # Lower concurrency limit
+                limit_concurrency=20,  # Increased for static files + API requests
                 loop="asyncio",
             )
             

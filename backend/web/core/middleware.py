@@ -54,10 +54,13 @@ class ConcurrencyLimitMiddleware(BaseHTTPMiddleware):
     
     async def dispatch(self, request: Request, call_next):
         # Skip concurrency check for static files and health checks
-        if (request.url.path.startswith("/_next") or 
-            request.url.path.startswith("/assets") or
-            request.url.path.startswith("/media/raw") or
-            request.url.path == "/"):
+        path = request.url.path
+        if (path.startswith("/_next") or 
+            path.startswith("/assets") or
+            path.startswith("/media/") or
+            path == "/" or
+            path == "/favicon.ico" or
+            path.endswith(('.js', '.css', '.woff', '.woff2', '.png', '.jpg', '.svg', '.ico', '.map'))):
             return await call_next(request)
         
         if self._semaphore.locked() and self._semaphore._value == 0:
