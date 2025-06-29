@@ -226,13 +226,28 @@ class HardenedUploadCoordinator:
                 self._secure_extract_zip_to_dir, zip_path, target_dir
             )
 
-            # Move frames potentially etc – reuse original helper logic
+            # Handle both new binary format and legacy individual frame files
             frames_dir = target_dir / "frames"
-            frame_files = list(target_dir.glob("*.rgb"))
-            if frame_files and not frames_dir.exists():
-                await asyncio.to_thread(frames_dir.mkdir, parents=True)
-                for frame_file in frame_files:
-                    await asyncio.to_thread(frame_file.rename, frames_dir / frame_file.name)
+            
+            # Check for new binary format first
+            frames_bin = target_dir / "frames.bin"
+            if frames_bin.exists():
+                # New binary format - move to frames directory
+                if not frames_dir.exists():
+                    await asyncio.to_thread(frames_dir.mkdir, parents=True)
+                await asyncio.to_thread(frames_bin.rename, frames_dir / "frames.bin")
+                logger.info(f"Moved binary frames file to {frames_dir}")
+            else:
+                # Legacy format - move individual .rgb files
+                frame_files = list(target_dir.glob("*.rgb"))
+                if frame_files:
+                    if not frames_dir.exists():
+                        await asyncio.to_thread(frames_dir.mkdir, parents=True)
+                    for frame_file in frame_files:
+                        await asyncio.to_thread(frame_file.rename, frames_dir / frame_file.name)
+                    logger.info(f"Moved {len(frame_files)} individual frame files to {frames_dir}")
+                else:
+                    logger.warning(f"No frames found in ZIP for {target_slug}")
 
             # Update / create metadata same as original
             if existing_slug:

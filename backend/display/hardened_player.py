@@ -7,7 +7,7 @@ import os
 import time
 import threading
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 import struct
 from dataclasses import dataclass, field
 
@@ -26,8 +26,83 @@ class MediaFrame:
     duration: float = 0.04  # 25fps default
 
 
+class BinaryFrameSequence:
+    """Binary frame sequence - loads from single frames.bin file."""
+    
+    def __init__(self, frames_dir: Path):
+        self.frames_dir = frames_dir
+        self.frames_file = frames_dir / "frames.bin"
+        self.logger = get_logger("frames")
+        
+        # Load frame data from binary file
+        self.frame_count = 0
+        self.frame_size = 0
+        self.frame_data: Optional[bytes] = None
+        
+        self._load_binary_frames()
+        
+    def _load_binary_frames(self) -> None:
+        """Load frames from binary file format."""
+        if not self.frames_file.exists():
+            self.logger.warning(f"No frames.bin file at {self.frames_file}")
+            return
+        
+        try:
+            with open(self.frames_file, 'rb') as f:
+                # Read header: [frame_count:4][frame_size:4]
+                header = f.read(8)
+                if len(header) != 8:
+                    self.logger.error("Invalid frames.bin header")
+                    return
+                
+                # Parse header (big-endian)
+                import struct
+                self.frame_count, self.frame_size = struct.unpack('>II', header)
+                
+                # Read all frame data
+                expected_size = self.frame_count * self.frame_size
+                self.frame_data = f.read(expected_size)
+                
+                if len(self.frame_data) != expected_size:
+                    self.logger.error(f"Frame data size mismatch: expected {expected_size}, got {len(self.frame_data)}")
+                    self.frame_data = None
+                    self.frame_count = 0
+                    return
+                
+                self.logger.info(f"Loaded {self.frame_count} frames from {self.frames_file} ({len(self.frame_data)} bytes)")
+                
+        except Exception as e:
+            self.logger.error(f"Failed to load binary frames: {e}")
+            self.frame_count = 0
+            self.frame_data = None
+    
+    def get_frame_count(self) -> int:
+        """Get number of available frames."""
+        return self.frame_count
+    
+    def get_frame(self, index: int) -> Optional[MediaFrame]:
+        """Get frame by index from binary data."""
+        if not self.frame_data or index >= self.frame_count:
+            return None
+        
+        try:
+            # Calculate offset for this frame
+            offset = index * self.frame_size
+            frame_bytes = self.frame_data[offset:offset + self.frame_size]
+            
+            if len(frame_bytes) != self.frame_size:
+                self.logger.warning(f"Frame {index} incomplete: {len(frame_bytes)} bytes")
+                return None
+            
+            return MediaFrame(frame_bytes, 0.04)  # 25fps default
+            
+        except Exception as e:
+            self.logger.warning(f"Failed to get frame {index}: {e}")
+            return None
+
+
 class SimpleFrameSequence:
-    """Simplified frame sequence without threading chaos."""
+    """DEPRECATED: Fallback for old individual frame files."""
     
     def __init__(self, frames_dir: Path, frame_count: int, frame_duration: float):
         self.frames_dir = frames_dir
@@ -39,19 +114,31 @@ class SimpleFrameSequence:
         self.frame_files = self._load_frame_list()
         
     def _load_frame_list(self) -> List[Path]:
-        """Load and sort frame files."""
+        """Load and sort frame files - HARDENED: scan directory, don't trust metadata."""
         if not self.frames_dir.exists():
             return []
         
         frame_files = []
-        for i in range(self.frame_count):
+        
+        # Scan directory for actual frames instead of trusting frame_count
+        i = 0
+        while True:
             frame_file = self.frames_dir / f"frame_{i:06d}.rgb"
             if frame_file.exists():
                 frame_files.append(frame_file)
+                i += 1
             else:
-                break  # Stop at first missing frame
+                break  # No more consecutive frames
         
-        self.logger.info(f"Loaded {len(frame_files)} frames from {self.frames_dir}")
+        # Fallback: if no consecutive frames found, scan all .rgb files
+        if not frame_files:
+            try:
+                rgb_files = sorted(self.frames_dir.glob("*.rgb"))
+                frame_files = [f for f in rgb_files if f.name.startswith("frame_")]
+            except Exception as e:
+                self.logger.warning(f"Directory scan fallback failed: {e}")
+        
+        self.logger.info(f"Loaded {len(frame_files)} frames from {self.frames_dir} (metadata claimed {self.frame_count})")
         return frame_files
     
     def get_frame_count(self) -> int:
@@ -110,7 +197,7 @@ class HardenedDisplayPlayer:
         
         # Media management
         self.media_dir = Path("media/processed")
-        self.current_sequence: Optional[SimpleFrameSequence] = None
+        self.current_sequence: Optional[Union[BinaryFrameSequence, SimpleFrameSequence]] = None
         self.current_frame_index = 0
         
         # Playback control
@@ -251,7 +338,7 @@ class HardenedDisplayPlayer:
             self.logger.warning(f"Media change check failed: {e}")
     
     def _load_current_sequence(self) -> bool:
-        """Load current media sequence."""
+        """Load current media sequence - tries binary format first, falls back to individual files."""
         try:
             active_slug = media_index.get_active()
             if not active_slug:
@@ -267,23 +354,39 @@ class HardenedDisplayPlayer:
                 self.logger.warning(f"No frames directory for {active_slug}")
                 return False
             
-            # Get media properties
+            # Try binary format first (new efficient format)
+            binary_sequence = BinaryFrameSequence(frames_dir)
+            if binary_sequence.get_frame_count() > 0:
+                self.current_sequence = binary_sequence
+                self.current_frame_index = 0
+                self.current_media_loops = 0
+                
+                filename = media_info.get('filename', active_slug)
+                self.logger.info(f"Loaded binary sequence: {filename} ({binary_sequence.get_frame_count()} frames)")
+                return True
+            
+            # Fall back to individual frame files (legacy format)
+            self.logger.info("Binary format not available, falling back to individual frame files")
+            
+            # Get media properties for legacy format
             frame_count = media_info.get('frame_count', 0)
             fps = media_info.get('fps', 25)
             frame_duration = 1.0 / fps
             
-            # Create simple sequence
-            self.current_sequence = SimpleFrameSequence(frames_dir, frame_count, frame_duration)
-            self.current_frame_index = 0
-            self.current_media_loops = 0
+            # Create legacy sequence
+            legacy_sequence = SimpleFrameSequence(frames_dir, frame_count, frame_duration)
             
-            if self.current_sequence.get_frame_count() == 0:
-                self.logger.warning(f"No frames found for {active_slug}")
+            if legacy_sequence.get_frame_count() == 0:
+                self.logger.warning(f"No frames found for {active_slug} in either format")
                 self.current_sequence = None
                 return False
             
+            self.current_sequence = legacy_sequence
+            self.current_frame_index = 0
+            self.current_media_loops = 0
+            
             filename = media_info.get('filename', active_slug)
-            self.logger.info(f"Loaded sequence: {filename} ({self.current_sequence.get_frame_count()} frames)")
+            self.logger.info(f"Loaded legacy sequence: {filename} ({legacy_sequence.get_frame_count()} frames)")
             return True
             
         except Exception as e:

@@ -245,13 +245,55 @@ class SystemUpdater:
         self.update_config = update_config or {}
         self.logger = get_logger("system_updater")
         self.git_updater = GitUpdater(repo_path)
+        
+        # Cache for update status to prevent frequent git operations
+        self._cached_status = None
+        self._cache_timestamp = 0
+        self._cache_ttl = 3600  # Cache for 1 hour
+        
+        # Initialize with boot-time check
+        self._check_updates_on_boot()
 
-    def check_all_sources(self) -> Dict[str, any]:
-        """Check git update source only."""
+    def _check_updates_on_boot(self) -> None:
+        """Check for updates on system boot only."""
+        try:
+            self.logger.info("Checking for updates on boot...")
+            self._cached_status = self.git_updater.check_for_updates()
+            self._cache_timestamp = time.time()
+            self.logger.info(f"Boot update check complete: {'available' if self._cached_status else 'none'}")
+        except Exception as e:
+            self.logger.warning(f"Boot update check failed: {e}")
+            self._cached_status = False
+            self._cache_timestamp = time.time()
+
+    def check_all_sources(self, force_refresh: bool = False) -> Dict[str, any]:
+        """Check git update source with caching."""
+        current_time = time.time()
+        
+        # Use cached result unless forced refresh or cache expired
+        if not force_refresh and self._cached_status is not None and (current_time - self._cache_timestamp) < self._cache_ttl:
+            return {
+                'git': self._cached_status,
+                'timestamp': int(self._cache_timestamp)
+            }
+        
+        # Cache expired or forced refresh - check for updates
+        try:
+            self._cached_status = self.git_updater.check_for_updates()
+            self._cache_timestamp = current_time
+        except Exception as e:
+            self.logger.warning(f"Update check failed: {e}")
+            # Keep previous cached status if check fails
+            
         return {
-            'git': self.git_updater.check_for_updates(),
-            'timestamp': int(time.time())
+            'git': self._cached_status,
+            'timestamp': int(self._cache_timestamp)
         }
+
+    def manual_check_for_updates(self) -> Dict[str, any]:
+        """Manually check for updates (bypasses cache)."""
+        self.logger.info("Manual update check requested")
+        return self.check_all_sources(force_refresh=True)
 
     def update_from_git(self) -> bool:
         """Update from git repository and restart service if successful."""
@@ -279,10 +321,10 @@ class SystemUpdater:
             return False, f"Update failed: {str(e)}"
 
     def get_update_status(self) -> Dict:
-        """Get current update status."""
+        """Get current update status (uses cached data)."""
         return {
             'current_version': self.current_version,
             'git_available': self.git_updater.git_available,
-            'last_check': self.update_config.get('last_check'),
-            'update_sources': self.check_all_sources()
+            'last_check': self._cache_timestamp if self._cached_status is not None else None,
+            'update_sources': self.check_all_sources()  # Uses cached data
         } 

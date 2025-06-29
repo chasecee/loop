@@ -45,13 +45,8 @@ def create_polling_router(
             # Player status
             if display_player:
                 try:
-                    status_data["player"] = {
-                        "is_playing": display_player.running and not display_player.paused,
-                        "current_media": media_index.get_active(),
-                        "showing_progress": display_player.showing_progress,
-                        "loop_mode": getattr(display_player, 'loop_mode', 'all'),
-                        "frame_rate": getattr(display_player, 'frame_rate', 25)
-                    }
+                    player_status = display_player.get_status()
+                    status_data["player"] = player_status
                 except Exception as e:
                     logger.warning(f"Failed to get player status: {e}")
                     status_data["player"] = {"error": "Player unavailable"}
@@ -67,7 +62,7 @@ def create_polling_router(
             # Update status
             if updater:
                 try:
-                    status_data["updates"] = updater.get_status()
+                    status_data["updates"] = updater.get_update_status()
                 except Exception as e:
                     logger.warning(f"Failed to get update status: {e}")
                     status_data["updates"] = {"error": "Updates unavailable"}

@@ -15,11 +15,11 @@ def create_updates_router(updater: SystemUpdater = None) -> APIRouter:
     
     @router.get("/check", response_model=APIResponse)
     async def check_updates():
-        """Check for available updates."""
+        """Check for available updates (manual check bypasses cache)."""
         if not updater:
             raise HTTPException(status_code=503, detail="Updater not available")
         
-        update_sources = updater.check_all_sources()
+        update_sources = updater.manual_check_for_updates()
         return APIResponse(
             success=True,
             message="Updates checked",
