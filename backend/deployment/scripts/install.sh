@@ -225,6 +225,10 @@ export PIP_PREFER_BINARY=1
 export PIP_ONLY_BINARY=numpy
 pip install --no-cache-dir -r requirements.txt
 
+# Install additional required packages that might not be in requirements.txt
+echo "📦 Installing additional web dependencies..."
+pip install --no-cache-dir python-multipart
+
 # Create necessary directories if they don't exist
 echo "📁 Checking directories..."
 mkdir -p "${BACKEND_DIR}/media/raw" "${BACKEND_DIR}/media/processed"
@@ -273,6 +277,27 @@ mkdir -p "$(dirname "$CONFIG_FLAG")"
 touch "$CONFIG_FLAG"
 chown "${REAL_USER}:${REAL_USER}" "$CONFIG_FLAG" "$(dirname "$CONFIG_FLAG")" 2>/dev/null || true
 
+# Test the application can start with all dependencies
+echo "🧪 Testing application startup..."
+cd "$BACKEND_DIR"
+if timeout 10s "${VENV_DIR}/bin/python" -c "
+import psutil
+import sys
+sys.path.insert(0, '.')
+try:
+    from web.server import create_app
+    print('✅ All dependencies available')
+except ImportError as e:
+    print(f'❌ Missing dependency: {e}')
+    exit(1)
+" 2>/dev/null; then
+    echo "✅ Application dependencies verified"
+else
+    echo "❌ Application dependency test failed - installing missing packages..."
+    source venv/bin/activate
+    pip install --no-cache-dir python-multipart
+fi
+
 # Wait a moment and check status
 sleep 2
 if sudo systemctl is-active --quiet ${SERVICE_NAME}; then
@@ -316,7 +341,7 @@ echo "  # WiFi/hotspot managed via web interface at http://IP"
 echo ""
 echo "🔧 Diagnostic commands:"
 echo "  # Check Python dependencies"
-echo "  ${BACKEND_DIR}/venv/bin/pip list | grep -E '(fastapi|uvicorn|pillow)'"
+echo "  ${BACKEND_DIR}/venv/bin/pip list | grep -E '(fastapi|uvicorn|pillow|multipart)'"
 echo ""
 echo "  # Test polling endpoints"
 echo "  curl -s http://localhost/api/poll/health | jq ."
