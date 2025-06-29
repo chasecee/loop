@@ -92,10 +92,10 @@ setup_wifi_power_management() {
     echo "Setting up WiFi power management for interface: $wifi_iface" | logger -t loop-wifi-setup
     
     # Create NetworkManager configuration directory
-    mkdir -p /etc/NetworkManager/conf.d
+    sudo mkdir -p /etc/NetworkManager/conf.d
     
     # Create NetworkManager configuration to disable WiFi power saving
-    cat > /etc/NetworkManager/conf.d/default-wifi-powersave-off.conf << EOF
+    sudo tee /etc/NetworkManager/conf.d/default-wifi-powersave-off.conf > /dev/null << EOF
 [connection]
 wifi.powersave = 2
 EOF
@@ -106,8 +106,8 @@ EOF
     echo "Setting up NetworkManager permissions for LOOP..." | logger -t loop-wifi-setup
     
     # Create polkit rule for NetworkManager access (Pi Zero 2 Bookworm tested)
-    mkdir -p /etc/polkit-1/localauthority/50-local.d
-    cat > /etc/polkit-1/localauthority/50-local.d/org.freedesktop.NetworkManager.pkla << 'EOF'
+    sudo mkdir -p /etc/polkit-1/localauthority/50-local.d
+    sudo tee /etc/polkit-1/localauthority/50-local.d/org.freedesktop.NetworkManager.pkla > /dev/null << 'EOF'
 [Allow NetworkManager for pi user]
 Identity=unix-user:pi
 Action=org.freedesktop.NetworkManager.settings.modify.system;org.freedesktop.NetworkManager.settings.modify.own;org.freedesktop.NetworkManager.settings.modify.hostname;org.freedesktop.NetworkManager.enable-disable-network;org.freedesktop.NetworkManager.enable-disable-wifi;org.freedesktop.NetworkManager.sleep-wake;org.freedesktop.NetworkManager.network-control;org.freedesktop.NetworkManager.wifi.share.protected;org.freedesktop.NetworkManager.wifi.share.open
@@ -119,14 +119,14 @@ EOF
     echo "Created polkit rules for NetworkManager access" | logger -t loop-wifi-setup
     
     # Restart polkit to apply new rules
-    if systemctl restart polkit 2>/dev/null; then
+    if sudo systemctl restart polkit 2>/dev/null; then
         echo "Polkit restarted successfully" | logger -t loop-wifi-setup
     else
         echo "Failed to restart polkit - rules will apply on next boot" | logger -t loop-wifi-setup
     fi
     
     # Reload NetworkManager to apply changes
-    if systemctl reload NetworkManager 2>/dev/null; then
+    if sudo systemctl reload NetworkManager 2>/dev/null; then
         echo "NetworkManager reloaded successfully" | logger -t loop-wifi-setup
     else
         echo "Failed to reload NetworkManager" | logger -t loop-wifi-setup
