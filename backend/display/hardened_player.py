@@ -591,7 +591,3 @@ class HardenedDisplayPlayer:
     def clear_messages(self) -> None:
         """Clear messages."""
         pass  # Simplified
-
-
-# Compatibility alias
-DisplayPlayer = HardenedDisplayPlayer 

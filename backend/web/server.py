@@ -1,4 +1,4 @@
-"""Refactored FastAPI web server for LOOP."""
+"""Hardened FastAPI web server for LOOP - No WebSockets, simple polling."""
 
 from pathlib import Path
 
@@ -32,42 +32,35 @@ def create_app(
 ) -> FastAPI:
     """Create and configure the FastAPI application."""
     
-    # Scan storage once on startup for lightning-fast dashboard responses
+    # Scan storage once on startup for fast dashboard responses
     scan_storage_on_startup()
     
     app = FastAPI(
         title="LOOP",
-        description="Little Optical Output Pal - Your pocket-sized animation companion!",
+        description="Little Optical Output Pal - Rock solid Pi deployment",
         version="1.0.0",
         docs_url="/docs" if config and config.web.debug else None,
         redoc_url="/redoc" if config and config.web.debug else None
     )
     
-    # Configure request limits for large file uploads
-    app.router.default_response_class.media_type = "application/json"
-    
-    # Add middleware in correct order (innermost to outermost)
+    # Simple middleware stack - no WebSocket complexity
     app.add_middleware(CacheControlMiddleware)
     app.add_middleware(RequestLoggingMiddleware)
-    # New: stream upload progress to clients
-    from .core.middleware import UploadProgressMiddleware
-    app.add_middleware(UploadProgressMiddleware)
-    app.add_middleware(ConcurrencyLimitMiddleware, max_concurrent=config.web.max_concurrent_requests if config else 16)
+    app.add_middleware(ConcurrencyLimitMiddleware, max_concurrent=config.web.max_concurrent_requests if config else 8)
     app.add_middleware(ErrorHandlingMiddleware)
     
-    # Gzip compression for JSON/text responses (5-10x smaller transfers!)
-    # Exclude file uploads - only compress outgoing responses
+    # Lightweight compression for JSON responses only
     from .core.middleware import ConditionalGZipMiddleware
     app.add_middleware(ConditionalGZipMiddleware, minimum_size=1000)
     
     # CORS middleware (outermost)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],  # In production, specify exact origins
+        allow_origins=["*"],  # Simplify for Pi deployment
         allow_credentials=True,
-        allow_methods=["*"],
+        allow_methods=["GET", "POST", "PUT", "DELETE"],  # Explicit methods only
         allow_headers=["*"],
-        max_age=3600,  # Cache preflight requests for 1 hour
+        max_age=3600,
     )
     
     # Determine paths
@@ -75,10 +68,10 @@ def create_app(
     media_raw_dir = backend_root / "media" / "raw"
     media_processed_dir = backend_root / "media" / "processed"
     
-    # SPA assets directory (deployed via deploy-frontend.sh)
+    # SPA assets directory
     spa_dir = Path(__file__).parent / "spa"
     
-    # Mount static file routes with optimized caching
+    # Mount static file routes with aggressive caching
     if (spa_dir / "_next").exists():
         app.mount("/_next", StaticFiles(directory=spa_dir / "_next"), name="next-static")
     if spa_dir.exists():
@@ -88,10 +81,8 @@ def create_app(
     media_raw_dir.mkdir(parents=True, exist_ok=True)
     media_processed_dir.mkdir(parents=True, exist_ok=True)
     
-    # Serve raw media files for frontend previews
+    # Serve media files
     app.mount("/media/raw", StaticFiles(directory=media_raw_dir), name="raw-media")
-    
-    # Serve processed media files for frontend display
     app.mount("/media/processed", StaticFiles(directory=media_processed_dir), name="processed-media")
     
     # Root SPA route
@@ -102,34 +93,28 @@ def create_app(
         if spa_index.exists():
             return FileResponse(spa_index)
         else:
-            # Fallback if frontend not deployed yet
             return """
             <html>
-                <head><title>LOOP - Deploy Required</title></head>
+                <head><title>LOOP - Backend Ready</title></head>
                 <body>
                     <h1>LOOP Backend Running</h1>
-                    <p>Frontend not deployed yet. Run deployment script:</p>
-                    <code>./deploy-frontend.sh</code>
+                    <p>Rock solid Pi deployment ready.</p>
                     <p><a href="/docs">View API Documentation</a></p>
                 </body>
             </html>
             """
     
-    # Favicon route to prevent 404 spam
+    # Favicon to prevent 404 spam
     @app.get("/favicon.ico")
     async def favicon():
-        """Serve favicon if available, otherwise return 204."""
-        favicon_path = spa_dir / "favicon.ico"
-        if favicon_path.exists():
-            return FileResponse(favicon_path)
-        # Return empty response if no favicon found
+        """Return empty response for favicon."""
         from fastapi import Response
         return Response(status_code=204)
     
-    # Register all API routes
+    # Register all API routes (no WebSocket routes)
     register_routers(app, display_player, wifi_manager, updater, config)
     
-    logger.info("FastAPI application created successfully")
+    logger.info("Hardened FastAPI application created (WebSocket-free)")
     return app
 
 

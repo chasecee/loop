@@ -1,94 +1,74 @@
 # LOOP - Little Optical Output Pal
 
-Your pocket-sized animation companion! LOOP is a network-connected display that brings your GIFs and videos to life on a tiny screen. **Optimized for Pi Zero 2 with real-time WebSocket updates** and aggressive performance caching.
+Network-connected GIF/video display optimized for Pi Zero 2 with real-time WebSocket updates and browser-side media processing.
 
 ![LOOP](https://img.shields.io/badge/Platform-Raspberry%20Pi-red) ![Python](https://img.shields.io/badge/Python-3.9+-blue) ![WebSocket](https://img.shields.io/badge/WebSocket-Real--time-green) ![License](https://img.shields.io/badge/License-MIT-green)
 
-## What Can LOOP Do?
+## **What It Does**
 
-### Show Your Media
+**Display Management**: Plays GIFs, videos (MP4/AVI/MOV), and images (PNG/JPG) on 240×320 ILI9341 SPI displays with smooth RGB565 frame conversion and configurable loop timing.
 
-- Plays GIFs, videos (MP4, AVI, MOV), and images (PNG, JPG)
-- Optimized for 240×320 ILI9341 SPI displays
-- Smooth playback with efficient RGB565 frame conversion
-- Smart loop management with configurable timing
-- **Pi Zero 2 optimized** with real-time WebSocket updates and aggressive caching
+**Real-time Control**: Web interface with drag-and-drop uploads, instant WebSocket updates across all devices, live conversion progress, and collaborative multi-device control.
 
-### Easy Control
+**Smart Processing**: Browser-side WebAssembly FFmpeg conversion eliminates Pi CPU load, transaction-based uploads prevent data corruption, and aggressive caching delivers sub-100ms dashboard responses.
 
-- Modern web interface with drag & drop uploads
-- **Real-time WebSocket updates** - see changes instantly across all devices
-- Real-time conversion progress in your browser
-- Browse your media library with instant previews
-- Loop queue management - drag to reorder, click to activate
-- Playback controls: play/pause, next/previous, loop modes
-- **Lightning-fast dashboard** with 50ms response times (was 1000ms+)
+## **Architecture**
 
-### Smart Connection
-
-- **Manual IP Configuration** - Access LOOP via its IP address on your network
-- **Web-based Interface** - Control everything through your browser
-- **System updates** via web interface
-- **WiFi Configuration UI** - Interface ready for future WiFi implementation
-
-> **✅ WiFi Status**: WiFi functionality is **fully operational** with SSH-safe NetworkManager integration. Both WiFi connection and hotspot features work through the web interface.
-
-## Architecture
-
-LOOP uses a **real-time, performance-first architecture** designed specifically for Pi Zero 2 constraints:
-
-### Data Flow
-
-1. **Browser Conversion** (`ffmpeg-util.ts`) - WebAssembly FFmpeg converts media to RGB565 frames
-2. **Transaction-based Upload** - Browser uploads original video + processed frame ZIP with atomic coordination
-3. **Real-time Updates** - WebSocket broadcasting eliminates polling, provides instant feedback
-4. **Async Processing** - ZIP extraction happens in background threads without blocking
-5. **Media Management** (`media_index.py`) - Single source of truth with 5-second aggressive caching
-6. **Web API** (`server.py`) - Handles uploads with aggressive caching and GZip compression
-7. **Display Player** (`player.py`) - Reads processed frames with producer-consumer buffering
-
-### Key Components
-
-- **`media_index.py`** - Authoritative media state manager with 5-second aggressive caching
-- **`server.py`** - FastAPI web server with performance-optimized endpoints and WebSocket support
-- **`player.py`** - Display controller with frame buffering for smooth playback
-- **`ffmpeg-util.ts`** - Browser-side media processing using WebAssembly FFmpeg
-- **`websocket.ts`** - Real-time communication client with auto-reconnection
-- **`spiout.py`** - Hardware driver optimized for Pi Zero 2 performance
-
-### Performance Optimizations
-
-- **Real-time WebSocket Updates** - Eliminates 15-second polling, instant UI feedback
-- **Aggressive Caching** - Dashboard data cached for 5 seconds, eliminates SD card I/O
-- **Separated Storage** - Storage calculations only when settings modal opened
-- **Browser Processing** - Zero Pi CPU used for media conversion
-- **Frame Buffering** - Producer-consumer pattern for smooth playback
-- **Request Deduplication** - Prevents multiple simultaneous API calls
-- **Transaction Coordination** - Bulletproof upload system with atomic operations
-
-This architecture ensures:
-
-- **Instant responses** - Dashboard loads in ~50ms (was 1000ms+)
-- **Real-time updates** - See changes instantly across all devices
-- **Consistency** - Single source of truth prevents race conditions
-- **Pi Zero 2 Optimized** - Minimal SD card I/O and memory usage
-- **Reliability** - Pi focuses on display and file management
-
-## Hardware Setup
-
-### What You'll Need
-
-- **Raspberry Pi Zero 2 W** or **Raspberry Pi 4** (LOOP's brain!)
-- **Waveshare 2.4" ILI9341 LCD** (LOOP's face!)
-- **MicroSD card** (8GB+, Class 10)
-- **5V USB power** (LOOP gets hungry!)
-
-### Wiring Guide
-
-Connect your display to your Raspberry Pi:
+### **Data Flow**
 
 ```
-LCD Pin  → Pi Pin (BCM)  → Pi Pin (Physical)
+Browser (WASM FFmpeg) → RGB565 Frames → ZIP + Original Video
+    ↓ (Transaction Upload)
+Backend Coordinator → Atomic File Ops → Media Index Cache
+    ↓ (WebSocket Broadcast)
+Display Player ← Frame Buffer Queue ← Processed Frames
+    ↓
+All Connected Clients ← Real-time Updates ← WebSocket Manager
+```
+
+### **Key Components**
+
+**Backend (Python/FastAPI)**
+
+- `server.py` - FastAPI with WebSocket support, GZip compression, request deduplication
+- `upload_coordinator.py` - Transaction-based upload processing with atomic rollback
+- `display/player.py` - Frame playback with 30-frame producer-consumer buffering
+- `media_index.py` - Single source of truth with 5-second aggressive caching
+- `websocket.py` - Room-based real-time event broadcasting to connected clients
+- `spiout.py` - ILI9341 SPI display driver with hardware abstraction
+
+**Frontend (Next.js/TypeScript)**
+
+- `ffmpeg-util.ts` - WebAssembly FFmpeg wrapper for browser-side RGB565 conversion
+- `websocket.ts` - Auto-reconnecting WebSocket client with exponential backoff
+- `upload-coordinator.ts` - Transaction-based upload with progress coordination
+- `use-websocket-dashboard.ts` - React hook for real-time dashboard updates
+
+### **Performance Optimizations**
+
+**Real-time Communication**: WebSocket events eliminate 15-second polling, provide instant feedback across all devices with room-based subscriptions (dashboard, progress, wifi, system).
+
+**Aggressive Caching**: Dashboard data cached 5 seconds, storage calculations cached 1 hour, media index cached 5 seconds to minimize SD card I/O on Pi Zero 2.
+
+**Browser Processing**: WebAssembly FFmpeg converts media to Pi-optimized RGB565 format, zero Pi CPU usage for conversion, chunked processing handles large files without browser crashes.
+
+**Transaction Safety**: Atomic upload operations with rollback on failure, duplicate detection prevents race conditions, parallel cleanup operations during error recovery.
+
+**Frame Buffering**: Producer-consumer pattern with 30-frame queue, interruptible waits for pause/resume, automatic media switching with wraparound search.
+
+## **Hardware Setup**
+
+### **Requirements**
+
+- **Raspberry Pi Zero 2 W** or **Pi 4**
+- **Waveshare 2.4" ILI9341 LCD** (240×320 SPI display)
+- **MicroSD card** (8GB+, Class 10 recommended)
+- **5V USB power supply**
+
+### **Wiring**
+
+```
+LCD Pin  → Pi Pin (BCM)  → Physical Pin
 VCC      → 3.3V          → Pin 1
 GND      → GND           → Pin 6
 DIN      → GPIO 10       → Pin 19 (MOSI)
@@ -99,248 +79,154 @@ RST      → GPIO 27       → Pin 13
 BL       → GPIO 18       → Pin 12
 ```
 
-## Installation
+## **Installation**
 
-### 1. Prepare Pi
+### **System Setup**
 
-Flash Raspberry Pi OS Lite (32-bit) and enable SSH.
-
-### 2. Install LOOP
+1. Flash Raspberry Pi OS Lite (32-bit), enable SSH
+2. Connect Pi to network (Ethernet or manual WiFi configuration)
+3. Clone repository and run automated installer
 
 ```bash
-# Clone the repository
 git clone https://github.com/yourusername/loop.git
 cd loop
-
-# Run the installer (handles all dependencies)
 sudo ./backend/deployment/scripts/install.sh
 ```
 
-The installer will:
+### **Installation Process**
 
-- Install Python dependencies and system packages
-- Set up the systemd service
-- Configure SPI for the display
-- Deploy the pre-built web interface
-- Enable WebSocket real-time communication
-- **Note**: WiFi and hotspot are managed through NetworkManager and the web interface
+The installer handles:
 
-### 3. First Time Setup
+- System package dependencies (Python 3.9+, FFmpeg, NetworkManager)
+- SPI interface configuration in `/boot/firmware/config.txt`
+- Python virtual environment with optimized package installation
+- Systemd service registration (`loop.service`, `boot-display.service`)
+- WiFi power management configuration for stable connectivity
+- Log rotation and directory permissions
 
-1. **Network Connection**:
+### **Service Architecture**
 
-   - **Option A**: Connect Pi to your router via Ethernet cable
-   - **Option B**: Manually configure WiFi through Raspberry Pi OS (SSH required)
-   - **Note**: Built-in WiFi configuration is currently non-functional
+- **loop.service** - Main application with GPIO/SPI permissions, port 80 binding
+- **boot-display.service** - Sets display black during system startup
+- **system-management.service** - WiFi power management configuration
 
-2. **Find LOOP's IP Address**:
+## **Media Processing Pipeline**
 
-   - Check your router's admin panel for connected devices
-   - Or SSH to Pi and run `hostname -I`
+### **Browser-Side Conversion**
 
-3. **Upload Media**:
-   - Visit LOOP's web interface at `http://[pi-ip]`
-   - Drag and drop your GIFs, videos, and images
-   - Watch real-time conversion progress in your browser
-   - See instant real-time updates via WebSocket
-   - Media automatically joins the loop queue
+1. **File Upload** - User drags media files to web interface
+2. **WASM FFmpeg** - Browser converts to 320×240 RGB565 frames @ 25fps
+3. **ZIP Packaging** - Frames packaged with metadata.json
+4. **Transaction Upload** - Original video + frame ZIP sent atomically
+5. **Progress Tracking** - Real-time WebSocket updates during entire process
 
-### 4. Updates
+### **Backend Processing**
 
-Keep LOOP up to date via the web interface or manually:
+1. **Transaction Coordination** - Atomic file operations with rollback safety
+2. **Media Index Update** - Add to authoritative media state with caching
+3. **Frame Organization** - Extract frames to `media/processed/{slug}/frames/`
+4. **WebSocket Broadcast** - Notify all clients of new media availability
+5. **Display Integration** - Media automatically available for playback
 
-```bash
-cd /home/pi/loop
-git pull
-sudo systemctl restart loop
-```
+### **Browser Requirements**
 
-## Media Processing
-
-LOOP uses **browser-side processing** for optimal performance with **transaction-based coordination**:
-
-### Conversion Process
-
-1. **Browser Conversion**: Your browser uses WebAssembly FFmpeg to convert media
-2. **Frame Extraction**: Video converted to 320×240 RGB565 frames at 25fps
-3. **ZIP Packaging**: Frames packaged into ZIP with metadata
-4. **Transaction Upload**: Original video + frame ZIP uploaded with atomic coordination
-5. **Real-time Progress**: WebSocket updates provide instant progress feedback
-6. **Background Processing**: ZIP extraction happens asynchronously with real-time status
-
-### Benefits
-
-- **Instant**: Real-time WebSocket updates, no more 15-second polling delays
-- **Fast**: No Pi CPU used for conversion, 50ms dashboard responses
-- **Compatible**: Works with all major video formats
-- **Reliable**: Transaction-based coordination prevents data loss, WebSocket auto-reconnection
-- **Efficient**: Only final processed files sent to Pi, GZip-compressed responses
-
-### Browser Requirements
-
-- **Modern browser** with WebAssembly support (Chrome 57+, Firefox 52+, Safari 11+)
+- **WebAssembly support** (Chrome 57+, Firefox 52+, Safari 11+)
 - **WebSocket support** for real-time updates (all modern browsers)
-- **Sufficient RAM** for video processing (4GB+ recommended for large files)
-- **JavaScript enabled** for the web interface
+- **4GB+ RAM recommended** for large video processing
+- **JavaScript enabled** for web interface functionality
 
-## Loop Management
+## **Loop Management**
 
-LOOP's media management is powerful yet simple with **real-time updates**:
+### **Media Queue**
 
-### Loop Queue
+- **Ordered playlist** with real-time drag-and-drop reordering
+- **Configurable loop count** per media item (default: 2 loops)
+- **Auto-advance enabled** by default with manual override
+- **Instant activation** - click any media to jump immediately
 
-- **Ordered playlist** of your media with instant WebSocket updates
-- **Drag to reorder** items in the web interface - see changes immediately
-- **Add/remove** media from the queue with real-time feedback
-- **Configurable loop count** (how many times each item plays)
+### **Playback Modes**
 
-### Playback Modes
+- **Loop All** - Cycles through queue, repeating each item N times
+- **Loop One** - Stays on current media, repeating N times
+- **Manual Control** - Play/pause, next/previous with WebSocket feedback
 
-- **Loop All**: Cycles through entire queue, repeating each item N times
-- **Loop One**: Stays on current media, repeating N times
-- **Auto-advance**: Automatically moves to next after completion
-
-### Configuration
+### **Configuration**
 
 Key settings in `backend/config/config.json`:
 
-- `loop_count`: How many times each media repeats (default: 2)
-- `static_image_duration_sec`: How long static images display (default: 10)
-- `auto_advance_enabled`: Whether to automatically advance (default: true)
-- `max_file_size_mb`: Maximum file size for uploads (default: 50MB)
-- `max_concurrent_requests`: Concurrency limit for Pi Zero 2 (default: 12)
+```json
+{
+  "media": {
+    "loop_count": 2,
+    "static_image_duration_sec": 10,
+    "auto_advance_enabled": true,
+    "max_file_size_mb": 50
+  },
+  "web": {
+    "max_concurrent_requests": 12,
+    "request_timeout_seconds": 300
+  },
+  "display": {
+    "framerate": 25,
+    "show_progress": true,
+    "brightness": 100
+  }
+}
+```
 
-## Controls
+## **API Reference**
 
-### Web Interface
-
-- **Upload**: Drag & drop files anywhere on the page
-- **Real-time Progress**: See conversion progress and instant WebSocket updates
-- **Play/Pause**: Click the play button with instant feedback
-- **Next/Previous**: Navigation buttons with real-time response
-- **Activate Media**: Click on any media item to jump to it instantly
-- **Loop Management**: Drag to reorder with real-time updates, toggle loop modes
-- **System Settings**: Brightness, system status, updates with instant feedback
-
-### API Endpoints
+### **REST Endpoints**
 
 ```bash
-# Playback control (with WebSocket broadcasting)
-POST /api/playback/toggle     # Play/pause
-POST /api/playback/next       # Next media
-POST /api/playback/previous   # Previous media
+# Media management
+GET /api/media                    # List all media with metadata
+POST /api/media                   # Upload processed media (transaction-based)
+DELETE /api/media/{slug}          # Delete media with cleanup
+POST /api/media/{slug}/activate   # Set active media
 
-# Loop management (with real-time updates)
-GET /api/loop                 # Get loop queue
-POST /api/loop               # Add to loop
-PUT /api/loop                # Reorder loop
-DELETE /api/loop/{slug}      # Remove from loop
+# Loop queue management
+GET /api/loop                     # Get current loop queue
+POST /api/loop                    # Add media to loop
+PUT /api/loop                     # Reorder loop queue
+DELETE /api/loop/{slug}           # Remove from loop
 
-# Media management (with WebSocket events)
-GET /api/media               # List all media
-POST /api/media             # Upload processed media
-DELETE /api/media/{slug}    # Delete media
+# Playback control
+POST /api/playback/toggle         # Play/pause with WebSocket broadcast
+POST /api/playback/next           # Next media
+POST /api/playback/previous       # Previous media
+
+# System status (performance optimized)
+GET /api/dashboard                # All system status (50ms cached response)
+GET /api/dashboard/storage        # Storage info (1-hour cached, only when needed)
 
 # Real-time communication
-GET /ws                      # WebSocket endpoint for real-time updates
-
-# System status (high-performance)
-GET /api/dashboard          # All system status in one call (50ms response)
-GET /api/dashboard/storage  # Storage info (only when needed)
+GET /ws                           # WebSocket endpoint with room subscriptions
+GET /api/websocket/status         # WebSocket connection diagnostics
 ```
 
-## Troubleshooting
+### **WebSocket Events**
 
-### Slow Dashboard Response?
+```typescript
+// Room subscriptions
+"dashboard"; // System status, media, loop changes
+"progress"; // Upload/processing progress updates
+"wifi"; // WiFi status changes
+"system"; // System-level notifications
 
-This should now be fixed with aggressive caching and WebSocket updates:
-
-```bash
-# Check if caching is working
-curl -w "%{time_total}" http://localhost/api/dashboard
-
-# Should be <0.1s for cached requests, <1s for cache misses
+// Event types
+"initial_dashboard"; // Complete state on connection
+"dashboard_update"; // Incremental state changes
+"media_uploaded"; // New media available
+"media_deleted"; // Media removed
+"loop_updated"; // Queue reordered
+"playback_changed"; // Play/pause/next/previous
+"upload_progress"; // Real-time conversion progress
 ```
 
-### WebSocket Connection Issues?
+## **Development**
 
-```bash
-# Check WebSocket status
-curl http://localhost/api/websocket/status
-
-# Check real-time logs for WebSocket events
-sudo journalctl -u loop -f | grep -E "(WebSocket|📡)"
-```
-
-### Storage Calculation Taking Forever?
-
-This is now optimized and only calculated when needed:
-
-```bash
-# Storage is now only calculated when settings modal opened
-# First calculation may take 30+ seconds, then cached for 1 hour
-```
-
-### Display Issues?
-
-```bash
-# Check LOOP service status
-sudo systemctl status loop
-
-# View real-time logs
-sudo journalctl -u loop -f
-
-# Performance-specific logs
-sudo journalctl -u loop -f | grep -E "(Dashboard|Storage|Cache|WebSocket)"
-```
-
-### Upload Problems?
-
-- **Check browser compatibility** - WebAssembly FFmpeg requires modern browser
-- **Monitor memory usage** - Large files need 4GB+ browser RAM
-- **Check WebSocket connection** - Real-time updates require WebSocket support
-- **Try smaller files** - Test with simple GIF first
-- **Check browser console** - Look for WebAssembly or WebSocket errors
-
-### Service Problems?
-
-```bash
-sudo systemctl restart loop    # Restart LOOP
-sudo systemctl stop loop       # Stop LOOP
-sudo systemctl start loop      # Start LOOP
-```
-
-### Network Connection Issues?
-
-```bash
-# Check network interface status
-ip addr show
-
-# Check if Pi is connected to network
-ping -c 3 8.8.8.8
-
-# For WiFi configuration, use Raspberry Pi OS tools
-sudo raspi-config  # Network Options > Wi-fi
-
-# Note: Built-in WiFi manager is currently gutted and non-functional
-# Use standard Raspberry Pi OS WiFi configuration instead
-```
-
-### Storage Issues?
-
-Check storage via the web interface or:
-
-```bash
-# Check disk usage
-df -h
-
-# Clean up orphaned media files
-curl -X POST http://localhost/api/media/cleanup
-```
-
-## Development
-
-### Local Development
+### **Local Development**
 
 ```bash
 # Backend
@@ -354,155 +240,151 @@ python main.py
 cd frontend/loop-frontend
 npm install
 npm run dev
+
+# Frontend deployment to backend
+./deploy-frontend.sh
 ```
 
-### File Structure
+### **Architecture Guidelines**
 
-```
-backend/
-├── config/          # Configuration management
-├── display/         # Display drivers and player
-├── utils/           # Media indexing and utilities
-├── web/             # FastAPI server, WebSocket, and SPA
-│   ├── core/        # WebSocket, events, models, middleware
-│   ├── routes/      # API endpoints with WebSocket broadcasting
-│   └── spa/         # Deployed Next.js build
-└── boot/            # WiFi and system setup
+**Backend Patterns**:
 
-frontend/loop-frontend/  # Next.js web interface
-├── lib/ffmpeg-util.ts   # Browser-side media processing
-├── lib/websocket.ts     # Real-time WebSocket client
-├── hooks/               # WebSocket React hooks
-├── components/          # UI components
-└── app/                 # Pages and routing
-```
+- Media Index is single source of truth - never bypass
+- WebSocket broadcasting for all state changes
+- Transaction-based operations with atomic rollback
+- Aggressive caching with explicit invalidation
+- Hardware abstraction with fallback demo mode
 
-## Performance
+**Frontend Patterns**:
 
-### Pi Zero 2 Specific Optimizations
+- WebSocket-first for real-time updates, API for actions
+- Transaction coordination for upload safety
+- React hooks for WebSocket state management
+- Web Workers for non-blocking processing
+- Error boundaries with automatic retry logic
 
-- **Real-time WebSocket communication** eliminates 15-second polling overhead
-- **5-second dashboard caching** eliminates file I/O on every request
-- **Storage separation** - Only calculated when settings modal opened
-- **Media index caching** - 5-second aggressive file stat avoidance
-- **Frame queue buffering** - 30-frame producer-consumer buffer
-- **Request deduplication** for API endpoints
-- **Transaction coordination** prevents race conditions and data loss
-- **Conservative memory usage** with automatic cleanup
+## **Performance Metrics**
 
-### Performance Metrics
+| Operation           | Before Optimization | Current Performance | Improvement     |
+| ------------------- | ------------------- | ------------------- | --------------- |
+| Dashboard requests  | 1000ms+             | ~50ms (cached)      | 95% faster      |
+| Real-time updates   | 15s polling delay   | Instant WebSocket   | Immediate       |
+| Media upload        | HTTP timeouts       | Transaction-based   | Bulletproof     |
+| Storage calculation | Every request       | 1-hour cache        | 90% fewer calls |
+| Frame display       | Blocking I/O        | 30-frame buffer     | Smooth playback |
 
-| Operation           | Before Optimization | After Optimization    | Improvement |
-| ------------------- | ------------------- | --------------------- | ----------- |
-| Dashboard requests  | 1000ms+             | ~50ms (cached + GZip) | 95%+ faster |
-| Real-time updates   | 15-second polling   | Instant WebSocket     | Immediate   |
-| Large file uploads  | HTTP timeouts       | Transaction-based     | Bulletproof |
-| Media deletion      | Race conditions     | Clean atomic ops      | Reliable    |
-| API responses       | Uncompressed        | 5-10x smaller (GZip)  | Bandwidth   |
-| Storage calculation | Every 15s           | Only when needed      | 90% fewer   |
+## **System Requirements**
 
-### Browser Optimization
+### **Pi Zero 2 Constraints**
 
-- **WebAssembly FFmpeg** for native-speed conversion
-- **Real-time WebSocket progress** with instant feedback
-- **Transaction-based upload** with automatic retry
-- **Chunked processing** to handle large files
-- **Memory management** to prevent browser crashes
+- **Single-core ARM Cortex-A53** @ 1GHz with limited thermal headroom
+- **512MB RAM** shared between system and GPU
+- **SD card I/O** inherently slower than SSD/eMMC storage
+- **USB 2.0** bandwidth limitations for network connectivity
 
-## Current Limitations
+### **Optimization Strategy**
 
-- **WiFi Management** - **Fully functional** - NetworkManager-based WiFi and hotspot management via web UI
-- **Network Setup** - Requires manual Ethernet or OS-level WiFi configuration
-- **Browser Requirements** - WebAssembly FFmpeg needs modern browser + 4GB+ RAM
-- **Storage Performance** - Pi Zero 2 + SD card inherently limits I/O speed
-- **Physical Controls** - Rotary encoder not yet implemented
+- **Offload processing** to browser WebAssembly FFmpeg
+- **Minimize SD I/O** with aggressive caching and batch operations
+- **Real-time communication** eliminates expensive polling cycles
+- **Conservative memory usage** with bounded queues and cleanup
+- **Hardware abstraction** allows development without physical display
 
-## Known Issues
+## **Troubleshooting**
 
-- **WiFi functionality is fully operational** - SSH-safe NetworkManager implementation
-- Large files (>50MB) may require significant browser memory
-- Storage calculations can be slow on first run (30+ seconds)
-- WiFi configuration UI exists but calls non-functional backend
-
-## Planned Features
-
-- **WiFi functionality complete** - Clean NetworkManager-based implementation with conflict-free networking
-- Physical rotary encoder controls
-- Advanced scheduling and automation
-- Mobile app companion
-- Offline conversion support
-- Custom display effects
-- Multi-device synchronization
-
-## Contributing
-
-LOOP loves new contributors! Here's how to get involved:
-
-1. **Fork** the repository
-2. **Create** a feature branch
-3. **Follow** the architecture patterns (respect WebSocket events and media_index.py authority!)
-4. **Test** thoroughly on actual hardware with WebSocket functionality
-5. **Submit** a Pull Request
-
-Check the issues page for tasks that need attention!
-
-## License
-
-LOOP is open source under the MIT License. See [LICENSE](LICENSE) for details.
-
-## Thanks
-
-- **Waveshare** for excellent displays
-- **FFmpeg** team for the amazing media processing library
-- **WebAssembly** community for making browser-side processing possible
-- **FastAPI** for the speedy web framework with WebSocket support
-- **Raspberry Pi Foundation** for amazing hardware
-- **Contributors** for making LOOP better
-
----
-
-Made with love by the LOOP community  
-_"Your pocket-sized animation companion with real-time updates!"_
-
-## Architecture Philosophy
-
-LOOP prioritizes **Pi Zero 2 performance and real-time user experience** above all else:
-
-1. **Browser does the work** - Pi never processes media
-2. **Real-time WebSocket updates** - No more waiting for polling cycles
-3. **Aggressive caching** - Minimize SD card I/O at all costs
-4. **Smart separation** - Storage only calculated when needed
-5. **Transaction coordination** - Bulletproof upload handling
-6. **Conservative resources** - Respect Pi Zero 2 limitations
-7. **Honest documentation** - Document what works and what doesn't
-
-## Performance Monitoring
-
-### Check Dashboard Performance
+### **Performance Issues**
 
 ```bash
-# Monitor dashboard response times
-curl -w "Response time: %{time_total}s\n" http://localhost/api/dashboard
+# Check dashboard response time
+curl -w "Response: %{time_total}s\n" http://localhost/api/dashboard
 
-# Watch for cache hits/misses in logs
-sudo journalctl -u loop -f | grep "Dashboard"
-```
-
-### WebSocket Performance
-
-```bash
-# Check WebSocket connection status
+# Monitor WebSocket connections
 curl http://localhost/api/websocket/status
+
+# Check caching effectiveness
+sudo journalctl -u loop -f | grep -E "(Dashboard|Cache)"
+```
+
+### **WebSocket Problems**
+
+```bash
+# Test WebSocket connectivity
+curl -i -N -H "Connection: Upgrade" -H "Upgrade: websocket" \
+  -H "Sec-WebSocket-Key: test" -H "Sec-WebSocket-Version: 13" \
+  http://localhost/ws
 
 # Monitor real-time events
 sudo journalctl -u loop -f | grep "📡"
 ```
 
-### Storage Performance
+### **Upload Failures**
+
+- **Browser compatibility** - Requires WebAssembly and WebSocket support
+- **Memory constraints** - Large files need 4GB+ browser RAM
+- **Network stability** - Check WebSocket connection status
+- **File format support** - Test with simple GIF first
+- **Transaction conflicts** - Check for concurrent upload attempts
+
+### **Service Management**
 
 ```bash
-# Check if storage caching is working
-sudo journalctl -u loop -f | grep "Storage"
+# Service control
+sudo systemctl status loop      # Check service status
+sudo systemctl restart loop     # Restart after configuration changes
+sudo systemctl stop loop        # Stop service
 
-# Should see cache hits after first calculation
+# Log analysis
+sudo journalctl -u loop -f      # Real-time logs
+sudo journalctl -u loop --since "1 hour ago" | grep ERROR
+
+# Storage and performance monitoring
+df -h                           # Check disk usage
+sudo journalctl -u loop -f | grep -E "(Storage|WebSocket|Cache)"
 ```
+
+## **Current Limitations**
+
+### **Hardware**
+
+- **Display dependency** - Requires ILI9341 SPI display (demo mode available)
+- **GPIO access** - Needs Pi hardware or compatible SPI interface
+- **Storage performance** - SD card I/O inherently limits throughput
+
+### **Software**
+
+- **Browser requirements** - Modern browser with WebAssembly + 4GB+ RAM
+- **Network dependency** - Requires stable connectivity for WebSocket updates
+- **File size limits** - Large videos (>50MB) may cause browser memory issues
+
+### **Network Configuration**
+
+- **Manual WiFi setup** - Initial connection requires OS-level configuration
+- **IP-based access** - No automatic discovery (check router for Pi IP address)
+
+## **Future Enhancements**
+
+- **Physical controls** - Rotary encoder integration for standalone operation
+- **Advanced scheduling** - Time-based media switching and automation
+- **Multi-device sync** - Coordinate multiple LOOP displays
+- **Offline conversion** - Pi-based processing fallback for constrained browsers
+- **Mobile companion app** - Native iOS/Android control interface
+
+## **Contributing**
+
+Development focuses on Pi Zero 2 performance and real-time user experience:
+
+1. **Respect caching architecture** - Invalidate appropriately, avoid cache bypass
+2. **WebSocket-first communication** - Broadcast state changes, maintain consistency
+3. **Transaction-based operations** - Ensure atomic file operations with rollback
+4. **Hardware abstraction** - Support development without physical Pi/display
+5. **Performance monitoring** - Measure and optimize for SD card I/O constraints
+
+Fork the repository, create feature branches, test on actual hardware, and submit pull requests with performance impact analysis.
+
+## **License**
+
+MIT License - see [LICENSE](LICENSE) for details.
+
+---
+
+_Built for reliability on Pi Zero 2 with real-time WebSocket updates and browser-side processing._

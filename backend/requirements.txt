@@ -1,35 +1,28 @@
+# HARDENED LOOP Requirements - Minimal, Pi-optimized
+
 # Core web framework
 fastapi==0.104.1
-uvicorn==0.24.0
-python-multipart==0.0.6
+uvicorn[standard]==0.24.0
 
-# WebSocket support - uvicorn needs websockets library for WebSocket handling
-websockets==12.0
+# GPIO/Hardware (Pi specific)
+RPi.GPIO==0.7.1
+spidev==3.6
 
-# Image/video processing
-pillow==10.1.0
+# Image processing (minimal)
+Pillow==10.1.0
 
-
-# Hardware interfaces (Pi specific)
-spidev==3.6; platform_machine == 'armv7l' or platform_machine == 'aarch64'
-
-# System utilities  
+# System utilities
 psutil==5.9.6
+pydantic==2.5.1
+
+# Network utilities
 requests==2.31.0
-python-dotenv==1.0.0
-systemd-python==235; platform_machine == 'armv7l' or platform_machine == 'aarch64'
 
-# Optional (for development)
-black==23.11.0
-isort==5.12.0
+# Systemd integration
+systemd-python==235
 
-# Network management
-netifaces==0.11.0
-
-# Additional dependencies
-RPi.GPIO==0.7.1; platform_machine == 'armv7l' or platform_machine == 'aarch64'
-# opencv-python-headless==4.8.1.78  # Using system package (python3-opencv) to avoid 2+ hour build on Pi Zero
+# File handling
 aiofiles==23.2.1
 
-# Avoid h11 Content-Length bug
-h11>=0.14 
+# Time/date utilities
+python-dateutil==2.8.2 

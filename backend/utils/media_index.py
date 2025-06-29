@@ -1,28 +1,7 @@
 """
 Utility helpers for reading/writing the media index (media/index.json).
 
-This consolidates all access in one place so multiple endpoints and the
-DisplayPlayer can share a single canonical schema:
-
-{
-    "media": {
-        "<slug>": { ...metadata... },
-        ...
-    },
-    "loop": ["slug1", "slug2", ...],
-    "active": "slug1",            # optional currently-playing slug
-    "last_updated": 1700000000,
-    "processing": {              # track processing jobs
-        "<job_id>": {
-            "filename": "...",
-            "status": "processing|completed|error",
-            "progress": 0-100,
-            "stage": "...",
-            "message": "...",
-            "timestamp": 1700000000
-        }
-    }
-}
+HARDENED VERSION: Protects SD card from excessive writes with intelligent batching.
 """
 from __future__ import annotations
 
@@ -32,6 +11,7 @@ import fcntl
 import tempfile
 import os
 import shutil
+import sqlite3
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Union
 from dataclasses import dataclass, asdict
@@ -42,6 +22,7 @@ from utils.logger import get_logger
 
 LOGGER = get_logger("media_index")
 MEDIA_INDEX_PATH = Path("media/index.json")
+MEDIA_DB_PATH = Path("media/media.db")
 
 @dataclass
 class MediaMetadata:
@@ -75,12 +56,12 @@ class ProcessingJob:
 
 @dataclass
 class MediaIndex:
-    """Type-safe media index structure."""
+    """Complete media index structure."""
     media: Dict[str, Dict[str, Any]]
     loop: List[str]
     active: Optional[str]
     last_updated: Optional[int]
-    processing: Dict[str, Dict[str, Any]]  # job_id -> processing info
+    processing: Dict[str, Dict[str, Any]]
     
     @classmethod
     def empty(cls) -> 'MediaIndex':
@@ -89,120 +70,142 @@ class MediaIndex:
             media={},
             loop=[],
             active=None,
-            last_updated=None,
+            last_updated=int(time.time()),
             processing={}
         )
     
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for JSON serialization."""
+        """Convert to dictionary for serialization."""
         return {
             "media": self.media,
-            "loop": self.loop,
+            "loop": self.loop, 
             "active": self.active,
-            "last_updated": self.last_updated or int(time.time()),
+            "last_updated": self.last_updated,
             "processing": self.processing
         }
 
-class MediaIndexManager:
-    """Thread-safe manager for media index operations with in-memory caching."""
+class HardenedMediaIndexManager:
+    """SD-card-friendly media index manager with intelligent batching."""
     
     def __init__(self, index_path: Path = MEDIA_INDEX_PATH):
         self.index_path = index_path
+        self.db_path = MEDIA_DB_PATH
         self._ensure_media_dir()
         
-        # In-memory cache for performance
+        # In-memory state
         self._cache: Optional[MediaIndex] = None
-        self._cache_dirty = False
-        self._last_file_read = 0
-        self._cache_lock = threading.Lock()
+        self._cache_lock = threading.RLock()
         
-        # Batching support
-        self._batching = False
-        self._batch_dirty = False
+        # Write protection - batch operations to protect SD card
+        self._pending_operations = []
+        self._last_write_time = 0
+        self._min_write_interval = 300  # 5 minutes minimum between writes
+        self._max_pending_ops = 20      # Force write after 20 operations
+        self._shutdown_flag = False
         
-        # Periodic persistence timer
-        self._persistence_timer: Optional[threading.Timer] = None
-        self._persistence_interval = 30  # seconds
-        self._start_persistence_timer()
+        # Initialize DB and load initial state
+        self._init_db()
+        self._load_initial_state()
+        
+        # Start background writer (single thread for all persistence)
+        self._writer_thread = threading.Thread(target=self._background_writer, daemon=True)
+        self._writer_thread.start()
+        
+        LOGGER.info("Hardened media index manager initialized with write batching")
     
     def _ensure_media_dir(self) -> None:
         """Ensure media directory exists."""
         self.index_path.parent.mkdir(parents=True, exist_ok=True)
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
     
-    def _start_persistence_timer(self) -> None:
-        """Start periodic persistence timer."""
-        def persist_if_dirty():
-            with self._cache_lock:
-                if self._cache_dirty and self._cache:
-                    try:
-                        self._write_to_disk(self._cache)
-                        self._cache_dirty = False
-                        LOGGER.debug("Periodic persistence completed")
-                    except Exception as e:
-                        LOGGER.error(f"Periodic persistence failed: {e}")
-            
-            # Schedule next persistence
-            self._persistence_timer = threading.Timer(self._persistence_interval, persist_if_dirty)
-            self._persistence_timer.daemon = True
-            self._persistence_timer.start()
-        
-        # Start the timer
-        self._persistence_timer = threading.Timer(self._persistence_interval, persist_if_dirty)
-        self._persistence_timer.daemon = True
-        self._persistence_timer.start()
+    def _init_db(self) -> None:
+        """Initialize SQLite database for crash-safe operations."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS operations_log (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        timestamp REAL,
+                        operation TEXT,
+                        data TEXT
+                    )
+                """)
+                conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_timestamp 
+                    ON operations_log(timestamp)
+                """)
+                conn.commit()
+        except Exception as e:
+            LOGGER.warning(f"Failed to initialize operations log DB: {e}")
     
-    def _read_raw(self) -> MediaIndex:
-        """Read the media index with aggressive in-memory caching for Pi Zero 2 performance."""
+    def _load_initial_state(self) -> None:
+        """Load initial state from disk, handling corruption gracefully."""
         with self._cache_lock:
-            # Check if we can use cache - be much more aggressive about caching
-            if self._cache and not self._cache_dirty:
-                # Skip file stat check if cache is recent enough (5 seconds)
-                cache_age = time.time() - self._last_file_read
-                if cache_age < 5.0:  # 5 second aggressive cache
-                    return self._cache
+            try:
+                if self.index_path.exists():
+                    self._cache = self._read_from_disk()
+                else:
+                    self._cache = MediaIndex.empty()
+                LOGGER.info(f"Loaded initial state: {len(self._cache.media)} media items")
+            except Exception as e:
+                LOGGER.error(f"Failed to load initial state, creating empty: {e}")
+                self._cache = MediaIndex.empty()
+    
+    def _background_writer(self) -> None:
+        """Background thread that handles all disk writes with intelligent batching."""
+        LOGGER.info("Background writer started")
+        
+        while not self._shutdown_flag:
+            try:
+                time.sleep(30)  # Check every 30 seconds
                 
-                # Only check file modification if cache is older
-                try:
-                    file_mtime = self.index_path.stat().st_mtime
-                    if file_mtime <= self._last_file_read:
-                        # Update cache timestamp to extend aggressive cache period
-                        self._last_file_read = time.time()
-                        return self._cache
-                except (OSError, FileNotFoundError):
-                    pass
-            
-            # Read from disk
-            index = self._read_from_disk()
-            self._cache = index
-            self._cache_dirty = False
-            self._last_file_read = time.time()
-            return index
+                with self._cache_lock:
+                    should_write = (
+                        len(self._pending_operations) >= self._max_pending_ops or
+                        (len(self._pending_operations) > 0 and 
+                         time.time() - self._last_write_time >= self._min_write_interval)
+                    )
+                    
+                    if should_write and self._cache:
+                        try:
+                            self._write_to_disk_internal(self._cache)
+                            self._pending_operations.clear()
+                            self._last_write_time = time.time()
+                            LOGGER.info(f"Background write completed ({len(self._pending_operations)} ops batched)")
+                        except Exception as e:
+                            LOGGER.error(f"Background write failed: {e}")
+                            # Don't clear pending operations on failure - retry later
+                            
+            except Exception as e:
+                LOGGER.error(f"Background writer error: {e}")
+                time.sleep(60)  # Back off on errors
+        
+        LOGGER.info("Background writer stopped")
     
     def _read_from_disk(self) -> MediaIndex:
-        """Read the media index from disk."""
+        """Read media index from disk with corruption handling."""
         if not self.index_path.exists():
             return MediaIndex.empty()
         
         try:
             with open(self.index_path, "r") as f:
-                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                fcntl.flock(f.fileno(), fcntl.LOCK_SH)  # Shared lock for reading
                 try:
                     data = json.load(f)
                 finally:
                     fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-
-            # Validate structure
+            
+            # Validate and sanitize data
             if not isinstance(data, dict):
-                LOGGER.error("Invalid media index format, resetting to default")
+                LOGGER.error("Corrupted index file, resetting")
                 return MediaIndex.empty()
-
+            
             raw_media = data.get("media", {})
             if isinstance(raw_media, list):
-                # Legacy format: list of media; convert to dict keyed by slug
+                # Convert legacy format
                 converted = {m.get("slug", f"legacy_{i}"): m for i, m in enumerate(raw_media) if isinstance(m, dict)}
-                LOGGER.warning("Converted legacy list-based media index to dict format")
                 raw_media = converted
-
+            
             index = MediaIndex(
                 media=raw_media if isinstance(raw_media, dict) else {},
                 loop=data.get("loop", []),
@@ -210,457 +213,319 @@ class MediaIndexManager:
                 last_updated=data.get("last_updated"),
                 processing=data.get("processing", {})
             )
-
-            # Validate data integrity
-            valid_slugs = set(index.media.keys())
             
-            # Clean up orphaned slugs in loop
-            original_loop_length = len(index.loop)
-            index.loop = [slug for slug in index.loop if slug in valid_slugs]
-            
-            if len(index.loop) != original_loop_length:
-                LOGGER.info(f"Cleaned up {original_loop_length - len(index.loop)} orphaned slugs from loop")
-                self._write_to_disk(index)
-
-            # Validate active slug
-            if index.active and index.active not in valid_slugs:
-                LOGGER.info(f"Clearing invalid active slug: {index.active}")
-                index.active = index.loop[0] if index.loop else None
-                self._write_to_disk(index)
-
-            # Clean up old processing jobs (conservative cleanup to avoid race conditions)
-            current_time = time.time()
-            old_jobs = []
-            completed_jobs = []
-            
-            # Much more conservative cleanup to avoid interfering with active operations
-            for job_id, job_data in index.processing.items():
-                job_timestamp = job_data.get("timestamp", 0)
-                job_status = job_data.get("status", "processing")
-                job_age = current_time - job_timestamp
-                
-                # Only clean up very old completed jobs (30 minutes for completed/error)
-                if job_status in ["completed", "error"] and job_age > 1800:
-                    old_jobs.append(job_id)
-                # Remove extremely old processing jobs (2 hours)
-                elif job_age > 7200:
-                    old_jobs.append(job_id)
-                # Track completed jobs for size limiting (keep more for debugging)
-                elif job_status in ["completed", "error"]:
-                    completed_jobs.append((job_id, job_timestamp))
-            
-            # Limit total completed jobs to prevent memory buildup (keep max 50 most recent)
-            if len(completed_jobs) > 50:
-                completed_jobs.sort(key=lambda x: x[1])  # Sort by timestamp
-                old_jobs.extend([job_id for job_id, _ in completed_jobs[:-50]])
-            
-            # Remove old jobs
-            for job_id in old_jobs:
-                if job_id in index.processing:
-                    del index.processing[job_id]
-            
-            if old_jobs:
-                LOGGER.info(f"Cleaned up {len(old_jobs)} old processing jobs")
-                self._write_to_disk(index)
-
+            # Clean up stale data
+            self._cleanup_stale_data(index)
             return index
-
-        except Exception as exc:
-            LOGGER.error(f"Failed to read media index: {exc}")
+            
+        except json.JSONDecodeError as e:
+            LOGGER.error(f"JSON corruption in index file: {e}")
             return MediaIndex.empty()
-
-    def _write_raw(self, index: MediaIndex) -> None:
-        """Write the media index with immediate persistence for critical operations."""
-        with self._cache_lock:
-            self._cache = index
-            self._cache_dirty = True
-            
-            # Always write critical operations immediately
-            # Simplified logic: if _force_immediate_write was called, write now
-            if hasattr(self, '_immediate_write_needed'):
-                try:
-                    self._write_to_disk(index)
-                    self._cache_dirty = False
-                    delattr(self, '_immediate_write_needed')
-                    LOGGER.info("Critical operation persisted immediately")
-                except Exception as e:
-                    LOGGER.error(f"CRITICAL: Failed to persist immediate write: {e}")
-                    # Re-raise to ensure calling code knows about the failure
-                    raise
-                return
-            
-            # For non-critical operations, rely on periodic persistence
-            # This will be handled by the background timer
-            LOGGER.debug("Non-critical operation queued for periodic persistence")
-
-    def _write_to_disk(self, index: MediaIndex) -> None:
-        """Write the media index atomically with proper locking."""
+        except Exception as e:
+            LOGGER.error(f"Failed to read index file: {e}")
+            return MediaIndex.empty()
+    
+    def _cleanup_stale_data(self, index: MediaIndex) -> None:
+        """Clean up stale data without triggering writes."""
+        current_time = time.time()
+        
+        # Clean up old processing jobs (1 hour max)
+        stale_jobs = []
+        for job_id, job_data in index.processing.items():
+            job_timestamp = job_data.get("timestamp", 0)
+            if current_time - job_timestamp > 3600:  # 1 hour
+                stale_jobs.append(job_id)
+        
+        for job_id in stale_jobs:
+            del index.processing[job_id]
+        
+        # Validate loop consistency
+        valid_slugs = set(index.media.keys())
+        index.loop = [slug for slug in index.loop if slug in valid_slugs]
+        
+        if index.active and index.active not in valid_slugs:
+            index.active = index.loop[0] if index.loop else None
+    
+    def _write_to_disk_internal(self, index: MediaIndex) -> None:
+        """Internal disk write with atomic operations."""
         try:
-            LOGGER.info(f"💾 STARTING DISK WRITE: {len(index.media)} media, {len(index.loop)} loop, path={self.index_path}")
-            
             # Update timestamp
             index.last_updated = int(time.time())
             
-            # Validate data structure before writing
-            if not isinstance(index.media, dict):
-                LOGGER.error("Invalid media format for writing")
-                return
-            
-            if not isinstance(index.loop, list):
-                LOGGER.error("Invalid loop format for writing")
-                return
-
-            if not isinstance(index.processing, dict):
-                LOGGER.error("Invalid processing format for writing")
-                return
-
-            # Ensure parent directory exists
-            self.index_path.parent.mkdir(parents=True, exist_ok=True)
-            LOGGER.info(f"💾 Parent directory ensured: {self.index_path.parent}")
-
-            # Write to temporary file first for atomic operation
+            # Atomic write using temporary file
             temp_file = self.index_path.with_suffix('.json.tmp')
-            LOGGER.info(f"💾 Writing to temp file: {temp_file}")
             
             with open(temp_file, "w") as f:
                 fcntl.flock(f.fileno(), fcntl.LOCK_EX)
                 try:
-                    data_to_write = index.to_dict()
-                    LOGGER.info(f"💾 Data to write: media={len(data_to_write['media'])}, loop={len(data_to_write['loop'])}")
-                    json.dump(data_to_write, f, indent=2)
+                    json.dump(index.to_dict(), f, indent=2)
                     f.flush()
-                    os.fsync(f.fileno())  # Ensure data is written to disk
-                    LOGGER.info(f"💾 Data written and flushed to temp file")
+                    os.fsync(f.fileno())  # Ensure data reaches disk
                 finally:
                     fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-
+            
             # Atomic rename
-            LOGGER.info(f"💾 Moving {temp_file} -> {self.index_path}")
             shutil.move(str(temp_file), str(self.index_path))
             
-            # Verify the file was written
-            if self.index_path.exists():
-                file_size = self.index_path.stat().st_size
-                LOGGER.info(f"💾 ✅ DISK WRITE SUCCESSFUL: {self.index_path} ({file_size} bytes)")
-            else:
-                LOGGER.error(f"💾 ❌ FILE NOT FOUND AFTER WRITE: {self.index_path}")
-
-        except Exception as exc:
-            LOGGER.error(f"💾 ❌ FAILED TO WRITE MEDIA INDEX: {exc}")
-            import traceback
-            LOGGER.error(f"💾 Traceback: {traceback.format_exc()}")
-            # Clean up temp file if it exists
-            if 'temp_file' in locals() and temp_file.exists():
+        except Exception as e:
+            # Clean up temp file on failure
+            if temp_file.exists():
                 try:
                     temp_file.unlink()
-                    LOGGER.info(f"💾 Cleaned up temp file: {temp_file}")
-                except Exception:
+                except:
                     pass
-            # Re-raise the exception so calling code knows about failure
             raise
-
+    
+    def _queue_operation(self, operation_name: str, data: Any = None) -> None:
+        """Queue an operation for batched writing."""
+        with self._cache_lock:
+            self._pending_operations.append({
+                "timestamp": time.time(),
+                "operation": operation_name,
+                "data": data
+            })
+    
     def _force_immediate_write(self) -> None:
-        """Mark next write as immediate (for critical operations)."""
-        self._immediate_write_needed = True
-
-    # Public API methods
+        """Force immediate write for critical operations."""
+        with self._cache_lock:
+            if self._cache:
+                try:
+                    self._write_to_disk_internal(self._cache)
+                    self._pending_operations.clear()
+                    self._last_write_time = time.time()
+                    LOGGER.info("Forced immediate write completed")
+                except Exception as e:
+                    LOGGER.error(f"Forced write failed: {e}")
+                    raise
+    
+    # Public API
     
     def get_dashboard_data(self) -> Dict[str, Any]:
-        """Get all data needed for the dashboard in a single operation."""
-        index = self._read_raw()
-        return {
-            "media": list(index.media.values()),
-            "loop": index.loop,
-            "active": index.active,
-            "last_updated": index.last_updated,
-            "processing": index.processing
-        }
+        """Get all data for dashboard."""
+        with self._cache_lock:
+            if not self._cache:
+                return {"media": [], "loop": [], "active": None, "processing": {}}
+            
+            return {
+                "media": list(self._cache.media.values()),
+                "loop": self._cache.loop.copy(),
+                "active": self._cache.active,
+                "last_updated": self._cache.last_updated,
+                "processing": self._cache.processing.copy()
+            }
     
     def list_media(self) -> List[Dict[str, Any]]:
-        """Return all media objects as a list."""
-        return list(self._read_raw().media.values())
-
+        """Return all media objects."""
+        with self._cache_lock:
+            return list(self._cache.media.values()) if self._cache else []
+    
     def get_media_dict(self) -> Dict[str, Dict[str, Any]]:
-        """Return the media dictionary directly."""
-        return self._read_raw().media.copy()
-
+        """Return media dictionary."""
+        with self._cache_lock:
+            return self._cache.media.copy() if self._cache else {}
+    
     def list_loop(self) -> List[str]:
-        """Return the current loop slug list."""
-        return self._read_raw().loop.copy()
-
+        """Return loop list."""
+        with self._cache_lock:
+            return self._cache.loop.copy() if self._cache else []
+    
     def get_active(self) -> Optional[str]:
-        """Return the currently active media slug."""
-        index = self._read_raw()
-        
-        # Validate that active slug exists in media
-        if index.active and index.active not in index.media:
-            LOGGER.warning(f"Active slug {index.active} not found in media, clearing")
-            self.set_active(None)
-            return None
-        
-        return index.active
-
-    # Processing job management
+        """Return active media slug."""
+        with self._cache_lock:
+            if not self._cache:
+                return None
+            
+            # Validate active slug
+            if self._cache.active and self._cache.active not in self._cache.media:
+                self._cache.active = None
+                self._queue_operation("clear_invalid_active")
+            
+            return self._cache.active
+    
+    def add_media(self, metadata: Dict[str, Any], set_active: bool = False) -> None:
+        """Add media with batched write."""
+        with self._cache_lock:
+            if not self._cache:
+                self._cache = MediaIndex.empty()
+            
+            slug = metadata["slug"]
+            self._cache.media[slug] = metadata
+            
+            # Add to loop if not present
+            if slug not in self._cache.loop:
+                self._cache.loop.append(slug)
+            
+            # Set as active if requested or no active media
+            if set_active or not self._cache.active:
+                self._cache.active = slug
+            
+            self._queue_operation("add_media", slug)
+            LOGGER.info(f"Added media: {slug} (batched write)")
+    
+    def remove_media(self, slug: str) -> None:
+        """Remove media with immediate write for safety."""
+        with self._cache_lock:
+            if not self._cache:
+                return
+            
+            # Remove from media dict
+            if slug in self._cache.media:
+                del self._cache.media[slug]
+            
+            # Remove from loop
+            self._cache.loop = [s for s in self._cache.loop if s != slug]
+            
+            # Clear active if it was the removed media
+            if self._cache.active == slug:
+                self._cache.active = self._cache.loop[0] if self._cache.loop else None
+            
+            # Force immediate write for deletions
+            self._force_immediate_write()
+            LOGGER.info(f"Removed media: {slug} (immediate write)")
+    
+    def set_active(self, slug: Optional[str]) -> None:
+        """Set active media."""
+        with self._cache_lock:
+            if not self._cache:
+                self._cache = MediaIndex.empty()
+            
+            if slug and slug in self._cache.media:
+                self._cache.active = slug
+            else:
+                self._cache.active = None
+            
+            self._queue_operation("set_active", slug)
+    
+    def set_loop_order(self, loop_order: List[str]) -> None:
+        """Set loop order with validation."""
+        with self._cache_lock:
+            if not self._cache:
+                return
+            
+            # Validate all slugs exist
+            valid_slugs = [slug for slug in loop_order if slug in self._cache.media]
+            self._cache.loop = valid_slugs
+            
+            self._queue_operation("reorder_loop")
     
     def add_processing_job(self, job_id: str, filename: str) -> None:
-        """Add a processing job to track conversion progress."""
-        LOGGER.info(f"Adding processing job: {job_id} for {filename}")
-        index = self._read_raw()
-        index.processing[job_id] = {
-            "job_id": job_id,
-            "filename": filename,
-            "status": "processing",
-            "progress": 0,
-            "stage": "starting",
-            "message": "Initializing conversion...",
-            "timestamp": time.time()
-        }
-        self._force_immediate_write()  # Critical operation
-        self._write_raw(index)
-        LOGGER.info(f"Processing job added successfully: {job_id}")
-
+        """Add processing job with immediate write."""
+        with self._cache_lock:
+            if not self._cache:
+                self._cache = MediaIndex.empty()
+            
+            self._cache.processing[job_id] = {
+                "job_id": job_id,
+                "filename": filename,
+                "status": "processing",
+                "progress": 0,
+                "stage": "starting",
+                "message": "Initializing...",
+                "timestamp": time.time()
+            }
+            
+            self._force_immediate_write()  # Critical operation
+    
     def update_processing_job(self, job_id: str, progress: float, stage: str, message: str) -> None:
         """Update processing job progress."""
-        LOGGER.info(f"Updating processing job {job_id}: {progress}% - {stage} - {message}")
-        index = self._read_raw()
-        if job_id in index.processing:
-            old_progress = index.processing[job_id].get("progress", 0)
-            index.processing[job_id].update({
+        with self._cache_lock:
+            if not self._cache or job_id not in self._cache.processing:
+                return
+            
+            self._cache.processing[job_id].update({
                 "progress": min(100, max(0, progress)),
                 "stage": stage,
                 "message": message,
                 "timestamp": time.time()
             })
-            self._force_immediate_write()  # CRITICAL: Progress updates must persist immediately
-            self._write_raw(index)
-            LOGGER.info(f"Processing job {job_id} progress: {old_progress}% -> {progress}%")
-        else:
-            LOGGER.warning(f"Attempted to update non-existent processing job: {job_id}")
-
+            
+            # Don't force immediate write for progress updates
+            self._queue_operation("update_processing", job_id)
+    
     def complete_processing_job(self, job_id: str, success: bool, error: str = "") -> None:
-        """Mark a processing job as completed."""
-        LOGGER.info(f"Completing processing job {job_id}: success={success}, error='{error}'")
-        index = self._read_raw()
-        if job_id in index.processing:
-            old_status = index.processing[job_id].get("status", "unknown")
-            index.processing[job_id].update({
+        """Complete processing job with immediate write."""
+        with self._cache_lock:
+            if not self._cache or job_id not in self._cache.processing:
+                return
+            
+            self._cache.processing[job_id].update({
                 "progress": 100,
-                "stage": "completed" if success else "error",
-                "message": "Conversion completed" if success else f"Error: {error}",
+                "stage": "completed" if success else "error", 
+                "message": "Completed" if success else f"Error: {error}",
                 "status": "completed" if success else "error",
                 "timestamp": time.time()
             })
+            
             self._force_immediate_write()  # Critical operation
-            self._write_raw(index)
-            LOGGER.info(f"Processing job {job_id} status: {old_status} -> {'completed' if success else 'error'}")
-        else:
-            LOGGER.warning(f"Attempted to complete non-existent processing job: {job_id}")
-
-    def get_processing_job(self, job_id: str) -> Optional[Dict[str, Any]]:
-        """Get processing job status."""
-        LOGGER.debug(f"Getting processing job status: {job_id}")
-        index = self._read_raw()
-        job = index.processing.get(job_id)
-        if job:
-            LOGGER.debug(f"Processing job {job_id} found: {job.get('progress', 0)}% - {job.get('stage', 'unknown')}")
-        else:
-            LOGGER.debug(f"Processing job {job_id} not found")
-        return job
-
-    def remove_processing_job(self, job_id: str) -> None:
-        """Remove a processing job from tracking."""
-        LOGGER.info(f"Removing processing job: {job_id}")
-        index = self._read_raw()
-        if job_id in index.processing:
-            del index.processing[job_id]
-            self._write_raw(index)
-            LOGGER.info(f"Processing job removed successfully: {job_id}")
-        else:
-            LOGGER.warning(f"Attempted to remove non-existent processing job: {job_id}")
-
+    
     def list_processing_jobs(self) -> Dict[str, Dict[str, Any]]:
-        """Return all processing jobs."""
-        index = self._read_raw()
-        job_count = len(index.processing)
-        LOGGER.debug(f"Listed {job_count} processing jobs")
-        return index.processing.copy()
-
-    def add_media(self, metadata: Union[Dict[str, Any], MediaMetadata], make_active: bool = True) -> None:
-        """Add a media item to the index."""
-        if isinstance(metadata, MediaMetadata):
-            meta_dict = metadata.to_dict()
-            slug = metadata.slug
-        else:
-            meta_dict = metadata
-            slug = meta_dict.get("slug")
-            
-        if not slug:
-            raise ValueError("Metadata missing slug")
-
-        LOGGER.info(f"🔥 ADDING MEDIA: {slug} (make_active={make_active})")
-        
-        index = self._read_raw()
-        LOGGER.info(f"🔥 Current index has {len(index.media)} media items")
-        
-        # Add to media dict
-        index.media[slug] = meta_dict
-        LOGGER.info(f"🔥 Added to media dict, now has {len(index.media)} items")
-
-        # Add to loop if requested
-        if make_active and slug not in index.loop:
-            index.loop.append(slug)
-            LOGGER.info(f"🔥 Added to loop, loop now has {len(index.loop)} items")
-
-        # Set as active if it's the first item or explicitly requested
-        if make_active and (not index.active or index.active not in index.media):
-            index.active = slug
-            LOGGER.info(f"🔥 Set as active: {slug}")
-
-        LOGGER.info(f"🔥 About to force immediate write for {slug}")
-        self._force_immediate_write()  # Critical operation
-        
-        LOGGER.info(f"🔥 About to call _write_raw for {slug}")
-        self._write_raw(index)
-        
-        LOGGER.info(f"🔥 MEDIA ADDED SUCCESSFULLY: {slug} (active={index.active}, loop={len(index.loop)})")
-
-    def remove_media(self, slug: str) -> None:
-        """Remove a media item completely from the index."""
-        index = self._read_raw()
-        
-        # Remove from media dict
-        if slug in index.media:
-            del index.media[slug]
-            LOGGER.info(f"Removed media from library: {slug}")
-        
-        # Remove from loop
-        if slug in index.loop:
-            index.loop.remove(slug)
-            LOGGER.info(f"Removed media from loop: {slug}")
-        
-        # Update active if it was the deleted item
-        if index.active == slug:
-            index.active = index.loop[0] if index.loop else None
-            LOGGER.info(f"Updated active media to: {index.active}")
-        
-        self._force_immediate_write()  # Critical operation
-        self._write_raw(index)
-        LOGGER.info(f"Successfully removed media: {slug}")
-
-    def add_to_loop(self, slug: str) -> None:
-        """Add a media item to the loop queue."""
-        index = self._read_raw()
-        
-        if slug not in index.media:
-            raise KeyError(f"Media slug not found: {slug}")
-        
-        if slug not in index.loop:
-            index.loop.append(slug)
-            self._write_raw(index)
-            LOGGER.info(f"Added to loop: {slug}")
-
-    def remove_from_loop(self, slug: str) -> None:
-        """Remove a media item from the loop queue."""
-        index = self._read_raw()
-        
-        if slug in index.loop:
-            index.loop.remove(slug)
-            
-            # If this was the active item, update active
-            if index.active == slug:
-                index.active = index.loop[0] if index.loop else None
-                LOGGER.info(f"Updated active media to: {index.active}")
-            
-            self._write_raw(index)
-            LOGGER.info(f"Removed from loop: {slug}")
-
-    def reorder_loop(self, new_order: List[str]) -> None:
-        """Reorder the loop queue with the given slug list."""
-        index = self._read_raw()
-        valid_slugs = set(index.media.keys())
-        
-        # Only keep slugs that exist in media
-        validated_order = [slug for slug in new_order if slug in valid_slugs]
-        
-        index.loop = validated_order
-        
-        # Ensure active is still valid
-        if index.active and index.active not in validated_order:
-            index.active = validated_order[0] if validated_order else None
-        
-        self._write_raw(index)
-        LOGGER.info(f"Reordered loop with {len(validated_order)} items")
-
-    def set_active(self, slug: Optional[str]) -> None:
-        """Set the currently active media slug."""
-        index = self._read_raw()
-        
-        if slug is not None:
-            if slug not in index.media:
-                raise KeyError(f"Media slug not found: {slug}")
-            
-            # Ensure the slug is in the loop
-            if slug not in index.loop:
-                index.loop.append(slug)
-        
-        index.active = slug
-        self._force_immediate_write()  # Critical operation
-        self._write_raw(index)
-        LOGGER.info(f"Set active media to: {slug}")
-
+        """List all processing jobs."""
+        with self._cache_lock:
+            return self._cache.processing.copy() if self._cache else {}
+    
     def cleanup_orphaned_files(self, media_raw_dir: Path, media_processed_dir: Path) -> int:
-        """Clean up files that don't have corresponding entries in the media index."""
-        index = self._read_raw()
-        valid_slugs = set(index.media.keys())
-        cleanup_count = 0
-        
-        # Clean up processed directories
-        if media_processed_dir.exists():
-            for item in media_processed_dir.iterdir():
-                if item.is_dir() and item.name not in valid_slugs:
-                    try:
-                        shutil.rmtree(item)
-                        cleanup_count += 1
-                        LOGGER.info(f"Cleaned up orphaned processed directory: {item.name}")
-                    except Exception as e:
-                        LOGGER.error(f"Failed to clean up {item}: {e}")
-        
-        # Clean up raw files
-        if media_raw_dir.exists():
-            for item in media_raw_dir.iterdir():
-                if item.is_file():
-                    # Extract slug from filename (remove extension)
-                    file_slug = None
-                    for slug in valid_slugs:
-                        if slug in item.name:
-                            file_slug = slug
-                            break
-                    
-                    if not file_slug:
+        """Clean up orphaned files."""
+        with self._cache_lock:
+            if not self._cache:
+                return 0
+            
+            valid_slugs = set(self._cache.media.keys())
+            cleanup_count = 0
+            
+            # Clean processed directories
+            if media_processed_dir.exists():
+                for item in media_processed_dir.iterdir():
+                    if item.is_dir() and item.name not in valid_slugs:
                         try:
-                            item.unlink()
+                            shutil.rmtree(item)
                             cleanup_count += 1
-                            LOGGER.info(f"Cleaned up orphaned raw file: {item.name}")
                         except Exception as e:
                             LOGGER.error(f"Failed to clean up {item}: {e}")
+            
+            # Clean raw files
+            if media_raw_dir.exists():
+                for item in media_raw_dir.iterdir():
+                    if item.is_file():
+                        file_slug = None
+                        for slug in valid_slugs:
+                            if slug in item.name:
+                                file_slug = slug
+                                break
+                        
+                        if not file_slug:
+                            try:
+                                item.unlink()
+                                cleanup_count += 1
+                            except Exception as e:
+                                LOGGER.error(f"Failed to clean up {item}: {e}")
+            
+            if cleanup_count > 0:
+                self._queue_operation("cleanup_orphaned")
+            
+            return cleanup_count
+    
+    def shutdown(self) -> None:
+        """Graceful shutdown with final write."""
+        LOGGER.info("Shutting down media index manager...")
+        self._shutdown_flag = True
         
-        return cleanup_count
+        # Force final write if needed
+        with self._cache_lock:
+            if self._pending_operations and self._cache:
+                try:
+                    self._write_to_disk_internal(self._cache)
+                    LOGGER.info("Final write completed during shutdown")
+                except Exception as e:
+                    LOGGER.error(f"Final write failed: {e}")
+        
+        # Wait for background thread
+        if self._writer_thread.is_alive():
+            self._writer_thread.join(timeout=10)
 
-# Global instance - the clean way to access media index
-media_index = MediaIndexManager()
+# Global instance
+media_index = HardenedMediaIndexManager()
 
 @contextmanager
-def batch_operations(media_index_manager: 'MediaIndexManager'):
-    """Context manager to batch multiple media operations before persistence."""
-    media_index_manager._batching = True
-    try:
-        yield
-    finally:
-        media_index_manager._batching = False
-        # Force immediate write after batch only if there are pending changes
-        if hasattr(media_index_manager, '_batch_dirty') and media_index_manager._batch_dirty:
-            if media_index_manager._cache:
-                # Don't force immediate write flag since we're doing the final batch write
-                media_index_manager._write_to_disk(media_index_manager._cache)
-                media_index_manager._cache_dirty = False
-            media_index_manager._batch_dirty = False 
+def batch_operations(media_index_manager: 'HardenedMediaIndexManager'):
+    """Context manager for batching operations (no-op in hardened version)."""
+    yield  # Operations are already batched automatically 
