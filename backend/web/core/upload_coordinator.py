@@ -183,6 +183,28 @@ class HardenedUploadCoordinator:
 
             media_index.add_media(slug, metadata)
             logger.info(f"Original file uploaded: {filename} -> {slug}")
+            
+            # SENIOR FIX: Complete media activation pipeline for original files too
+            try:
+                # 1. Add to loop (makes it available for playback)
+                media_index.add_to_loop(slug)
+                logger.info(f"Added original media to loop: {slug}")
+                
+                # 2. Auto-activate if no active media (first upload)
+                current_active = media_index.get_active()
+                if not current_active:
+                    media_index.set_active(slug)
+                    logger.info(f"Auto-activated first original media: {slug}")
+                
+                # 3. Invalidate dashboard cache to ensure immediate frontend pickup
+                from ..routes.dashboard import invalidate_dashboard_cache
+                invalidate_dashboard_cache()
+                logger.info(f"Invalidated dashboard cache for original media pickup")
+                
+            except Exception as e:
+                logger.warning(f"Original media activation failed for {slug}: {e}")
+                # Don't fail the entire upload, just log the issue
+            
             return UploadResult(success=True, slug=slug)
 
         except Exception as e:
@@ -200,11 +222,33 @@ class HardenedUploadCoordinator:
         """Process frames ZIP from path (secure extraction)."""
 
         try:
+            # Validate ZIP file size first
+            zip_size = zip_path.stat().st_size
+            if zip_size < 1000:  # Less than 1KB is likely empty/invalid
+                logger.warning(f"Frames ZIP {filename} appears to be empty ({zip_size} bytes)")
+                return UploadResult(success=False, error="Frames ZIP appears to be empty or invalid")
+
             # Read metadata within archive
             with zipfile.ZipFile(zip_path, "r") as zf:
                 if "metadata.json" not in zf.namelist():
                     return UploadResult(success=False, error="Invalid ZIP: missing metadata.json")
+                
                 metadata_raw = json.loads(zf.read("metadata.json").decode())
+                
+                # Validate frame count
+                frame_count = metadata_raw.get("frame_count", 0)
+                if frame_count <= 0:
+                    logger.warning(f"Frames ZIP {filename} has invalid frame count: {frame_count}")
+                    return UploadResult(success=False, error=f"Invalid frame count: {frame_count}")
+
+                # Check for frame data (either frames.bin or individual .rgb files)
+                file_list = zf.namelist()
+                has_frames_bin = "frames.bin" in file_list
+                has_rgb_files = any(f.endswith(".rgb") for f in file_list)
+                
+                if not has_frames_bin and not has_rgb_files:
+                    logger.warning(f"Frames ZIP {filename} contains no frame data")
+                    return UploadResult(success=False, error="No frame data found in ZIP")
 
             # Determine target directory slug logic reused from original code
             original_filename = metadata_raw.get("original_filename", filename.replace("_frames.zip", ""))
@@ -232,6 +276,13 @@ class HardenedUploadCoordinator:
             # Check for new binary format first
             frames_bin = target_dir / "frames.bin"
             if frames_bin.exists():
+                # Validate binary frames file
+                bin_size = frames_bin.stat().st_size
+                expected_min_size = 8 + (frame_count * 320 * 240 * 2)  # Header + frame data
+                if bin_size < expected_min_size:
+                    logger.warning(f"Binary frames file too small: {bin_size} < {expected_min_size}")
+                    return UploadResult(success=False, error="Binary frames file appears corrupted")
+                
                 # New binary format - move to frames directory
                 if not frames_dir.exists():
                     await asyncio.to_thread(frames_dir.mkdir, parents=True)
@@ -241,13 +292,25 @@ class HardenedUploadCoordinator:
                 # Legacy format - move individual .rgb files
                 frame_files = list(target_dir.glob("*.rgb"))
                 if frame_files:
+                    # Validate frame files
+                    expected_frame_size = 320 * 240 * 2  # RGB565
+                    valid_frames = 0
+                    for frame_file in frame_files:
+                        if frame_file.stat().st_size == expected_frame_size:
+                            valid_frames += 1
+                    
+                    if valid_frames == 0:
+                        logger.warning(f"No valid frame files found (expected size: {expected_frame_size})")
+                        return UploadResult(success=False, error="No valid frame files found")
+                    
                     if not frames_dir.exists():
                         await asyncio.to_thread(frames_dir.mkdir, parents=True)
                     for frame_file in frame_files:
                         await asyncio.to_thread(frame_file.rename, frames_dir / frame_file.name)
-                    logger.info(f"Moved {len(frame_files)} individual frame files to {frames_dir}")
+                    logger.info(f"Moved {len(frame_files)} individual frame files to {frames_dir} ({valid_frames} valid)")
                 else:
                     logger.warning(f"No frames found in ZIP for {target_slug}")
+                    return UploadResult(success=False, error="No frame files found in ZIP")
 
             # Update / create metadata same as original
             if existing_slug:
@@ -260,6 +323,7 @@ class HardenedUploadCoordinator:
                     "height": metadata_raw.get("height", 240),
                 }
                 media_index.add_media(existing_slug, updated_meta)
+                final_slug = existing_slug
             else:
                 new_meta = {
                     "slug": target_slug,
@@ -273,6 +337,28 @@ class HardenedUploadCoordinator:
                     "height": metadata_raw.get("height", 240),
                 }
                 media_index.add_media(target_slug, new_meta)
+                final_slug = target_slug
+
+            # SENIOR FIX: Complete media activation pipeline
+            try:
+                # 1. Add to loop (makes it available for playback)
+                media_index.add_to_loop(final_slug)
+                logger.info(f"Added to loop: {final_slug}")
+                
+                # 2. Auto-activate if no active media (first upload)
+                current_active = media_index.get_active()
+                if not current_active:
+                    media_index.set_active(final_slug)
+                    logger.info(f"Auto-activated first media: {final_slug}")
+                
+                # 3. Invalidate dashboard cache to ensure immediate frontend pickup
+                from ..routes.dashboard import invalidate_dashboard_cache
+                invalidate_dashboard_cache()
+                logger.info(f"Invalidated dashboard cache for immediate pickup")
+                
+            except Exception as e:
+                logger.warning(f"Media activation failed for {final_slug}: {e}")
+                # Don't fail the entire upload, just log the issue
 
             logger.info(f"Frames ZIP processed: {filename} -> {target_slug}")
             return UploadResult(success=True, slug=target_slug)

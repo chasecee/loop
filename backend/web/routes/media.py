@@ -1,6 +1,5 @@
 """Media management routes for LOOP web server."""
 
-import json
 import shutil
 import tempfile
 import time

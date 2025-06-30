@@ -14,7 +14,8 @@ try:
     from display.ili9341_driver import ILI9341Display
     from config.schema import DisplayConfig
 except ImportError as e:
-    print(f"Failed to import display modules: {e}")
+    import logging
+    logging.error(f"Failed to import display modules: {e}")
     sys.exit(1)
 
 def setup_logging():

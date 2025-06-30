@@ -298,13 +298,14 @@ class HardenedDisplayPlayer:
         try:
             if hasattr(self.display_driver, 'cleanup'):
                 self.display_driver.cleanup()
-        except:
-            pass
+        except Exception as e:
+            self.logger.debug(f"Display cleanup failed: {e}")
         
         try:
             self.display_driver.init()
             return hasattr(self.display_driver, 'initialized') and self.display_driver.initialized
-        except:
+        except Exception as e:
+            self.logger.debug(f"Display init failed: {e}")
             return False
     
     def _try_display_reset(self) -> bool:
@@ -317,7 +318,8 @@ class HardenedDisplayPlayer:
             # Re-initialize
             self.display_driver.init()
             return hasattr(self.display_driver, 'initialized') and self.display_driver.initialized
-        except:
+        except Exception as e:
+            self.logger.debug(f"Display reset failed: {e}")
             return False
     
     def _try_display_minimal_init(self) -> bool:
@@ -327,7 +329,8 @@ class HardenedDisplayPlayer:
             if hasattr(self.display_driver, 'minimal_init'):
                 return self.display_driver.minimal_init()
             return False
-        except:
+        except Exception as e:
+            self.logger.debug(f"Minimal display init failed: {e}")
             return False
     
     def start(self) -> None:
@@ -717,8 +720,8 @@ class HardenedDisplayPlayer:
             if hasattr(self.display_driver, 'cleanup'):
                 try:
                     self.display_driver.cleanup()
-                except:
-                    pass
+                except Exception as e:
+                    self.logger.debug(f"Display cleanup during recovery failed: {e}")
             
             # Brief delay for hardware reset
             import time
@@ -734,7 +737,8 @@ class HardenedDisplayPlayer:
                 try:
                     self.display_driver.display_frame(test_frame)
                     return True
-                except:
+                except Exception as e:
+                    self.logger.debug(f"Test frame display failed: {e}")
                     return False
             
             return False

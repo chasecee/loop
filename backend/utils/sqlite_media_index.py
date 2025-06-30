@@ -11,10 +11,42 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, asdict
 from contextlib import contextmanager
+import functools
 
 from utils.logger import get_logger
 
 LOGGER = get_logger("sqlite_media_index")
+
+def retry_on_database_error(max_retries: int = 3, delay: float = 0.1):
+    """Decorator to retry database operations on transient failures."""
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            last_exception = None
+            for attempt in range(max_retries + 1):
+                try:
+                    return func(*args, **kwargs)
+                except sqlite3.OperationalError as e:
+                    # Retry on database locked errors
+                    if "database is locked" in str(e).lower() and attempt < max_retries:
+                        LOGGER.warning(f"Database locked, retrying in {delay}s (attempt {attempt + 1}/{max_retries + 1})")
+                        time.sleep(delay * (2 ** attempt))  # Exponential backoff
+                        last_exception = e
+                        continue
+                    raise
+                except sqlite3.DatabaseError as e:
+                    # Retry on certain database errors
+                    if attempt < max_retries and ("busy" in str(e).lower() or "locked" in str(e).lower()):
+                        LOGGER.warning(f"Database error, retrying in {delay}s (attempt {attempt + 1}/{max_retries + 1}): {e}")
+                        time.sleep(delay * (2 ** attempt))
+                        last_exception = e
+                        continue
+                    raise
+            # If we get here, all retries failed
+            if last_exception:
+                raise last_exception
+        return wrapper
+    return decorator
 
 @dataclass
 class MediaMetadata:
@@ -131,16 +163,31 @@ class SQLiteMediaIndexManager:
     
     @contextmanager
     def _get_connection(self):
-        """Get database connection with proper error handling."""
+        """Get database connection with SQLite-specific error handling."""
         conn = None
         try:
             conn = sqlite3.connect(self.db_path, timeout=10.0)
             conn.row_factory = sqlite3.Row
             yield conn
-        except Exception as e:
+        except sqlite3.IntegrityError as e:
+            if conn:
+                conn.rollback()
+            LOGGER.error(f"Database constraint violation: {e}")
+            raise
+        except sqlite3.OperationalError as e:
+            if conn:
+                conn.rollback()
+            LOGGER.error(f"Database operational error (likely locked): {e}")
+            raise
+        except sqlite3.DatabaseError as e:
             if conn:
                 conn.rollback()
             LOGGER.error(f"Database error: {e}")
+            raise
+        except Exception as e:
+            if conn:
+                conn.rollback()
+            LOGGER.error(f"Unexpected error: {e}")
             raise
         finally:
             if conn:
@@ -150,6 +197,7 @@ class SQLiteMediaIndexManager:
     
     # Public API - identical signatures to HardenedMediaIndexManager
     
+    @retry_on_database_error()
     def get_dashboard_data(self) -> Dict[str, Any]:
         """Get all data for dashboard."""
         with self._get_connection() as conn:
@@ -183,8 +231,8 @@ class SQLiteMediaIndexManager:
             
             last_updated = int(updated_row['value']) if updated_row else int(time.time())
             
-            # Get recent processing jobs (active and recently completed)
-            recent_cutoff = time.time() - 300  # 5 minutes
+            # Get recent processing jobs (active and recently completed) with optimized timestamp conversion
+            recent_cutoff = int(time.time() - 300)  # 5 minutes
             processing_rows = conn.execute("""
                 SELECT job_id, filename, status, progress, stage, message,
                        strftime('%s', updated_at) as timestamp
@@ -192,7 +240,7 @@ class SQLiteMediaIndexManager:
                 WHERE status = 'processing' OR strftime('%s', updated_at) > ?
                 ORDER BY updated_at DESC
                 LIMIT 20
-            """, (str(int(recent_cutoff)),)).fetchall()
+            """, (str(recent_cutoff),)).fetchall()
             
             processing = {
                 row['job_id']: {
@@ -328,27 +376,33 @@ class SQLiteMediaIndexManager:
             
             conn.commit()
     
+    @retry_on_database_error()
     def reorder_loop(self, loop_order: List[str]) -> None:
-        """Reorder loop with validation."""
+        """Reorder loop with validation and explicit transaction."""
         with self._get_connection() as conn:
-            # Validate all slugs exist
-            valid_slugs = []
-            for slug in loop_order:
-                exists = conn.execute("""
-                    SELECT 1 FROM media WHERE slug = ?
-                """, (slug,)).fetchone()
-                if exists:
-                    valid_slugs.append(slug)
-            
-            # Atomic replacement of loop order
-            conn.execute("DELETE FROM loop_order")
-            
-            for position, slug in enumerate(valid_slugs):
-                conn.execute("""
-                    INSERT INTO loop_order (position, slug) VALUES (?, ?)
-                """, (position, slug))
-            
-            conn.commit()
+            conn.execute("BEGIN IMMEDIATE")  # Explicit transaction start
+            try:
+                # Validate all slugs exist
+                valid_slugs = []
+                for slug in loop_order:
+                    exists = conn.execute("""
+                        SELECT 1 FROM media WHERE slug = ?
+                    """, (slug,)).fetchone()
+                    if exists:
+                        valid_slugs.append(slug)
+                
+                # Atomic replacement of loop order
+                conn.execute("DELETE FROM loop_order")
+                
+                for position, slug in enumerate(valid_slugs):
+                    conn.execute("""
+                        INSERT INTO loop_order (position, slug) VALUES (?, ?)
+                    """, (position, slug))
+                
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
     
     def add_to_loop(self, slug: str) -> None:
         """Add media to loop if not already present."""
@@ -381,47 +435,53 @@ class SQLiteMediaIndexManager:
             conn.commit()
             LOGGER.info(f"Added to loop: {slug}")
     
+    @retry_on_database_error()
     def remove_from_loop(self, slug: str) -> None:
-        """Remove media from loop."""
+        """Remove media from loop with explicit transaction."""
         with self._get_connection() as conn:
-            # Remove from loop
-            conn.execute("DELETE FROM loop_order WHERE slug = ?", (slug,))
-            
-            # Recompact positions
-            rows = conn.execute("""
-                SELECT slug FROM loop_order ORDER BY position
-            """).fetchall()
-            
-            conn.execute("DELETE FROM loop_order")
-            
-            for position, row in enumerate(rows):
-                conn.execute("""
-                    INSERT INTO loop_order (position, slug) VALUES (?, ?)
-                """, (position, row['slug']))
-            
-            # Clear active if it was the removed media
-            active = conn.execute("""
-                SELECT value FROM settings WHERE key = 'active'
-            """).fetchone()
-            
-            if active and active['value'] == slug:
-                # Set new active to first in loop
-                first_in_loop = conn.execute("""
-                    SELECT slug FROM loop_order ORDER BY position LIMIT 1
+            conn.execute("BEGIN IMMEDIATE")  # Explicit transaction start
+            try:
+                # Remove from loop
+                conn.execute("DELETE FROM loop_order WHERE slug = ?", (slug,))
+                
+                # Recompact positions
+                rows = conn.execute("""
+                    SELECT slug FROM loop_order ORDER BY position
+                """).fetchall()
+                
+                conn.execute("DELETE FROM loop_order")
+                
+                for position, row in enumerate(rows):
+                    conn.execute("""
+                        INSERT INTO loop_order (position, slug) VALUES (?, ?)
+                    """, (position, row['slug']))
+                
+                # Clear active if it was the removed media
+                active = conn.execute("""
+                    SELECT value FROM settings WHERE key = 'active'
                 """).fetchone()
                 
-                new_active = first_in_loop['slug'] if first_in_loop else None
+                if active and active['value'] == slug:
+                    # Set new active to first in loop
+                    first_in_loop = conn.execute("""
+                        SELECT slug FROM loop_order ORDER BY position LIMIT 1
+                    """).fetchone()
+                    
+                    new_active = first_in_loop['slug'] if first_in_loop else None
+                    
+                    if new_active:
+                        conn.execute("""
+                            INSERT OR REPLACE INTO settings (key, value, updated_at)
+                            VALUES ('active', ?, datetime('now'))
+                        """, (new_active,))
+                    else:
+                        conn.execute("DELETE FROM settings WHERE key = 'active'")
                 
-                if new_active:
-                    conn.execute("""
-                        INSERT OR REPLACE INTO settings (key, value, updated_at)
-                        VALUES ('active', ?, datetime('now'))
-                    """, (new_active,))
-                else:
-                    conn.execute("DELETE FROM settings WHERE key = 'active'")
-            
-            conn.commit()
-            LOGGER.info(f"Removed from loop: {slug}")
+                conn.commit()
+                LOGGER.info(f"Removed from loop: {slug}")
+            except Exception:
+                conn.rollback()
+                raise
     
     def add_processing_job(self, job_id: str, filename: str) -> None:
         """Add processing job."""
@@ -501,8 +561,10 @@ class SQLiteMediaIndexManager:
                         try:
                             shutil.rmtree(item)
                             cleanup_count += 1
+                        except OSError as e:
+                            LOGGER.error(f"Failed to clean up directory {item}: {e}")
                         except Exception as e:
-                            LOGGER.error(f"Failed to clean up {item}: {e}")
+                            LOGGER.error(f"Unexpected error cleaning up {item}: {e}")
             
             # Clean raw files
             if media_raw_dir.exists():
@@ -518,8 +580,10 @@ class SQLiteMediaIndexManager:
                             try:
                                 item.unlink()
                                 cleanup_count += 1
+                            except OSError as e:
+                                LOGGER.error(f"Failed to clean up file {item}: {e}")
                             except Exception as e:
-                                LOGGER.error(f"Failed to clean up {item}: {e}")
+                                LOGGER.error(f"Unexpected error cleaning up {item}: {e}")
             
             return cleanup_count
     

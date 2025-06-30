@@ -575,10 +575,10 @@ def main():
         app = HardenedLOOPApplication()
         app.start()
     except KeyboardInterrupt:
-        print("\nShutdown requested by user")
+        logger.info("Shutdown requested by user")
         sys.exit(0)
     except Exception as e:
-        print(f"Fatal error: {e}")
+        logger.error(f"Fatal error: {e}")
         traceback.print_exc()
         sys.exit(1)
 

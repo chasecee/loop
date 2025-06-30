@@ -1,14 +1,14 @@
 # LOOP - Little Optical Output Pal
 
-Network-connected GIF/video display optimized for Pi Zero 2 with real-time WebSocket updates and browser-side media processing.
+Network-connected GIF/video display optimized for Pi Zero 2 with polling-based updates and browser-side media processing.
 
-![LOOP](https://img.shields.io/badge/Platform-Raspberry%20Pi-red) ![Python](https://img.shields.io/badge/Python-3.9+-blue) ![WebSocket](https://img.shields.io/badge/WebSocket-Real--time-green) ![License](https://img.shields.io/badge/License-MIT-green)
+![LOOP](https://img.shields.io/badge/Platform-Raspberry%20Pi-red) ![Python](https://img.shields.io/badge/Python-3.9+-blue) ![Polling](https://img.shields.io/badge/Updates-Polling-blue) ![License](https://img.shields.io/badge/License-MIT-green)
 
 ## **What It Does**
 
 **Display Management**: Plays GIFs, videos (MP4/AVI/MOV), and images (PNG/JPG) on 240×320 ILI9341 SPI displays with smooth RGB565 frame conversion and configurable loop timing.
 
-**Real-time Control**: Web interface with drag-and-drop uploads, instant WebSocket updates across all devices, live conversion progress, and collaborative multi-device control.
+**Real-time Control**: Web interface with drag-and-drop uploads, polling-based updates across all devices, live conversion progress, and responsive multi-device control.
 
 **Smart Processing**: Browser-side WebAssembly FFmpeg conversion eliminates Pi CPU load, transaction-based uploads prevent data corruption, and aggressive caching delivers sub-100ms dashboard responses.
 
@@ -19,34 +19,34 @@ Network-connected GIF/video display optimized for Pi Zero 2 with real-time WebSo
 ```
 Browser (WASM FFmpeg) → RGB565 Frames → ZIP + Original Video
     ↓ (Transaction Upload)
-Backend Coordinator → Atomic File Ops → Media Index Cache
-    ↓ (WebSocket Broadcast)
+Backend Coordinator → Atomic File Ops → SQLite Database
+    ↓ (Polling Updates)
 Display Player ← Frame Buffer Queue ← Processed Frames
     ↓
-All Connected Clients ← Real-time Updates ← WebSocket Manager
+All Connected Clients ← Polling Updates ← REST API
 ```
 
 ### **Key Components**
 
 **Backend (Python/FastAPI)**
 
-- `server.py` - FastAPI with WebSocket support, GZip compression, request deduplication
+- `server.py` - FastAPI with polling endpoints, GZip compression, request deduplication
 - `upload_coordinator.py` - Transaction-based upload processing with atomic rollback
 - `display/player.py` - Frame playback with 30-frame producer-consumer buffering
-- `media_index.py` - Single source of truth with 5-second aggressive caching
-- `websocket.py` - Room-based real-time event broadcasting to connected clients
+- `sqlite_media_index.py` - SQLite-based media index with transaction safety
+- `polling.py` - Simple polling endpoints for frontend updates
 - `spiout.py` - ILI9341 SPI display driver with hardware abstraction
 
 **Frontend (Next.js/TypeScript)**
 
 - `ffmpeg-util.ts` - WebAssembly FFmpeg wrapper for browser-side RGB565 conversion
-- `websocket.ts` - Auto-reconnecting WebSocket client with exponential backoff
+- `api.ts` - REST API client with request deduplication and error handling
 - `upload-coordinator.ts` - Transaction-based upload with progress coordination
-- `use-websocket-dashboard.ts` - React hook for real-time dashboard updates
+- `use-polling-dashboard.ts` - React hook for polling-based dashboard updates
 
 ### **Performance Optimizations**
 
-**Real-time Communication**: WebSocket events eliminate 15-second polling, provide instant feedback across all devices with room-based subscriptions (dashboard, progress, wifi, system).
+**Efficient Communication**: Smart polling (8-15 second intervals) provides responsive updates across all devices with automatic error recovery and backoff.
 
 **Aggressive Caching**: Dashboard data cached 5 seconds, storage calculations cached 1 hour, media index cached 5 seconds to minimize SD card I/O on Pi Zero 2.
 
@@ -131,7 +131,7 @@ The installer handles:
 ### **Browser Requirements**
 
 - **WebAssembly support** (Chrome 57+, Firefox 52+, Safari 11+)
-- **WebSocket support** for real-time updates (all modern browsers)
+- **Modern browser** with JavaScript enabled for web interface
 - **4GB+ RAM recommended** for large video processing
 - **JavaScript enabled** for web interface functionality
 
