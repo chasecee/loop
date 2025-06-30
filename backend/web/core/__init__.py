@@ -21,8 +21,7 @@ from .middleware import (
     RequestLoggingMiddleware,
     ConcurrencyLimitMiddleware,
     ErrorHandlingMiddleware,
-    ConditionalGZipMiddleware,
-    UploadProgressMiddleware
+    ConditionalGZipMiddleware
 )
 from .storage import (
     get_dir_size,

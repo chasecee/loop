@@ -84,12 +84,7 @@ def main():
             print(f"✅ Removed database file: {db_path}")
             removed_count += 1
     
-    # Remove legacy JSON file if it exists
-    legacy_json = media_dir / "index.json"
-    if legacy_json.exists():
-        legacy_json.unlink()
-        print(f"✅ Removed legacy JSON file: {legacy_json}")
-        removed_count += 1
+    # Legacy JSON cleanup no longer needed (SQLite migration complete)
     
     # Clean up any orphaned temp files
     temp_files = list(media_dir.glob("*.tmp"))

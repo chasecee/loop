@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime
 from dataclasses import dataclass
+from urllib.parse import quote
 
 from fastapi import UploadFile, HTTPException
 from utils.media_index import media_index
@@ -174,7 +175,7 @@ class HardenedUploadCoordinator:
                 "type": self._detect_content_type(filename),
                 "size": size_bytes,
                 "uploadedAt": datetime.utcnow().isoformat() + "Z",
-                "url": f"/media/raw/{stored_path.name}",
+                "url": f"/media/raw/{quote(stored_path.name)}",
                 "processing_status": "uploaded",
                 "frame_count": 1,
                 "width": 320,
@@ -184,26 +185,9 @@ class HardenedUploadCoordinator:
             media_index.add_media(slug, metadata)
             logger.info(f"Original file uploaded: {filename} -> {slug}")
             
-            # SENIOR FIX: Complete media activation pipeline for original files too
-            try:
-                # 1. Add to loop (makes it available for playback)
-                media_index.add_to_loop(slug)
-                logger.info(f"Added original media to loop: {slug}")
-                
-                # 2. Auto-activate if no active media (first upload)
-                current_active = media_index.get_active()
-                if not current_active:
-                    media_index.set_active(slug)
-                    logger.info(f"Auto-activated first original media: {slug}")
-                
-                # 3. Invalidate dashboard cache to ensure immediate frontend pickup
-                from ..routes.dashboard import invalidate_dashboard_cache
-                invalidate_dashboard_cache()
-                logger.info(f"Invalidated dashboard cache for original media pickup")
-                
-            except Exception as e:
-                logger.warning(f"Original media activation failed for {slug}: {e}")
-                # Don't fail the entire upload, just log the issue
+            # NOTE: Don't add to loop yet - wait for frames.zip processing
+            # This prevents race condition where display player tries to load
+            # media before frames are available
             
             return UploadResult(success=True, slug=slug)
 
@@ -316,12 +300,13 @@ class HardenedUploadCoordinator:
             if existing_slug:
                 existing_meta = media_index.get_media_dict().get(existing_slug, {})
                 updated_meta = {
-                    **existing_meta,
+                    **existing_meta,  # Preserve all existing fields including URL
                     "processing_status": "completed",
                     "frame_count": metadata_raw.get("frame_count", 1),
                     "width": metadata_raw.get("width", 320),
                     "height": metadata_raw.get("height", 240),
                 }
+                logger.info(f"Updating existing media {existing_slug}: URL={existing_meta.get('url')}")
                 media_index.add_media(existing_slug, updated_meta)
                 final_slug = existing_slug
             else:
@@ -355,6 +340,17 @@ class HardenedUploadCoordinator:
                 from ..routes.dashboard import invalidate_dashboard_cache
                 invalidate_dashboard_cache()
                 logger.info(f"Invalidated dashboard cache for immediate pickup")
+                
+                # 4. Force display player to check for new media immediately
+                try:
+                    from main import display_player
+                    if display_player:
+                        display_player.force_media_check()
+                        logger.info(f"Forced display player media check")
+                except ImportError:
+                    logger.debug("Display player not available for force refresh")
+                except Exception as e:
+                    logger.debug(f"Could not force display player refresh: {e}")
                 
             except Exception as e:
                 logger.warning(f"Media activation failed for {final_slug}: {e}")

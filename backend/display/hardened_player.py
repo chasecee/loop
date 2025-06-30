@@ -372,8 +372,9 @@ class HardenedDisplayPlayer:
                     time.sleep(0.1)  # Fast updates during progress
                     continue
                 
-                # Check for media changes (every 2 seconds)
-                if current_time - self.last_media_check >= 2.0:
+                # Check for media changes - more frequent when no media loaded
+                media_check_interval = 0.5 if not self.current_sequence else 2.0
+                if current_time - self.last_media_check >= media_check_interval:
                     self._check_media_changes()
                     self.last_media_check = current_time
                 
@@ -421,14 +422,22 @@ class HardenedDisplayPlayer:
         """Check for media changes and reload if needed."""
         try:
             current_active = media_index.get_active()
+            loop_slugs = media_index.list_loop()
             
             # If no sequence loaded but we have active media, load it
             if not self.current_sequence and current_active:
+                self.logger.info(f"No sequence loaded but found active media: {current_active}")
+                self._load_current_sequence()
+            
+            # If no active media but we have media in loop, activate the first one
+            elif not current_active and loop_slugs:
+                first_slug = loop_slugs[0]
+                self.logger.info(f"No active media but found loop content, activating: {first_slug}")
+                media_index.set_active(first_slug)
                 self._load_current_sequence()
             
             # If active media changed, reload
             elif self.current_sequence and current_active:
-                loop_slugs = media_index.list_loop()
                 if current_active in loop_slugs:
                     # Check if we need to reload due to media change
                     media_dict = media_index.get_media_dict()
@@ -1013,6 +1022,12 @@ class HardenedDisplayPlayer:
         with self.lock:
             self.current_sequence = None
             self.last_media_check = 0
+    
+    def force_media_check(self) -> None:
+        """Force immediate media check - useful after uploads."""
+        with self.lock:
+            self.last_media_check = 0  # Force immediate check on next loop iteration
+            self.logger.debug("Forced media check - will check on next loop iteration")
     
     # Notification methods for compatibility
     def notify_upload_start(self, count: int = 1) -> None:

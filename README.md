@@ -148,7 +148,7 @@ The installer handles:
 
 - **Loop All** - Cycles through queue, repeating each item N times
 - **Loop One** - Stays on current media, repeating N times
-- **Manual Control** - Play/pause, next/previous with WebSocket feedback
+- **Manual Control** - Play/pause, next/previous with responsive feedback
 
 ### **Configuration**
 
