@@ -424,6 +424,20 @@ class WiFiManager:
             
             info = self._connection_info
             
+            # Build network_info dict with only non-None values for Pydantic compliance
+            network_info = {
+                'connected': info.state == ConnectionState.CONNECTED
+            }
+            
+            if info.ssid is not None:
+                network_info['ssid'] = info.ssid
+            if info.ip_address is not None:
+                network_info['ip_address'] = info.ip_address
+            if info.signal_strength is not None:
+                network_info['signal_strength'] = str(info.signal_strength)
+            if info.interface is not None:
+                network_info['interface'] = info.interface
+            
             return {
                 'connected': info.state == ConnectionState.CONNECTED,
                 'hotspot_active': info.state == ConnectionState.HOTSPOT_ACTIVE,
@@ -434,13 +448,7 @@ class WiFiManager:
                 'signal_strength': str(info.signal_strength) if info.signal_strength else None,
                 'interface': info.interface,
                 'state': info.state.value,
-                'network_info': {
-                    'ssid': info.ssid,
-                    'ip_address': info.ip_address,
-                    'signal_strength': str(info.signal_strength) if info.signal_strength else None,
-                    'connected': info.state == ConnectionState.CONNECTED,
-                    'interface': info.interface
-                }
+                'network_info': network_info
             }
     
     def scan_networks(self) -> List[Dict[str, str]]:
