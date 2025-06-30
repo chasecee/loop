@@ -325,6 +325,6 @@ class SystemUpdater:
         return {
             'current_version': self.current_version,
             'git_available': self.git_updater.git_available,
-            'last_check': self._cache_timestamp if self._cached_status is not None else None,
+            'last_check': str(int(self._cache_timestamp)) if self._cached_status is not None else None,
             'update_sources': self.check_all_sources()  # Uses cached data
         } 

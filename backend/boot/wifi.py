@@ -431,13 +431,13 @@ class WiFiManager:
                 'ip_address': info.ip_address,
                 'configured_ssid': self.config.ssid if self.config.ssid else None,
                 'hotspot_ssid': self.config.hotspot_ssid,
-                'signal_strength': info.signal_strength,
+                'signal_strength': str(info.signal_strength) if info.signal_strength else None,
                 'interface': info.interface,
                 'state': info.state.value,
                 'network_info': {
                     'ssid': info.ssid,
                     'ip_address': info.ip_address,
-                    'signal_strength': info.signal_strength,
+                    'signal_strength': str(info.signal_strength) if info.signal_strength else None,
                     'connected': info.state == ConnectionState.CONNECTED,
                     'interface': info.interface
                 }
