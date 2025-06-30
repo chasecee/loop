@@ -243,6 +243,7 @@ def _get_media_data():
             "type": data.get("type", "unknown"),
             "size": data.get("size", 0),
             "uploadedAt": data.get("uploadedAt", ""),
+            "url": data.get("url"),  # Include URL for thumbnails
             "processing_status": data.get("processing_status", "unknown"),
         }
         
