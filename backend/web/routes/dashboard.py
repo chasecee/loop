@@ -290,7 +290,7 @@ def _get_player_status(display_player):
 def _get_system_status(updater):
     """Get system status efficiently.""" 
     if updater:
-        return updater.get_status()
+        return updater.get_update_status()
     return {"update_available": False}
 
 def _get_wifi_status(wifi_manager):
