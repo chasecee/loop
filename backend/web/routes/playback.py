@@ -3,7 +3,7 @@
 from fastapi import APIRouter, HTTPException
 
 from ..core.models import APIResponse, DisplaySettingsPayload
-from display.player import DisplayPlayer
+from display.hardened_player import HardenedDisplayPlayer as DisplayPlayer
 from config.schema import Config
 from utils.logger import get_logger
 from .dashboard import invalidate_dashboard_cache

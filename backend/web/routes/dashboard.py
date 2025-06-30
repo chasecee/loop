@@ -9,7 +9,7 @@ from fastapi import APIRouter, Request, HTTPException
 
 from ..core.models import DashboardData, DeviceStatus, PlayerStatus, WiFiStatus, UpdateStatus, StorageData, APIResponse, ProcessingJobResponse, MediaItem
 from ..core.storage import get_dir_size
-from display.player import DisplayPlayer
+from display.hardened_player import HardenedDisplayPlayer as DisplayPlayer
 from boot.wifi import WiFiManager
 from deployment.updater import SystemUpdater
 from utils.media_index import media_index

@@ -7,7 +7,7 @@ import time
 from typing import Dict, Any, Optional
 from fastapi import APIRouter
 
-from display.player import DisplayPlayer
+from display.hardened_player import HardenedDisplayPlayer as DisplayPlayer
 from boot.wifi import WiFiManager
 from deployment.updater import SystemUpdater
 from utils.media_index import media_index

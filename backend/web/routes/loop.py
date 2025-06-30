@@ -3,7 +3,7 @@
 from fastapi import APIRouter, HTTPException
 
 from ..core.models import APIResponse, AddToLoopPayload, LoopOrderPayload
-from display.player import DisplayPlayer
+from display.hardened_player import HardenedDisplayPlayer as DisplayPlayer
 from utils.media_index import media_index
 from utils.logger import get_logger
 from .dashboard import invalidate_dashboard_cache

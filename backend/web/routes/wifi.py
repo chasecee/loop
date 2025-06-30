@@ -32,9 +32,17 @@ def create_wifi_router(
     
     @router.post("/connect", response_model=APIResponse)
     async def connect_wifi(credentials: WiFiCredentials):
-        """Connect to WiFi network."""
+        """Connect to WiFi network with SSH safety checks."""
         if not wifi_manager:
             raise HTTPException(status_code=503, detail="WiFi manager not available")
+        
+        # SSH Safety: Check if this could break current connection
+        current_status = wifi_manager.get_status()
+        if (current_status.get('connected') and 
+            current_status.get('current_ssid') != credentials.ssid):
+            current_ip = current_status.get('ip_address')
+            if current_ip and not current_ip.startswith('192.168.24.'):
+                logger.warning(f"Network switch requested from {current_status.get('current_ssid')} to {credentials.ssid} - SSH may be interrupted")
         
         success = wifi_manager.connect_to_network(credentials.ssid, credentials.password)
         
@@ -90,9 +98,16 @@ def create_wifi_router(
     
     @router.post("/hotspot", response_model=APIResponse)
     async def toggle_hotspot():
-        """Toggle WiFi hotspot."""
+        """Toggle WiFi hotspot with SSH safety checks."""
         if not wifi_manager:
             raise HTTPException(status_code=503, detail="WiFi manager not available")
+        
+        # SSH Safety: Warn about potential connection loss
+        current_status = wifi_manager.get_status()
+        if current_status.get('connected'):
+            current_ip = current_status.get('ip_address')
+            if current_ip and not current_ip.startswith('192.168.24.'):
+                logger.warning(f"Hotspot toggle requested while connected to {current_status.get('current_ssid')} ({current_ip}) - SSH may be interrupted")
         
         if wifi_manager.hotspot_active:
             success = wifi_manager.stop_hotspot()

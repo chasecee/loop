@@ -120,7 +120,7 @@ class MessageDisplay:
                 for i in range(0, len(frame_data), 2):
                     frame_data[i:i+2] = bg_bytes
                 
-                # For complex text rendering, we still need PIL temporarily
+                # PIL required for text rendering and positioning
                 # but we'll convert more efficiently
                 if title or subtitle:
                     # Create PIL image for text rendering only
@@ -131,14 +131,31 @@ class MessageDisplay:
                     title_font = self._get_font(title_size, bold=True)
                     subtitle_font = self._get_font(subtitle_size, bold=False)
                     
-                    # Calculate text positioning
-                    y_offset = 60  # Start 60px from top
+                    # Calculate text positioning with vertical centering
+                    title_height = 0
+                    subtitle_height = 0
+                    total_spacing = 0
+                    
+                    # Calculate dimensions first
+                    if title and title_font:
+                        bbox = draw.textbbox((0, 0), title, font=title_font)
+                        title_height = bbox[3] - bbox[1]
+                    
+                    if subtitle and subtitle_font:
+                        bbox = draw.textbbox((0, 0), subtitle, font=subtitle_font)
+                        subtitle_height = bbox[3] - bbox[1]
+                        if title_height > 0:
+                            total_spacing = 20  # Spacing between title and subtitle
+                    
+                    # Calculate total content height and center it
+                    total_content_height = title_height + subtitle_height + total_spacing
+                    start_y = (height - total_content_height) // 2
+                    y_offset = start_y
                     
                     # Draw title (centered)
                     if title and title_font:
                         bbox = draw.textbbox((0, 0), title, font=title_font)
                         title_width = bbox[2] - bbox[0]
-                        title_height = bbox[3] - bbox[1]
                         title_x = (width - title_width) // 2
                         draw.text((title_x, y_offset), title, fill=text_color, font=title_font)
                         y_offset += title_height + 20
@@ -288,7 +305,7 @@ class MessageDisplay:
                 for i in range(0, len(frame_data), 2):
                     frame_data[i:i+2] = bg_bytes
                 
-                # For text and progress bar, we'll still use PIL temporarily for complex rendering
+                # PIL required for text and progress bar rendering
                 # but convert more efficiently
                 pil_image = Image.new('RGB', (width, height), (0, 0, 0))
                 draw = ImageDraw.Draw(pil_image)
@@ -297,7 +314,24 @@ class MessageDisplay:
                 title_font = self._get_font(20, bold=True)
                 subtitle_font = self._get_font(14, bold=False)
                 
-                y_pos = 40
+                # Calculate total content height for vertical centering
+                title_height = 0
+                subtitle_height = 0
+                bar_height = 20
+                progress_text_height = 20
+                
+                if title and title_font:
+                    bbox = draw.textbbox((0, 0), title, font=title_font)
+                    title_height = bbox[3] - bbox[1]
+                
+                if subtitle and subtitle_font:
+                    bbox = draw.textbbox((0, 0), subtitle, font=subtitle_font)
+                    subtitle_height = bbox[3] - bbox[1]
+                
+                # Calculate total content height including spacing
+                total_content_height = title_height + subtitle_height + bar_height + progress_text_height + 75  # 35+30+10 spacing
+                start_y = (height - total_content_height) // 2
+                y_pos = start_y
                 
                 # Draw title
                 if title and title_font:
@@ -317,7 +351,6 @@ class MessageDisplay:
                 
                 # Draw progress bar
                 bar_width = 180
-                bar_height = 20
                 bar_x = (width - bar_width) // 2
                 bar_y = y_pos + 10
                 

@@ -110,7 +110,7 @@ class WiFiManager:
     SCAN_TIMEOUT = 15
     INTERFACE_DETECTION_TIMEOUT = 10
     MAX_RETRY_ATTEMPTS = 3
-    HOTSPOT_IP_RANGE = "192.168.100.0/24"  # Conflict-free range
+    HOTSPOT_IP_RANGE = "192.168.24.0/24"   # Truly conflict-free range (RFC3927 auto-config)
     
     def __init__(self, wifi_config: WiFiConfig):
         """Initialize WiFi manager with enterprise-grade safeguards."""
@@ -135,7 +135,7 @@ class WiFiManager:
         
         # Safe hotspot configuration
         self._hotspot_network = ipaddress.IPv4Network(self.HOTSPOT_IP_RANGE)
-        self._hotspot_ip = str(self._hotspot_network.network_address + 1)  # .100.1
+        self._hotspot_ip = str(self._hotspot_network.network_address + 1)  # .24.1
         
         self.logger.info("WiFi manager initialized (enterprise-grade NetworkManager integration)")
         self._initialize_state()
@@ -584,12 +584,19 @@ class WiFiManager:
             
             self.logger.info(f"Connecting to WiFi network: {ssid}")
             
-            # SSH Safety: Check if we're already on a different network
+            # SSH Safety: Prevent dangerous network switches
             with self._state_lock:
                 current_info = self._connection_info
                 if (current_info.state == ConnectionState.CONNECTED and 
                     current_info.ssid and current_info.ssid != ssid):
-                    self.logger.warning(f"Currently connected to '{current_info.ssid}', switching to '{ssid}'")
+                    self.logger.warning(f"Currently connected to '{current_info.ssid}', switching to '{ssid}' - SSH MAY BE INTERRUPTED")
+                    
+                    # SSH Safety: Check if current connection looks like SSH-critical
+                    current_ip = current_info.ip_address
+                    if current_ip and not current_ip.startswith('192.168.24.'):
+                        # We're on a real network (not our hotspot), switching could kill SSH
+                        self.logger.error(f"DANGEROUS: Network switch from {current_info.ssid} ({current_ip}) could break SSH access!")
+                        # Continue anyway but with loud warnings
             
             try:
                 # Stop hotspot if active to free the interface

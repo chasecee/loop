@@ -7,7 +7,7 @@ Before=loop.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=__PROJECT_DIR__/backend/deployment/scripts/service-manager.sh setup-wifi
+ExecStart=${LOOP_PROJECT_DIR}/backend/deployment/scripts/service-manager.sh setup-wifi
 
 [Install]
 WantedBy=multi-user.target 

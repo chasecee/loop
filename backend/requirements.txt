@@ -1,15 +1,15 @@
-# HARDENED LOOP Requirements - Minimal, Pi-optimized
+# HARDENED LOOP Requirements - Pi Zero 2 W + Bookworm optimized
 
 # Core web framework
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
 python-multipart==0.0.6
 
-# GPIO/Hardware (Pi specific)
+# GPIO/Hardware (Pi specific) - minimal, proven versions
 RPi.GPIO==0.7.1
 spidev==3.6
 
-# Image processing (minimal)
+# Image processing (minimal) - Bookworm compatible
 Pillow==10.1.0
 
 # System utilities
@@ -19,11 +19,13 @@ pydantic==2.5.1
 # Network utilities
 requests==2.31.0
 
-# Systemd integration
+# Systemd integration - Bookworm compatible
 systemd-python==235
 
 # File handling
 aiofiles==23.2.1
 
 # Time/date utilities
-python-dateutil==2.8.2 
+python-dateutil==2.8.2
+
+# Note: NetworkManager integration via nmcli system command (no Python deps needed) 

@@ -7,12 +7,12 @@ StartLimitBurst=5
 
 [Service]
 Type=notify
-User=pi
+User=${LOOP_USER}
 Group=gpio
-WorkingDirectory=/home/pi/loop/backend
-Environment=PYTHONPATH=/home/pi/loop/backend
+WorkingDirectory=${LOOP_PROJECT_DIR}/backend
+Environment=PYTHONPATH=${LOOP_PROJECT_DIR}/backend
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/home/pi/loop/backend/venv/bin/python main.py
+ExecStart=${LOOP_PROJECT_DIR}/backend/venv/bin/python main.py
 ExecReload=/bin/kill -HUP $MAINPID
 KillMode=mixed
 KillSignal=SIGTERM
@@ -39,7 +39,7 @@ NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/home/pi/loop/backend/media /home/pi/loop/backend/config /home/pi/.loop
+ReadWritePaths=${LOOP_PROJECT_DIR}/backend/media ${LOOP_PROJECT_DIR}/backend/config /home/${LOOP_USER}/.loop
 DeviceAllow=/dev/spidev0.0 rw
 DeviceAllow=/dev/gpiomem rw
 DeviceAllow=char-gpio rw
@@ -48,7 +48,7 @@ DeviceAllow=char-gpio rw
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 
-# GPIO access
+# GPIO access - minimal permissions
 SupplementaryGroups=gpio spi
 
 # Logging

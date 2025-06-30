@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 from config.schema import Config
-from display.player import DisplayPlayer
+from display.hardened_player import HardenedDisplayPlayer as DisplayPlayer
 from boot.wifi import WiFiManager
 from deployment.updater import SystemUpdater
 

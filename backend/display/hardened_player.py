@@ -57,7 +57,6 @@ class BinaryFrameSequence:
                     return
                 
                 # Parse header (big-endian)
-                import struct
                 self.frame_count, self.frame_size = struct.unpack('>II', header)
                 
                 # Read all frame data
@@ -821,9 +820,9 @@ class HardenedDisplayPlayer:
                     elif status.get('hotspot_active'):
                         hotspot_info = {
                             'ssid': status.get('hotspot_ssid', 'LOOP-Setup'),
-                            'ip': '192.168.100.1'
+                            'ip': '192.168.24.1'
                         }
-                        web_url = "http://192.168.100.1"
+                        web_url = "http://192.168.24.1"
                 except Exception as e:
                     self.logger.debug(f"WiFi status check failed: {e}")
             

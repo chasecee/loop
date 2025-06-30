@@ -84,6 +84,8 @@ check_service() {
 echo "🤖 LOOP Installation Script"
 echo "================================"
 
+# Installation script continues...
+
 # Add cleanup option
 if [ "$1" = "cleanup" ] || [ "$1" = "reset" ]; then
     echo "🧹 CLEANING UP LOOP DATA..."
@@ -237,6 +239,67 @@ if [ ! -f "${BACKEND_DIR}/config/config.json" ]; then
     exit 1
 fi
 
+# Configure minimal WiFi management permissions  
+echo "🔐 Configuring minimal WiFi permissions..."
+
+# Add user ONLY to groups actually needed by LOOP hardware
+echo "👥 Adding user ${REAL_USER} to minimal required groups..."
+sudo usermod -a -G gpio,spi "${REAL_USER}"
+
+# Create SCOPED NetworkManager PolicyKit rule - WiFi ONLY
+POLKIT_FILE="/etc/polkit-1/localauthority/50-local.d/50-loop-wifi-only.pkla"
+sudo tee "$POLKIT_FILE" > /dev/null << EOF
+[Allow ${REAL_USER} to manage WiFi only]
+Identity=unix-user:${REAL_USER}
+Action=org.freedesktop.NetworkManager.wifi.*;org.freedesktop.NetworkManager.settings.modify.own;org.freedesktop.NetworkManager.network-control
+ResultAny=yes
+ResultInactive=yes
+ResultActive=yes
+EOF
+
+# PolicyKit file created - user can remove manually if needed
+
+echo "✅ Minimal WiFi permissions configured for user ${REAL_USER}"
+
+# Generate service files using safe envsubst substitution
+echo "📝 Generating service files with safe substitution..."
+
+# Check if envsubst is available (part of gettext-base package)
+if ! command -v envsubst >/dev/null 2>&1; then
+    echo "📦 Installing envsubst for safe template substitution..."
+    sudo apt install -y gettext-base
+fi
+
+# Export variables for envsubst (escapes special characters automatically)
+export LOOP_USER="${REAL_USER}"
+export LOOP_PROJECT_DIR="${PROJECT_DIR}"
+
+# Generate loop.service using envsubst (safe substitution)
+if [ -f "${BACKEND_DIR}/loop.service" ]; then
+    # Create backup first
+    cp "${BACKEND_DIR}/loop.service" "${BACKEND_DIR}/loop.service.backup"
+    
+    # Use envsubst for safe variable substitution
+    envsubst '$LOOP_USER $LOOP_PROJECT_DIR' < "${BACKEND_DIR}/loop.service.backup" > "${BACKEND_DIR}/loop.service"
+    echo "✅ Generated loop.service for user ${REAL_USER} using safe envsubst"
+else
+    echo "❌ loop.service not found!"
+    exit 1
+fi
+
+# Generate system-management.service using envsubst
+if [ -f "${BACKEND_DIR}/system-management.service" ]; then
+    # Create backup first
+    cp "${BACKEND_DIR}/system-management.service" "${BACKEND_DIR}/system-management.service.backup"
+    
+    # Use envsubst for safe variable substitution
+    envsubst '$LOOP_PROJECT_DIR' < "${BACKEND_DIR}/system-management.service.backup" > "${BACKEND_DIR}/system-management.service"
+    echo "✅ Generated system-management.service with safe paths"
+fi
+
+# Clean up environment variables
+unset LOOP_USER LOOP_PROJECT_DIR
+
 # Install system services using dedicated service manager
 echo "🚀 Installing system services..."
 "${SCRIPT_DIR}/service-manager.sh" install
@@ -261,6 +324,30 @@ chown -R ${REAL_USER}:${REAL_USER} "${PROJECT_DIR}"
 chmod +x "${PROJECT_DIR}/backend/main.py" 2>/dev/null || true
 chmod +x "${BACKEND_DIR}/deployment/scripts/"*.sh 2>/dev/null || true
 chmod +x "${BACKEND_DIR}/boot/boot-display.py" 2>/dev/null || true
+
+# Bookworm-specific: Ensure proper systemd user session configuration
+echo "🎛️ Configuring systemd user session for Bookworm..."
+sudo loginctl enable-linger "${REAL_USER}" 2>/dev/null || true
+
+# Bookworm-specific: Minimal GPIO permissions (only if needed)
+echo "🔧 Checking GPIO permissions for Pi Zero 2 W + Bookworm..."
+
+# Check if LOOP-specific udev rules are needed
+if [ ! -f /etc/udev/rules.d/99-gpio.rules ] && [ ! -f /etc/udev/rules.d/99-spi.rules ]; then
+    echo "   Creating minimal LOOP GPIO permissions..."
+    sudo tee /etc/udev/rules.d/99-loop-spi-only.rules > /dev/null << EOF
+# Minimal SPI access for LOOP display only
+KERNEL=="spidev0.0", GROUP="spi", MODE="0664"
+EOF
+    
+    # Reload udev rules
+    sudo udevadm control --reload-rules
+    sudo udevadm trigger
+    
+    echo "✅ Minimal SPI permissions configured"
+else
+    echo "✅ System GPIO rules already exist - skipping to avoid conflicts"
+fi
 
 # Services already installed and started by install_services function
 
@@ -288,6 +375,34 @@ else
     echo "❌ Application dependency test failed - installing missing packages..."
     source venv/bin/activate
     pip install --no-cache-dir python-multipart
+fi
+
+# Check if user has required groups (more reliable check)
+echo "🔍 Verifying group memberships..."
+MISSING_GROUPS=()
+
+# Check each required group individually (more reliable than string matching)
+if ! getent group gpio | grep -q "\b${REAL_USER}\b"; then
+    MISSING_GROUPS+=("gpio")
+fi
+
+if ! getent group spi | grep -q "\b${REAL_USER}\b"; then
+    MISSING_GROUPS+=("spi")
+fi
+
+if [ ${#MISSING_GROUPS[@]} -ne 0 ]; then
+    echo ""
+    echo "⚠️  IMPORTANT: New group memberships require logout/login to activate"
+    echo "   Missing groups for ${REAL_USER}: ${MISSING_GROUPS[*]}"
+    echo "   Current active groups: $(groups)"
+    echo ""
+    echo "   To activate changes:"
+    echo "   1. Logout and login again, OR"
+    echo "   2. Reboot the Pi"
+    echo "   3. Then restart service: sudo systemctl restart ${SERVICE_NAME}"
+    echo ""
+else
+    echo "✅ All required group memberships are active"
 fi
 
 # Wait a moment and check status
@@ -320,6 +435,8 @@ else
     echo "Check the logs with: sudo journalctl -u ${SERVICE_NAME} -f"
     exit 1
 fi
+
+# Installation completed successfully
 
 echo "🎉 Installation complete!"
 echo ""

@@ -12,7 +12,7 @@ from fastapi import APIRouter, UploadFile, File, HTTPException, Request
 
 from ..core.models import APIResponse
 from ..core.storage import invalidate_storage_cache
-from display.player import DisplayPlayer
+from display.hardened_player import HardenedDisplayPlayer as DisplayPlayer
 from utils.media_index import media_index
 from utils.logger import get_logger
 from .dashboard import invalidate_dashboard_cache
