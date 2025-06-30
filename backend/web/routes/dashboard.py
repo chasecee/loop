@@ -172,11 +172,15 @@ def create_dashboard_router(
                 ttl=5  # 5 second cache for active media
             )
             
-            # Build device status
+            # Build device status with proper model validation
+            player_obj = PlayerStatus(**player_status) if player_status else None
+            wifi_obj = WiFiStatus(**wifi_status) if wifi_status else None
+            updates_obj = UpdateStatus(**system_status) if system_status else None
+            
             device_status = DeviceStatus(
-                player=player_status,
-                wifi=wifi_status,
-                updates=system_status
+                player=player_obj,
+                wifi=wifi_obj,
+                updates=updates_obj
             )
             
             response_time = time.time() - start_time
@@ -286,19 +290,43 @@ def _get_player_status(display_player):
     """Get player status efficiently."""
     if display_player:
         return display_player.get_status()
-    return {"running": False, "active_media": None}
+    return {
+        "is_playing": False,
+        "current_media": None,
+        "loop_index": 0,
+        "total_media": 0,
+        "frame_rate": 25.0,
+        "loop_mode": "all",
+        "showing_progress": False
+    }
 
 def _get_system_status(updater):
     """Get system status efficiently.""" 
     if updater:
         return updater.get_update_status()
-    return {"update_available": False}
+    return {
+        "current_version": "1.0.0",
+        "git_available": False,
+        "last_check": None,
+        "update_sources": None
+    }
 
 def _get_wifi_status(wifi_manager):
     """Get WiFi status efficiently."""
     if wifi_manager:
         return wifi_manager.get_status()
-    return {"connected": False, "hotspot_active": False}
+    return {
+        "connected": False,
+        "hotspot_active": False,
+        "current_ssid": None,
+        "ip_address": None,
+        "configured_ssid": None,
+        "hotspot_ssid": None,
+        "signal_strength": None,
+        "network_info": None,
+        "interface": None,
+        "state": None
+    }
 
 def _get_processing_jobs():
     """Get processing jobs efficiently."""
@@ -312,14 +340,19 @@ def _get_processing_jobs():
         active_jobs = {}
         
         for job_id, job_data in jobs_dict.items():
+            # Ensure timestamp is integer for frontend compatibility
+            timestamp = job_data.get("timestamp", time.time())
+            if isinstance(timestamp, float):
+                timestamp = int(timestamp)
+            
             active_jobs[job_id] = ProcessingJobResponse(
                 job_id=job_data.get("job_id", job_id),
                 filename=job_data.get("filename", "Unknown"),
                 status=job_data.get("status", "processing"),
-                progress=job_data.get("progress", 0.0),
+                progress=int(job_data.get("progress", 0)),  # Ensure integer
                 stage=job_data.get("stage", "Processing"),
                 message=job_data.get("message", ""),
-                timestamp=job_data.get("timestamp", time.time())
+                timestamp=timestamp
             )
         
         return active_jobs

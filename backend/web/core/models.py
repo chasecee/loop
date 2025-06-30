@@ -114,34 +114,34 @@ class MediaItem(BaseModel):
     size: int
     uploadedAt: str
     url: Optional[str] = None
-    duration: Optional[float] = None
+    duration: Optional[float] = None  # Matches component return - Optional[float] for null duration
     width: Optional[int] = None
     height: Optional[int] = None
     frame_count: Optional[int] = None
     processing_status: Optional[str] = None  # "pending", "processing", "completed", "error"
 
 class ProcessingJobResponse(BaseModel):
-    """Processing job status response - matches frontend ProcessingJob interface."""
+    """Processing job status response - matches frontend ProcessingJob interface exactly."""
     job_id: str
     filename: str
     status: Literal["processing", "completed", "error"]  # Match TypeScript union type
-    progress: float  # 0-100
+    progress: int  # 0-100 as integer to match actual usage
     stage: str
     message: str
-    timestamp: float  # Unix timestamp
+    timestamp: int  # Unix timestamp as integer - matches conversion to frontend
 
 class PlayerStatus(BaseModel):
-    """Player status - matches frontend PlayerStatus interface."""
+    """Player status - matches frontend PlayerStatus interface and DisplayPlayer.get_status() exactly."""
     is_playing: bool
     current_media: Optional[str] = None
     loop_index: int
     total_media: int
     frame_rate: float
     loop_mode: Literal["all", "one"]
-    showing_progress: bool = False  # Extra field returned by DisplayPlayer
+    showing_progress: bool  # Required field always returned by DisplayPlayer.get_status()
 
 class WiFiStatus(BaseModel):
-    """WiFi status - matches frontend WiFiStatus interface."""
+    """WiFi status - matches frontend WiFiStatus interface and WiFiManager.get_status() exactly."""
     connected: bool
     hotspot_active: bool
     current_ssid: Optional[str] = None
@@ -150,12 +150,12 @@ class WiFiStatus(BaseModel):
     hotspot_ssid: Optional[str] = None
     signal_strength: Optional[str] = None  # Can be string from wireless stats
     network_info: Optional[Dict[str, str | int | bool]] = None
-    # Extra fields returned by WiFiManager but not in frontend interface
+    # Extra fields returned by WiFiManager.get_status() - must be included
     interface: Optional[str] = None
     state: Optional[str] = None
 
 class UpdateStatus(BaseModel):
-    """Update status - matches frontend UpdateStatus interface."""
+    """Update status - matches frontend UpdateStatus interface and SystemUpdater.get_update_status() exactly."""
     current_version: Optional[str] = None
     git_available: Optional[bool] = None
     last_check: Optional[str] = None
