@@ -181,7 +181,7 @@ class HardenedUploadCoordinator:
                 "height": 240,
             }
 
-            media_index.add_media(metadata, True)
+            media_index.add_media(slug, metadata)
             logger.info(f"Original file uploaded: {filename} -> {slug}")
             return UploadResult(success=True, slug=slug)
 
@@ -259,7 +259,7 @@ class HardenedUploadCoordinator:
                     "width": metadata_raw.get("width", 320),
                     "height": metadata_raw.get("height", 240),
                 }
-                media_index.add_media(updated_meta, True)
+                media_index.add_media(existing_slug, updated_meta)
             else:
                 new_meta = {
                     "slug": target_slug,
@@ -272,7 +272,7 @@ class HardenedUploadCoordinator:
                     "width": metadata_raw.get("width", 320),
                     "height": metadata_raw.get("height", 240),
                 }
-                media_index.add_media(new_meta, True)
+                media_index.add_media(target_slug, new_meta)
 
             logger.info(f"Frames ZIP processed: {filename} -> {target_slug}")
             return UploadResult(success=True, slug=target_slug)

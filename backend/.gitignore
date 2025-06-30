@@ -71,7 +71,8 @@ dmypy.json
 *~
 
 # LOOP specific
-backend/media/index.json
+backend/media/index.json  # Legacy JSON index (deprecated)
+backend/media/media.db*   # SQLite database files (*.db, *.db-wal, *.db-shm)
 backend/media/raw/*
 !backend/media/raw/.gitkeep
 backend/media/processed/*

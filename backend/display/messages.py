@@ -32,25 +32,14 @@ class MessageDisplay:
         # Cache for fonts to avoid reloading
         self._font_cache: Dict[Tuple[str, int], Any] = {}
         
-        # Thread-safe producer/consumer queue for display tasks
-        self._queue: "queue.Queue[Tuple[bytes, float]]" = queue.Queue(maxsize=32)
-        
         # Lock to ensure only one thread talks to the display hardware at a time
         self._display_lock = threading.Lock()
         
-        # Worker thread readiness event to prevent race conditions
-        self._worker_ready = threading.Event()
+        # Simple state tracking
+        self.current_message_end_time = 0
+        self.persistent_message = None
         
-        # Worker thread that pulls from queue and handles timing
-        self._worker_running = True
-        self._worker_thread = threading.Thread(target=self._worker_loop, name="MessageDisplayWorker", daemon=True)
-        self._worker_thread.start()
-        
-        # Wait for worker thread to be ready (with timeout to prevent hanging)
-        if self._worker_ready.wait(timeout=2.0):
-            self.logger.info("Message display system initialized (async queue mode)")
-        else:
-            self.logger.warning("Message display worker thread did not signal ready within timeout")
+        self.logger.info("Message display system initialized (simplified direct mode)")
     
     @contextmanager
     def _get_frame_buffer(self):
@@ -196,7 +185,21 @@ class MessageDisplay:
                         solid_color = _rgb888_to_rgb565(*bg_color)
                         fb[:] = struct.pack('>H', solid_color) * (len(fb) // 2)
                         frame_data = bytes(fb)
-            self._enqueue_frame(frame_data, duration)
+            # Display immediately and synchronously
+            with self._display_lock:
+                if self.display_driver:
+                    try:
+                        self.display_driver.display_frame(frame_data)
+                        self.logger.debug(f"Successfully displayed message frame ({len(frame_data)} bytes)")
+                        
+                        # Track timing for persistent messages
+                        if duration > 0:
+                            self.current_message_end_time = time.time() + duration
+                        else:
+                            self.persistent_message = frame_data
+                            
+                    except Exception as e:
+                        self.logger.error(f"Failed to display message frame: {e}")
         except Exception as e:
             self.logger.error(f"Failed to show message '{title}': {e}")
     
@@ -225,10 +228,11 @@ class MessageDisplay:
             title = "Ready to Go!"
             subtitle = f"Go to {web_url} to upload media"
         
+        self.logger.info(f"Showing no media message: {title} - {subtitle}")
         self.show_message(
             title=title,
             subtitle=subtitle,
-            duration=0,  # Persistent
+            duration=0,  # Persistent until replaced
             bg_color=(0, 0, 0),
             text_color=(0, 190, 255)  # Apple-like blue
         )
@@ -348,8 +352,18 @@ class MessageDisplay:
                     pixel_offset = (i // 3) * 2
                     frame_data[pixel_offset:pixel_offset+2] = struct.pack('>H', rgb565)
                 
-                # Enqueue the frame (duration 0 = persistent until next update)
-                self._enqueue_frame(bytes(frame_data), 0)
+                # Display immediately and synchronously
+                with self._display_lock:
+                    if self.display_driver:
+                        try:
+                            self.display_driver.display_frame(bytes(frame_data))
+                            self.logger.debug(f"Successfully displayed progress bar ({len(frame_data)} bytes)")
+                            
+                            # Progress bars are persistent until next update
+                            self.persistent_message = bytes(frame_data)
+                            
+                        except Exception as e:
+                            self.logger.error(f"Failed to display progress bar: {e}")
             
         except Exception as e:
             self.logger.error(f"Failed to show progress bar: {e}")
@@ -359,92 +373,12 @@ class MessageDisplay:
         with self._display_lock:
             self.display_driver.fill_screen(color)
 
-    # ------------------------------------------------------------
-    # Background worker that consumes queued frames and shows them
-    # ------------------------------------------------------------
-    def _worker_loop(self):
-        """Continuously consume the queue and display frames."""
-        # Signal that worker thread is ready to process messages
-        self._worker_ready.set()
-        
-        # We purposefully keep this loop very simple and robust.
-        while self._worker_running:
-            try:
-                try:
-                    frame_data, duration = self._queue.get(timeout=0.1)
-                except queue.Empty:
-                    continue  # Timeout – allows checking _worker_running periodically
-                except (OSError, RuntimeError) as e:
-                    self.logger.warning(f"Queue error: {e}")
-                    continue
-                except Exception as e:
-                    self.logger.error(f"Unexpected queue error: {e}")
-                    continue
-
-                # Display the frame
-                if frame_data:
-                    with self._display_lock:
-                        try:
-                            self.display_driver.display_frame(frame_data)
-                            self.logger.debug(f"Successfully displayed frame ({len(frame_data)} bytes)")
-                        except (AttributeError, TypeError) as e:
-                            self.logger.error(f"Display driver method error: {e}")
-                        except (OSError, IOError, RuntimeError) as e:
-                            self.logger.error(f"Display hardware error: {e}")
-                        except Exception as e:
-                            self.logger.error(f"Unexpected display driver error: {e}")
-
-                # Wait for duration (0 means persistent until next task)
-                if duration > 0:
-                    # Sleep in small increments so we can exit promptly on shutdown
-                    end_time = time.time() + duration
-                    while time.time() < end_time and self._worker_running:
-                        time.sleep(0.05)
-                # If duration is 0, block until next item immediately – no extra sleep
-
-            except Exception as e:
-                self.logger.error(f"Message worker loop error: {e}")
-
-    def _enqueue_frame(self, frame_data: Optional[bytes], duration: float):
-        """Put a frame onto the display queue, dropping on overflow to stay responsive."""
-        if frame_data is None:
-            return
-
-        # Wait for worker thread to be ready before enqueuing important messages
-        if not self._worker_ready.is_set():
-            self.logger.debug("Waiting for worker thread to be ready...")
-            self._worker_ready.wait(timeout=1.0)
-
-        try:
-            # Longer timeout for important messages like boot message  
-            timeout = 1.0 if duration > 0 else 0.5  # Boot messages have duration, use longer timeout
-            self._queue.put((frame_data, duration), timeout=timeout)
-        except queue.Full:
-            # Queue full – drop the message, but log once
-            self.logger.warning("Message queue full – dropping frame")
-        except (OSError, RuntimeError) as e:
-            self.logger.warning(f"Queue put error: {e}")
-        except Exception as e:
-            self.logger.error(f"Unexpected queue put error: {e}")
-
-    # ------------------------------------------------------------
-    # Public shutdown helper
-    # ------------------------------------------------------------
     def stop(self):
-        """Stop the background worker thread gracefully."""
-        self._worker_running = False
-        # Unblock queue get() quickly
-        try:
-            self._queue.put_nowait((None, 0))
-        except queue.Full:
-            # Queue is full, but that's ok for shutdown
-            pass
-        except (OSError, RuntimeError) as e:
-            self.logger.debug(f"Error unblocking queue during shutdown: {e}")
-        except Exception as e:
-            self.logger.warning(f"Unexpected error unblocking queue during shutdown: {e}")
-        if self._worker_thread:
-            self._worker_thread.join(timeout=2)
+        """Stop the message display system gracefully."""
+        self.logger.info("Message display system stopped")
+        # Clear any persistent messages
+        self.persistent_message = None
+        self.current_message_end_time = 0
 
 
 # Global message display instance (set by player when initialized)

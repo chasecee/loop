@@ -150,6 +150,9 @@ class WiFiStatus(BaseModel):
     hotspot_ssid: Optional[str] = None
     signal_strength: Optional[str] = None  # Can be string from wireless stats
     network_info: Optional[Dict[str, Any]] = None
+    # Extra fields returned by WiFiManager but not in frontend interface
+    interface: Optional[str] = None
+    state: Optional[str] = None
 
 class UpdateStatus(BaseModel):
     """Update status - matches frontend UpdateStatus interface."""

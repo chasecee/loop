@@ -17,6 +17,7 @@ from display.messages import MessageDisplay, set_message_display
 from display.memory_pool import get_frame_buffer_pool
 from utils.media_index import media_index
 from utils.logger import get_logger
+from utils.memory_monitor import MemoryMonitor
 
 
 @dataclass
@@ -177,28 +178,41 @@ class HardenedDisplayPlayer:
         self.wifi_manager = wifi_manager
         self.logger = get_logger("player")
         
-        # Hardware availability
-        self.display_available = display_driver is not None
-        if self.display_available:
+        # Memory pressure monitoring
+        self.memory_monitor = MemoryMonitor()
+        self.low_memory_mode = False
+        self.frame_cache_size = 10  # Start with small cache
+        self.max_frame_cache_size = 50  # Max frames to keep in memory
+        
+        # Hardware availability with fallback chain
+        self.display_available = False
+        self.display_failure_count = 0
+        self.max_display_failures = 5
+        self.display_recovery_attempts = 0
+        self.max_recovery_attempts = 3
+        
+        # Initialize display with comprehensive error handling
+        self._initialize_display_with_fallbacks()
+        
+        # Simple messaging system (robust fallback handling)
+        self.message_display = None
+        if self.display_available and self.display_driver:
             try:
-                self.display_driver.init()
-                self.display_available = self.display_driver.initialized
+                self.message_display = MessageDisplay(self.display_driver, display_config)
+                set_message_display(self.message_display)
             except Exception as e:
-                self.logger.warning(f"Display init failed: {e}")
+                self.logger.warning(f"Message display initialization failed: {e}")
                 self.display_available = False
         
         if not self.display_available:
-            self.logger.warning("Running in demo mode - no display hardware")
+            self.logger.warning("Running in headless mode - display functionality disabled")
         
-        # Simple messaging system (no worker thread)
-        self.message_display = MessageDisplay(display_driver, display_config) if display_driver else None
-        if self.message_display:
-            set_message_display(self.message_display)
-        
-        # Media management
+        # Media management with memory optimization
         self.media_dir = Path("media/processed")
         self.current_sequence: Optional[Union[BinaryFrameSequence, SimpleFrameSequence]] = None
         self.current_frame_index = 0
+        self.frame_cache: Dict[int, bytes] = {}  # LRU frame cache
+        self.frame_cache_order: List[int] = []   # Track access order for LRU
         
         # Playback control
         self.running = False
@@ -227,8 +241,94 @@ class HardenedDisplayPlayer:
         self.last_frame_time = 0
         self.last_media_check = 0
         self.last_wifi_check = 0
+        self.last_display_check = 0
+        self.last_memory_check = 0
         
-        self.logger.info("Hardened display player initialized")
+        self.logger.info("Hardened display player initialized with memory monitoring")
+        
+        # Start memory monitoring
+        self.memory_monitor.start()
+    
+    def _initialize_display_with_fallbacks(self) -> None:
+        """Initialize display with comprehensive fallback chain."""
+        if not self.display_driver:
+            self.logger.info("No display driver provided - running headless")
+            return
+        
+        # Primary initialization attempt
+        try:
+            self.display_driver.init()
+            if hasattr(self.display_driver, 'initialized') and self.display_driver.initialized:
+                self.display_available = True
+                self.logger.info("Display driver initialized successfully")
+                return
+        except PermissionError as e:
+            self.logger.error(f"Display permission error (check SPI permissions): {e}")
+        except OSError as e:
+            self.logger.error(f"Display hardware error (check SPI/GPIO connections): {e}")
+        except Exception as e:
+            self.logger.error(f"Display initialization failed: {e}")
+        
+        # Fallback: Try alternative initialization methods
+        fallback_methods = [
+            self._try_display_recovery,
+            self._try_display_reset,
+            self._try_display_minimal_init
+        ]
+        
+        for i, fallback_method in enumerate(fallback_methods):
+            try:
+                self.logger.info(f"Attempting display fallback method {i + 1}/{len(fallback_methods)}")
+                if fallback_method():
+                    self.display_available = True
+                    self.logger.info(f"Display recovered using fallback method {i + 1}")
+                    return
+            except Exception as e:
+                self.logger.warning(f"Display fallback method {i + 1} failed: {e}")
+        
+        # All fallbacks failed
+        self.display_available = False
+        self.logger.warning("All display initialization methods failed - continuing headless")
+    
+    def _try_display_recovery(self) -> bool:
+        """Attempt display recovery with delay."""
+        import time
+        time.sleep(0.5)  # Brief delay for hardware reset
+        
+        try:
+            if hasattr(self.display_driver, 'cleanup'):
+                self.display_driver.cleanup()
+        except:
+            pass
+        
+        try:
+            self.display_driver.init()
+            return hasattr(self.display_driver, 'initialized') and self.display_driver.initialized
+        except:
+            return False
+    
+    def _try_display_reset(self) -> bool:
+        """Attempt display reset sequence."""
+        try:
+            # Try to reset display if reset method exists
+            if hasattr(self.display_driver, 'reset'):
+                self.display_driver.reset()
+            
+            # Re-initialize
+            self.display_driver.init()
+            return hasattr(self.display_driver, 'initialized') and self.display_driver.initialized
+        except:
+            return False
+    
+    def _try_display_minimal_init(self) -> bool:
+        """Attempt minimal display initialization."""
+        try:
+            # Try minimal initialization if available
+            if hasattr(self.display_driver, 'minimal_init'):
+                return self.display_driver.minimal_init()
+            return False
+        except:
+            return False
     
     def start(self) -> None:
         """Start the display player."""
@@ -280,13 +380,15 @@ class HardenedDisplayPlayer:
                 # Show no media message if needed
                 if not loop_slugs:
                     self._show_no_media_message()
-                    time.sleep(2)  # Longer sleep when no media
+                    time.sleep(5)  # Show message for 5 seconds before checking again
                     continue
                 
                 # Load sequence if needed
                 if not self.current_sequence:
                     if not self._load_current_sequence():
-                        time.sleep(1)
+                        # Failed to load any sequence - treat as no media
+                        self.logger.warning("Failed to load any media sequence")
+                        time.sleep(2)
                         continue
                 
                 # Display current frame
@@ -342,16 +444,23 @@ class HardenedDisplayPlayer:
         try:
             active_slug = media_index.get_active()
             if not active_slug:
+                self.logger.debug("No active media to load")
                 return False
             
             media_dict = media_index.get_media_dict()
             media_info = media_dict.get(active_slug)
             if not media_info:
+                self.logger.warning(f"Active media {active_slug} not found in index, clearing")
+                media_index.set_active(None)
                 return False
             
             frames_dir = self.media_dir / active_slug / "frames"
             if not frames_dir.exists():
-                self.logger.warning(f"No frames directory for {active_slug}")
+                self.logger.warning(f"No frames directory for {active_slug}, removing from index")
+                # Clean up stale media reference
+                media_index.remove_from_loop(active_slug)
+                if media_index.get_active() == active_slug:
+                    media_index.set_active(None)
                 return False
             
             # Try binary format first (new efficient format)
@@ -377,7 +486,11 @@ class HardenedDisplayPlayer:
             legacy_sequence = SimpleFrameSequence(frames_dir, frame_count, frame_duration)
             
             if legacy_sequence.get_frame_count() == 0:
-                self.logger.warning(f"No frames found for {active_slug} in either format")
+                self.logger.warning(f"No frames found for {active_slug} in either format, cleaning up")
+                # Clean up stale media reference
+                media_index.remove_from_loop(active_slug)
+                if media_index.get_active() == active_slug:
+                    media_index.set_active(None)
                 self.current_sequence = None
                 return False
             
@@ -391,34 +504,244 @@ class HardenedDisplayPlayer:
             
         except Exception as e:
             self.logger.error(f"Failed to load sequence: {e}")
+            # On any error, clear the current sequence and try to clean up
+            self.current_sequence = None
             return False
     
     def _display_next_frame(self) -> None:
-        """Display the next frame in sequence."""
+        """Display the next frame in sequence with error recovery and memory optimization."""
         if not self.current_sequence:
             return
         
         try:
-            frame = self.current_sequence.get_frame(self.current_frame_index)
-            if not frame:
+            # Check memory pressure periodically
+            current_time = time.time()
+            if current_time - self.last_memory_check > 30:
+                self._adapt_to_memory_pressure()
+                self.last_memory_check = current_time
+            
+            # Get frame with caching
+            frame_data = self._get_frame_cached(self.current_frame_index)
+            if not frame_data:
                 # End of sequence - handle looping
                 self._handle_sequence_end()
                 return
             
-            # Display frame if hardware available
+            # Display frame with comprehensive error handling
             if self.display_available and self.display_driver:
-                try:
-                    self.display_driver.display_frame(frame.data)
-                except Exception as e:
-                    self.logger.warning(f"Frame display failed: {e}")
-                    self.display_available = False
+                display_success = self._safe_display_frame(frame_data)
+                
+                if not display_success:
+                    # Display failed - attempt recovery
+                    self._handle_display_failure()
+                    return
             
-            # Advance to next frame
+            # Advance to next frame only if display succeeded or no display
             self.current_frame_index += 1
             self.last_frame_time = time.time()
             
+            # Preload next few frames if memory allows
+            if self.memory_monitor.should_preload_frames():
+                self._preload_next_frames()
+            
         except Exception as e:
             self.logger.error(f"Frame display error: {e}")
+            self._handle_display_failure()
+    
+    def _get_frame_cached(self, frame_index: int) -> Optional[bytes]:
+        """Get frame with LRU caching."""
+        # Check cache first
+        if frame_index in self.frame_cache:
+            # Move to end of access order (most recently used)
+            self.frame_cache_order.remove(frame_index)
+            self.frame_cache_order.append(frame_index)
+            return self.frame_cache[frame_index]
+        
+        # Cache miss - load frame
+        if not self.current_sequence:
+            return None
+        
+        frame = self.current_sequence.get_frame(frame_index)
+        if not frame:
+            return None
+        
+        frame_data = frame.data
+        
+        # Add to cache if there's room or memory allows
+        if self._can_cache_frame():
+            self._add_frame_to_cache(frame_index, frame_data)
+        
+        return frame_data
+    
+    def _can_cache_frame(self) -> bool:
+        """Check if we can add another frame to cache."""
+        current_cache_size = len(self.frame_cache)
+        optimal_cache_size = self.memory_monitor.suggest_cache_size(
+            self.frame_cache_size, 
+            self.max_frame_cache_size
+        )
+        
+        return current_cache_size < optimal_cache_size
+    
+    def _add_frame_to_cache(self, frame_index: int, frame_data: bytes) -> None:
+        """Add frame to LRU cache."""
+        # Check if we need to evict old frames
+        while len(self.frame_cache) >= self.memory_monitor.suggest_cache_size(
+            self.frame_cache_size, self.max_frame_cache_size
+        ):
+            if not self.frame_cache_order:
+                break
+            
+            # Remove least recently used frame
+            lru_index = self.frame_cache_order.pop(0)
+            if lru_index in self.frame_cache:
+                del self.frame_cache[lru_index]
+        
+        # Add new frame
+        self.frame_cache[frame_index] = frame_data
+        self.frame_cache_order.append(frame_index)
+    
+    def _preload_next_frames(self) -> None:
+        """Preload next few frames if memory allows."""
+        if not self.current_sequence or self.memory_monitor.is_low_memory():
+            return
+        
+        # Preload next 3-5 frames
+        preload_count = 3 if self.memory_monitor.is_low_memory() else 5
+        
+        for i in range(1, preload_count + 1):
+            next_index = self.current_frame_index + i
+            
+            if next_index in self.frame_cache:
+                continue  # Already cached
+            
+            if not self._can_cache_frame():
+                break  # Cache full
+            
+            # Load frame in background
+            try:
+                frame = self.current_sequence.get_frame(next_index)
+                if frame:
+                    self._add_frame_to_cache(next_index, frame.data)
+                else:
+                    break  # End of sequence
+            except Exception as e:
+                self.logger.debug(f"Preload failed for frame {next_index}: {e}")
+                break
+    
+    def _adapt_to_memory_pressure(self) -> None:
+        """Adapt behavior based on current memory pressure."""
+        if self.memory_monitor.is_low_memory():
+            if not self.low_memory_mode:
+                self.logger.warning("Entering low-memory mode - reducing frame cache")
+                self.low_memory_mode = True
+                self._clear_excess_cache()
+        else:
+            if self.low_memory_mode:
+                self.logger.info("Exiting low-memory mode - normal caching resumed")
+                self.low_memory_mode = False
+    
+    def _clear_excess_cache(self) -> None:
+        """Clear excess frames from cache when in low-memory mode."""
+        optimal_size = self.memory_monitor.suggest_cache_size(
+            self.frame_cache_size, self.max_frame_cache_size
+        )
+        
+        while len(self.frame_cache) > optimal_size and self.frame_cache_order:
+            # Remove least recently used frames
+            lru_index = self.frame_cache_order.pop(0)
+            if lru_index in self.frame_cache:
+                del self.frame_cache[lru_index]
+        
+        if len(self.frame_cache) < len(self.frame_cache_order):
+            # Clean up order list
+            self.frame_cache_order = [i for i in self.frame_cache_order if i in self.frame_cache]
+    
+    def _safe_display_frame(self, frame_data: bytes) -> bool:
+        """Safely display a frame with error handling."""
+        try:
+            self.display_driver.display_frame(frame_data)
+            # Reset failure count on successful display
+            self.display_failure_count = 0
+            return True
+            
+        except PermissionError as e:
+            self.logger.error(f"Display permission error: {e}")
+            self.display_failure_count += 1
+            return False
+        except OSError as e:
+            self.logger.warning(f"Display hardware error: {e}")
+            self.display_failure_count += 1
+            return False
+        except Exception as e:
+            self.logger.warning(f"Display frame failed: {e}")
+            self.display_failure_count += 1
+            return False
+    
+    def _handle_display_failure(self) -> None:
+        """Handle display failures with recovery attempts."""
+        self.display_failure_count += 1
+        
+        if self.display_failure_count >= self.max_display_failures:
+            self.logger.error(f"Display failed {self.display_failure_count} times, attempting recovery")
+            
+            if self.display_recovery_attempts < self.max_recovery_attempts:
+                self.display_recovery_attempts += 1
+                self.logger.info(f"Attempting display recovery {self.display_recovery_attempts}/{self.max_recovery_attempts}")
+                
+                # Try to recover display
+                recovery_success = self._attempt_display_recovery()
+                
+                if recovery_success:
+                    self.logger.info("Display recovery successful")
+                    self.display_failure_count = 0
+                    self.display_available = True
+                else:
+                    self.logger.warning(f"Display recovery attempt {self.display_recovery_attempts} failed")
+                    
+                    if self.display_recovery_attempts >= self.max_recovery_attempts:
+                        self.logger.error("All display recovery attempts exhausted - switching to headless mode")
+                        self.display_available = False
+                        self.message_display = None
+            else:
+                # Already tried max recovery attempts
+                if self.display_available:
+                    self.logger.warning("Display recovery exhausted - continuing headless")
+                    self.display_available = False
+                    self.message_display = None
+    
+    def _attempt_display_recovery(self) -> bool:
+        """Attempt to recover the display driver."""
+        try:
+            # Try cleanup first
+            if hasattr(self.display_driver, 'cleanup'):
+                try:
+                    self.display_driver.cleanup()
+                except:
+                    pass
+            
+            # Brief delay for hardware reset
+            import time
+            time.sleep(1.0)
+            
+            # Try re-initialization
+            self.display_driver.init()
+            
+            # Test with a simple frame
+            if hasattr(self.display_driver, 'initialized') and self.display_driver.initialized:
+                # Try to display a black frame to test
+                test_frame = b'\x00\x00' * (320 * 240)  # Black frame for 320x240 display
+                try:
+                    self.display_driver.display_frame(test_frame)
+                    return True
+                except:
+                    return False
+            
+            return False
+            
+        except Exception as e:
+            self.logger.error(f"Display recovery failed: {e}")
+            return False
     
     def _handle_sequence_end(self) -> None:
         """Handle end of sequence - looping logic."""
@@ -467,6 +790,7 @@ class HardenedDisplayPlayer:
     def _show_no_media_message(self) -> None:
         """Show no media message."""
         if not self.message_display:
+            self.logger.debug("No message display available for no media message")
             return
         
         try:
@@ -490,10 +814,18 @@ class HardenedDisplayPlayer:
                 except Exception as e:
                     self.logger.debug(f"WiFi status check failed: {e}")
             
+            # Show the no media message - this will persist until replaced
             self.message_display.show_no_media_message(web_url, hotspot_info)
+            self.logger.debug(f"Displayed no media message with URL: {web_url}")
             
         except Exception as e:
             self.logger.error(f"Failed to show no media message: {e}")
+            # Fallback: try to show a simple error message
+            try:
+                if self.message_display:
+                    self.message_display.show_message("No Media", "Upload media via web interface", 0)
+            except Exception as fallback_error:
+                self.logger.error(f"Fallback message also failed: {fallback_error}")
     
     def _update_progress_display(self) -> None:
         """Update progress display (simplified, no threads)."""

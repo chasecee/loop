@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Reset Media Script - Clear all media files and index to start fresh.
+Reset Media Script - Clear all media files and database to start fresh.
 
 This script will:
-- Delete media/index.json (includes jobs)
+- Delete media.db SQLite database (includes all media and jobs)
 - Clear media/processed/ directory  
 - Clear media/raw/ directory
 - Reset to a clean state
@@ -15,7 +15,7 @@ Usage:
 
 import shutil
 import sys
-import json
+import sqlite3
 from pathlib import Path
 
 def reset_jobs_only():
@@ -29,33 +29,31 @@ def reset_jobs_only():
         return
     
     media_dir = Path("media")
-    index_file = media_dir / "index.json"
+    db_file = media_dir / "media.db"
     
-    if not index_file.exists():
-        print("❌ No media index found.")
+    if not db_file.exists():
+        print("❌ No media database found.")
         return
     
     try:
-        # Read current index
-        with open(index_file, "r") as f:
-            data = json.load(f)
+        # Connect to SQLite database
+        with sqlite3.connect(db_file) as conn:
+            # Count existing jobs
+            cursor = conn.execute("SELECT COUNT(*) FROM processing_jobs")
+            job_count = cursor.fetchone()[0]
+            
+            # Clear only processing jobs
+            conn.execute("DELETE FROM processing_jobs")
+            conn.commit()
         
-        # Clear only processing jobs
-        job_count = len(data.get("processing", {}))
-        data["processing"] = {}
-        
-        # Write back
-        with open(index_file, "w") as f:
-            json.dump(data, f, indent=2)
-        
-        print(f"✅ Cleared {job_count} processing jobs")
-        print("📱 Media files preserved, only jobs reset")
+        print(f"✅ Cleared {job_count} processing jobs from database")
+        print("📱 Media files and database records preserved, only jobs reset")
         
     except Exception as e:
         print(f"❌ Failed to reset jobs: {e}")
 
 def main():
-    """Reset all media files and index."""
+    """Reset all media files and database."""
     # Check for jobs-only flag
     if len(sys.argv) > 1 and sys.argv[1] == "--jobs-only":
         reset_jobs_only()
@@ -65,22 +63,32 @@ def main():
     print("=" * 40)
     
     # Confirm with user
-    response = input("⚠️  This will DELETE ALL media files and reset the index. Continue? (y/N): ")
+    response = input("⚠️  This will DELETE ALL media files and database. Continue? (y/N): ")
     if response.lower() not in ['y', 'yes']:
         print("❌ Reset cancelled.")
         return
     
     media_dir = Path("media")
-    index_file = media_dir / "index.json"
+    db_file = media_dir / "media.db"
+    wal_file = media_dir / "media.db-wal"
+    shm_file = media_dir / "media.db-shm"
     raw_dir = media_dir / "raw"
     processed_dir = media_dir / "processed"
     
     removed_count = 0
     
-    # Remove index file and any temp files
-    if index_file.exists():
-        index_file.unlink()
-        print(f"✅ Removed media index: {index_file}")
+    # Remove SQLite database files
+    for db_path in [db_file, wal_file, shm_file]:
+        if db_path.exists():
+            db_path.unlink()
+            print(f"✅ Removed database file: {db_path}")
+            removed_count += 1
+    
+    # Remove legacy JSON file if it exists
+    legacy_json = media_dir / "index.json"
+    if legacy_json.exists():
+        legacy_json.unlink()
+        print(f"✅ Removed legacy JSON file: {legacy_json}")
         removed_count += 1
     
     # Clean up any orphaned temp files
@@ -114,6 +122,7 @@ def main():
     
     print("=" * 40)
     print(f"🎉 Media reset complete! Removed {removed_count} items.")
+    print("📝 SQLite database will be recreated automatically on next app startup.")
 
 if __name__ == "__main__":
     main() 

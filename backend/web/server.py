@@ -16,7 +16,11 @@ from .core.middleware import (
     CacheControlMiddleware,
     RequestLoggingMiddleware, 
     ConcurrencyLimitMiddleware,
-    ErrorHandlingMiddleware
+    ErrorHandlingMiddleware,
+    RequestTimingMiddleware,
+    ResponseValidationMiddleware,
+    ErrorHandlerMiddleware,
+    ConditionalGZipMiddleware
 )
 from .core.storage import scan_storage_on_startup
 from .routes import register_routers
@@ -43,14 +47,12 @@ def create_app(
         redoc_url="/redoc" if config and config.web.debug else None
     )
     
-    # Simple middleware stack - no WebSocket complexity
+    # Enhanced middleware stack with runtime validation
+    app.add_middleware(ErrorHandlerMiddleware)  # Catch all unhandled errors first
+    app.add_middleware(ResponseValidationMiddleware, enabled=True)  # Validate API responses
+    app.add_middleware(RequestTimingMiddleware)  # Enhanced request timing
+    app.add_middleware(ConcurrencyLimitMiddleware, max_concurrent=config.web.max_concurrent_requests if config else 6)  # Pi-optimized limit
     app.add_middleware(CacheControlMiddleware)
-    app.add_middleware(RequestLoggingMiddleware)
-    app.add_middleware(ConcurrencyLimitMiddleware, max_concurrent=config.web.max_concurrent_requests if config else 8)
-    app.add_middleware(ErrorHandlingMiddleware)
-    
-    # Lightweight compression for JSON responses only
-    from .core.middleware import ConditionalGZipMiddleware
     app.add_middleware(ConditionalGZipMiddleware, minimum_size=1000)
     
     # ------------------------------

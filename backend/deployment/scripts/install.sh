@@ -94,25 +94,17 @@ if [ "$1" = "cleanup" ] || [ "$1" = "reset" ]; then
         sudo systemctl stop ${SERVICE_NAME}
     fi
     
-    # Clean up media files and index
-    echo "🗑️  Removing media files and index..."
+    # Clean up media files and databases
+    echo "🗑️  Removing media files and databases..."
     rm -rf "${BACKEND_DIR}/media/raw"/*
     rm -rf "${BACKEND_DIR}/media/processed"/*
-    rm -f "${BACKEND_DIR}/media/index.json"
+    rm -f "${BACKEND_DIR}/media/index.json"  # Remove legacy JSON file
+    rm -f "${BACKEND_DIR}/media/media.db"    # Remove SQLite database
+    rm -f "${BACKEND_DIR}/media/media.db-wal"  # Remove WAL file
+    rm -f "${BACKEND_DIR}/media/media.db-shm"  # Remove shared memory file
     
-    # Recreate directories
+    # Recreate directories (SQLite database will be created automatically on first run)
     mkdir -p "${BACKEND_DIR}/media/raw" "${BACKEND_DIR}/media/processed"
-    
-    # Create fresh empty index
-    cat > "${BACKEND_DIR}/media/index.json" << 'EOF'
-{
-  "media": {},
-  "loop": [],
-  "active": null,
-  "last_updated": null,
-  "processing": {}
-}
-EOF
     
     # Clean up logs
     echo "📋 Cleaning up logs..."
@@ -360,21 +352,8 @@ echo "  avahi-resolve -n loop.local"
 # WiFi management is now handled by NetworkManager through the web interface
 echo "WiFi and hotspot management is handled through the web interface"
 
-# Create clean media index if it doesn't exist
-INDEX_FILE="$BACKEND_DIR/media/index.json"
-if [ ! -f "$INDEX_FILE" ] || [ ! -s "$INDEX_FILE" ]; then
-    echo "📝 Creating clean media index..."
-    cat > "$INDEX_FILE" << EOF
-{
-  "media": {},
-  "loop": [],
-  "active": null,
-  "last_updated": $(date +%s),
-  "processing": {}
-}
-EOF
-    echo "✅ Clean media index created"
-fi
+# SQLite database will be created automatically on first application startup
+echo "📝 SQLite database will be initialized automatically on first run at: media/media.db"
 
 # -----------------------------------------------------------------------------
 # Install display dependencies and configure DRM
