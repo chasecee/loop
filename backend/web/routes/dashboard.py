@@ -143,19 +143,19 @@ def create_dashboard_router(
             
             player_status = _get_cached_or_compute(
                 "player_status",
-                lambda: _get_player_status(),
+                lambda: _get_player_status(display_player),
                 ttl=5  # 5 second cache for player status
             )
             
             system_status = _get_cached_or_compute(
                 "system_status", 
-                lambda: _get_system_status(),
+                lambda: _get_system_status(updater),
                 ttl=60  # 1 minute cache for system status
             )
             
             wifi_status = _get_cached_or_compute(
                 "wifi_status",
-                lambda: _get_wifi_status(),
+                lambda: _get_wifi_status(wifi_manager),
                 ttl=30  # 30 second cache for WiFi status
             )
             
@@ -281,23 +281,20 @@ def _get_storage_info():
         "media": media_size,
     }
 
-def _get_player_status():
+def _get_player_status(display_player):
     """Get player status efficiently."""
-    from display.player import display_player
     if display_player:
         return display_player.get_status()
     return {"running": False, "active_media": None}
 
-def _get_system_status():
+def _get_system_status(updater):
     """Get system status efficiently.""" 
-    from deployment.updater import system_updater
-    if system_updater:
-        return system_updater.get_status()
+    if updater:
+        return updater.get_status()
     return {"update_available": False}
 
-def _get_wifi_status():
+def _get_wifi_status(wifi_manager):
     """Get WiFi status efficiently."""
-    from boot.wifi import wifi_manager
     if wifi_manager:
         return wifi_manager.get_status()
     return {"connected": False, "hotspot_active": False}
