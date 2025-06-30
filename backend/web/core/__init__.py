@@ -7,7 +7,7 @@ from .models import (
     PlayerStatus,
     WiFiStatus, 
     UpdateStatus,
-    StorageInfo,
+    StorageData,
     MediaItem,
     ProcessingJobResponse,
     WiFiCredentials,
@@ -18,9 +18,7 @@ from .models import (
 )
 from .middleware import (
     CacheControlMiddleware,
-    RequestLoggingMiddleware,
     ConcurrencyLimitMiddleware,
-    ErrorHandlingMiddleware,
     ConditionalGZipMiddleware
 )
 from .storage import (

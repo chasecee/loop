@@ -7,7 +7,7 @@ from typing import Optional, Dict, Any
 
 from fastapi import APIRouter, Request, HTTPException
 
-from ..core.models import DashboardData, DeviceStatus, PlayerStatus, WiFiStatus, UpdateStatus, StorageInfo, APIResponse, ProcessingJobResponse, MediaItem
+from ..core.models import DashboardData, DeviceStatus, PlayerStatus, WiFiStatus, UpdateStatus, StorageData, APIResponse, ProcessingJobResponse, MediaItem
 from ..core.storage import get_dir_size
 from display.player import DisplayPlayer
 from boot.wifi import WiFiManager
@@ -73,7 +73,7 @@ def create_dashboard_router(
         app_size = max(0, backend_size - media_size)
         system_size = max(0, used - backend_size)
 
-        return StorageInfo(
+        return StorageData(
             total=total,
             used=used,
             free=free,
@@ -195,7 +195,7 @@ def create_dashboard_router(
             logger.error(f"Dashboard error: {e}")
             raise HTTPException(status_code=500, detail=f"Dashboard generation failed: {str(e)}")
 
-    @router.get("/storage", response_model=StorageInfo)
+    @router.get("/storage", response_model=StorageData)
     async def get_storage():
         """Get storage information separately - for settings modal only."""
         return get_storage_info()

@@ -14,9 +14,7 @@ from deployment.updater import SystemUpdater
 
 from .core.middleware import (
     CacheControlMiddleware,
-    RequestLoggingMiddleware, 
     ConcurrencyLimitMiddleware,
-    ErrorHandlingMiddleware,
     RequestTimingMiddleware,
     ResponseValidationMiddleware,
     ErrorHandlerMiddleware,

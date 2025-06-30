@@ -1,7 +1,7 @@
 """Pydantic models for LOOP web API request/response validation."""
 
 import time
-from typing import Dict, List, Optional, Any, Literal
+from typing import Dict, List, Optional, Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 import re
 
@@ -149,7 +149,7 @@ class WiFiStatus(BaseModel):
     configured_ssid: Optional[str] = None
     hotspot_ssid: Optional[str] = None
     signal_strength: Optional[str] = None  # Can be string from wireless stats
-    network_info: Optional[Dict[str, Any]] = None
+    network_info: Optional[Dict[str, str | int | bool]] = None
     # Extra fields returned by WiFiManager but not in frontend interface
     interface: Optional[str] = None
     state: Optional[str] = None
@@ -159,7 +159,7 @@ class UpdateStatus(BaseModel):
     current_version: Optional[str] = None
     git_available: Optional[bool] = None
     last_check: Optional[str] = None
-    update_sources: Optional[Dict[str, Any]] = None
+    update_sources: Optional[Dict[str, str | int | bool]] = None
 
 class DeviceStatus(BaseModel):
     """Device status matching frontend expectations."""
@@ -170,8 +170,8 @@ class DeviceStatus(BaseModel):
     wifi: Optional[WiFiStatus] = None
     updates: Optional[UpdateStatus] = None
 
-class StorageInfo(BaseModel):
-    """Storage info - matches frontend StorageData interface."""
+class StorageData(BaseModel):
+    """Storage data - matches frontend StorageData interface exactly."""
     total: int
     used: int
     free: int
@@ -193,7 +193,7 @@ class APIResponse(BaseModel):
     """Standard API response format - matches frontend APIResponse interface."""
     success: bool
     message: Optional[str] = None
-    data: Optional[Any] = None
+    data: Optional[Dict | List | str | int | bool] = None
     errors: Optional[List[Dict[str, str]]] = None
 
 class WifiNetwork(BaseModel):

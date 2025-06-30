@@ -13,8 +13,7 @@ from pathlib import Path
 import traceback
 import os
 import psutil
-from datetime import datetime
-from typing import Dict, Optional
+from typing import Optional
 import gc
 
 # Add systemd support for proper watchdog integration
