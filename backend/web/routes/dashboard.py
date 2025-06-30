@@ -8,7 +8,7 @@ from typing import Optional, Dict, Any
 from fastapi import APIRouter, Request, HTTPException
 
 from ..core.models import DashboardData, DeviceStatus, PlayerStatus, WiFiStatus, UpdateStatus, StorageInfo, APIResponse, ProcessingJobResponse, MediaItem
-from ..core.storage import get_dir_size, get_storage_stats
+from ..core.storage import get_dir_size
 from display.player import DisplayPlayer
 from boot.wifi import WiFiManager
 from deployment.updater import SystemUpdater
@@ -263,8 +263,23 @@ def _get_loop_status():
 
 def _get_storage_info():
     """Get storage info with caching."""
-    from ..core.storage import get_storage_stats
-    return get_storage_stats()
+    # Use the same logic as get_storage_info() function above
+    total, used, free = shutil.disk_usage("/")
+    backend_root = Path(__file__).resolve().parent.parent.parent
+    media_path = backend_root / "media"
+    media_size = get_dir_size(media_path)
+    backend_size = get_dir_size(backend_root)
+    app_size = max(0, backend_size - media_size)
+    system_size = max(0, used - backend_size)
+    
+    return {
+        "total": total,
+        "used": used,
+        "free": free,
+        "system": system_size,
+        "app": app_size,
+        "media": media_size,
+    }
 
 def _get_player_status():
     """Get player status efficiently."""
